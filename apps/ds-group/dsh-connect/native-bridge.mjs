@@ -126,7 +126,7 @@ export class NativeBridge {
         tasks: requests.map(record => ({ requestId: record.requestId, status: record.status,
           stage: record.stage || null, summary: record.summary || '', roomId: record.source?.roomId || null })),
         activity: activity || null, waiting: waiting ? Array.isArray(waiting) ? waiting.length : 1 : 0,
-        waitDetails: waiting },
+        waitDetails: waiting, ...this.core?.view() },
       memorySummary: { people: null, projects: null, pendingReview: null },
     };
   }

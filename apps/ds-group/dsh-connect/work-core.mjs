@@ -30,8 +30,17 @@ export const FRONT_REFUSAL = '前台不直接做这件事。用 dispatch_work �
 
 const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] };
 const textOf = message => (message?.content || []).filter(block => block.type === 'text').map(block => block.text).join('');
+const targetOf = args => {
+  const value = args && typeof args === 'object' ? args.path || args.file_path || args.url || args.command || args.query : undefined;
+  return typeof value === 'string' ? value.slice(0, 200) : null;
+};
 const ended = task => ['done', 'failed', 'cancelled', 'unknown'].includes(task?.status);
 const shortId = () => `T-${randomUUID().slice(0, 8)}`;
+// Every status change is kept on the task as its timeline.
+const mark = (task, to, by, extra = {}) => {
+  (task.events ||= []).push({ at: new Date().toISOString(), from: task.status ?? null, to, by });
+  Object.assign(task, extra, { status: to });
+};
 
 export class WorkCore {
   constructor({ ctx, native, node, state, save, maxWorkers = 3, timeoutMs = 60 * 60_000 }) {
@@ -43,7 +52,7 @@ export class WorkCore {
     this.origin = null;
     this.onResult = null;
     for (const task of Object.values(this.state.tasks)) {
-      if (!ended(task)) Object.assign(task, { status: 'unknown', summary: '宿主重启时任务未结束，结果不确定。', finishedAt: new Date().toISOString(), notified: false });
+      if (!ended(task)) mark(task, 'unknown', 'restart', { summary: '宿主重启时任务未结束，结果不确定。', finishedAt: new Date().toISOString(), notified: false, doing: undefined });
     }
     this.disposeGuard = ctx.tools?.guard?.(exec => this.guard(exec));
   }
@@ -126,7 +135,8 @@ export class WorkCore {
     const id = shortId();
     const origin = this.origin;
     const task = this.state.tasks[id] = { id, title, brief, ...(deliverables ? { deliverables: String(deliverables) } : {}),
-      status: 'queued', origin, inputFiles: origin?.files || [], createdAt: new Date().toISOString(), notified: false };
+      origin, inputFiles: origin?.files || [], createdAt: new Date().toISOString(), notified: false, toolCalls: 0 };
+    mark(task, 'queued', 'front');
     await this.save();
     await this.pump();
     return `已派工：${id}（${title}）。工作者${task.status === 'running' ? '已开始' : '排队中'}，结果会以 task.result 消息回到你这里。现在简短告诉对方已开始即可。`;
@@ -148,7 +158,7 @@ export class WorkCore {
     const presets = this.ctx.get?.('agentPresets');
     const preset = presets && (await presets.list()).some(item => item.id === 'standard' && !item.broken) ? { agentPreset: 'standard' } : {};
     const { sessionId } = await this.ctx.sessionController.create({ cwd: dir, ...preset });
-    Object.assign(task, { status: 'running', sessionId, dir, startedAt: new Date().toISOString() });
+    mark(task, 'running', 'core', { sessionId, dir, startedAt: new Date().toISOString() });
     await this.save();
     const agent = await this.native.agent(sessionId);
     await this.ctx.sessionTitle?.rename?.(agent.session, `${bot.name} · ${task.title}`).catch?.(() => {});
@@ -195,7 +205,7 @@ export class WorkCore {
       await this.save();
       return '已记录进度，继续工作。';
     }
-    if (status === 'failed') { await this.finish(task, { status: 'failed', summary }); return '已汇报失败。可以结束了。'; }
+    if (status === 'failed') { await this.finish(task, { status: 'failed', summary }, { by: 'worker' }); return '已汇报失败。可以结束了。'; }
     let artifacts;
     try {
       artifacts = Array.isArray(files) && files.length
@@ -204,7 +214,7 @@ export class WorkCore {
     } catch (cause) {
       return `文件核对没有通过（${cause.code || cause.message}）。请确认文件存在、是普通文件，再重新调用 work_report。`;
     }
-    await this.finish(task, { status: 'done', summary, artifacts });
+    await this.finish(task, { status: 'done', summary, artifacts }, { by: 'worker' });
     return `已汇报完成，核对了 ${artifacts.length} 个文件。可以结束了。`;
   }
 
@@ -226,7 +236,7 @@ export class WorkCore {
     if (!task) return `没有任务 ${id}。`;
     if (ended(task)) return `${id} 已经结束（${task.status}）。`;
     if (task.sessionId) await this.native.agent(task.sessionId).then(agent => agent.cancel({ kind: 'user' })).catch(() => {});
-    await this.finish(task, { status: 'cancelled', summary: '已取消。' }, { notify: false });
+    await this.finish(task, { status: 'cancelled', summary: '已取消。' }, { notify: false, by: 'front' });
     return `${id} 已取消。`;
   }
 
@@ -250,6 +260,11 @@ export class WorkCore {
     const task = this.workerTask(session.id);
     if (!task) return false;
     if (event.type === 'assistant/message') { const text = textOf(event.data?.message); if (text) task.lastText = text.slice(-2000); }
+    if (event.type === 'tool/call') {
+      task.toolCalls = (task.toolCalls || 0) + 1;
+      task.doing = { tool: event.data?.name || null, target: targetOf(event.data?.arguments), said: task.lastText?.slice(-200) || null,
+        since: new Date().toISOString() };
+    }
     if (event.type === 'turn/end') {
       if (event.data?.reason?.kind === 'error') { await this.finish(task, { status: 'failed', summary: `工作者出错：${event.data.reason.error?.message || '未知错误'}` }); return true; }
       if (event.data?.reason?.kind === 'cancelled') return true;
@@ -262,10 +277,11 @@ export class WorkCore {
     return true;
   }
 
-  async finish(task, { status, summary, artifacts = [] }, { notify = true } = {}) {
+  async finish(task, { status, summary, artifacts = [] }, { notify = true, by = 'core' } = {}) {
     clearTimeout(this.timers.get(task.id));
     this.timers.delete(task.id);
-    Object.assign(task, { status, summary: String(summary || '').slice(0, 6000), artifacts, finishedAt: new Date().toISOString(), notified: !notify });
+    mark(task, status, by, { summary: String(summary || '').slice(0, 6000), artifacts, finishedAt: new Date().toISOString(), notified: !notify });
+    delete task.doing;
     await this.save();
     if (notify) await this.notify(task, { kind: 'result' });
     await this.pump();
@@ -280,6 +296,16 @@ export class WorkCore {
   /** Results that finished while no Bot node was listening (or before a restart). */
   async flush() {
     for (const task of this.tasks()) if (ended(task) && !task.notified) await this.notify(task, { kind: 'result' });
+  }
+
+  /** What the workers are doing now, for the node's kernel state. */
+  view() {
+    const live = this.tasks().filter(task => !ended(task));
+    const worker = task => ({ taskId: task.id, title: task.title, stage: task.status, roomId: task.origin?.roomId || null,
+      requesterId: task.origin?.senderId || null, progress: task.progress || null, doing: task.doing || null,
+      since: task.startedAt || task.createdAt, toolCalls: task.toolCalls || 0 });
+    return { workers: live.filter(task => task.status === 'running').map(worker),
+      queue: live.filter(task => task.status === 'queued').map(worker) };
   }
 
   resultText(task, message) {

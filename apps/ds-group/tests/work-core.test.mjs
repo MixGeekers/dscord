@@ -94,6 +94,11 @@ test('slots queue extra work, cancel stops a worker without a result message, an
   assert.equal(f.agentFor('worker-1').cancelled, 1); assert.equal(f.results.length, 0);
   assert.equal(second.status, 'running'); assert.match(f.prompts.at(-1).text, /补充：用中文/);
   assert.match(await run(f, 'front', 'task_status', {}), new RegExp(`${second.id} running two`));
+  assert.deepEqual(first.events.map(e => [e.from, e.to, e.by]), [[null, 'queued', 'front'], ['queued', 'running', 'core'], ['running', 'cancelled', 'front']]);
+  await f.core.event({ id: second.sessionId }, { type: 'tool/call', data: { name: 'bash', arguments: { command: 'ls outputs' } } });
+  const view = f.core.view();
+  assert.equal(view.workers[0].taskId, second.id); assert.equal(view.workers[0].toolCalls, 1);
+  assert.deepEqual([view.workers[0].doing.tool, view.workers[0].doing.target], ['bash', 'ls outputs']); assert.deepEqual(view.queue, []);
 });
 
 test('timeouts stop the worker and report failure; restarts turn open work into unknown results', async t => {
