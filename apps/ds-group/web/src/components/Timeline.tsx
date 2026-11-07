@@ -1,11 +1,16 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  memo,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type { ReactNode } from "react";
 import { formatDate, formatDateTime, formatTime } from "../../i18n.js";
-import {
-  displayMentionText,
-  mentionKindsFor,
-  parseMentionTokens,
-} from "../../mention-tokens.js";
+import { displayMentionText, mentionKindsFor } from "../../mention-tokens.js";
 import { useTranslation } from "../locale";
 import { chatMessages } from "../locales/chat";
 import type {
@@ -18,7 +23,9 @@ import type {
 } from "../types";
 import { AttachmentView } from "./AttachmentView";
 import { Icon } from "./Icons";
-import { messageParts } from "../message-format";
+import { markdownPreview } from "../markdown";
+import type { MentionToken } from "../markdown";
+import { MarkdownMessage } from "./MarkdownMessage";
 
 export interface TimelineProps {
   events: ChatEvent[];
@@ -34,37 +41,25 @@ export interface TimelineProps {
   onRead(eventId: string): void;
 }
 
-function formattedText(text: string): ReactNode[] {
-  return messageParts(text).map((part) => {
-    const key = `${part.offset}:${part.kind}`;
-    if (part.kind === "pre")
-      return (
-        <pre key={key} className="message-code">
-          {part.text}
-        </pre>
-      );
-    if (part.kind === "code")
-      return (
-        <code key={key} className="inline-code">
-          {part.text}
-        </code>
-      );
-    if (part.kind === "strong") return <strong key={key}>{part.text}</strong>;
-    if (part.kind === "link")
-      return (
-        <a
-          key={key}
-          className="message-link"
-          href={part.href}
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          {part.text}
-        </a>
-      );
-    return part.text;
-  });
-}
+type RenderMention = (
+  token: MentionToken,
+  key: string,
+  roleLabels?: Record<string, string>,
+) => ReactNode;
+
+/** Memoised so scrolling and toasts do not re-parse every message. */
+const MessageBody = memo(function MessageBody(props: {
+  body: string;
+  roleLabels?: Record<string, string>;
+  renderMention: RenderMention;
+}) {
+  const { body, roleLabels, renderMention } = props;
+  const render = useCallback(
+    (token: MentionToken, key: string) => renderMention(token, key, roleLabels),
+    [renderMention, roleLabels],
+  );
+  return <MarkdownMessage body={body} renderMention={render} />;
+});
 
 export function Timeline(props: TimelineProps) {
   const t = useTranslation(chatMessages);
@@ -78,14 +73,66 @@ export function Timeline(props: TimelineProps) {
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
   );
-  const roleList = [
-    ...new Map(
-      [...props.roles, ...props.mentionables.roles].map((role) => [
-        role.id,
-        role,
-      ]),
-    ).values(),
-  ];
+  const roleList = useMemo(
+    () => [
+      ...new Map(
+        [...props.roles, ...props.mentionables.roles].map((role) => [
+          role.id,
+          role,
+        ]),
+      ).values(),
+    ],
+    [props.roles, props.mentionables.roles],
+  );
+  const hasRoleAction = Boolean(props.onRole);
+  const renderMention = useCallback<RenderMention>(
+    (token, key, roleLabels = {}) => {
+      const className = `mention-tag mention-${token.kind}`;
+      if (token.kind === "user" && token.id) {
+        const id = token.id;
+        const name =
+          props.participants.find((person) => person.id === id)?.name ??
+          id.split(":")[0]?.replace(/^@/, "") ??
+          id;
+        return (
+          <button
+            key={key}
+            className={className}
+            type="button"
+            onClick={() => latestProps.current.onMember(id)}
+          >
+            @{name}
+          </button>
+        );
+      }
+      if (token.kind === "role" && token.id) {
+        const label =
+          roleList.find((role) => role.id === token.id)?.name ??
+          roleLabels[token.id] ??
+          t("role");
+        return hasRoleAction ? (
+          <button
+            key={key}
+            className={className}
+            type="button"
+            onClick={() => latestProps.current.onRole?.()}
+          >
+            @{label}
+          </button>
+        ) : (
+          <span key={key} className={className}>
+            @{label}
+          </span>
+        );
+      }
+      return (
+        <span key={key} className={className}>
+          @{token.kind}
+        </span>
+      );
+    },
+    [props.participants, roleList, hasRoleAction, t],
+  );
 
   function displayName(id: string) {
     return (
@@ -153,66 +200,6 @@ export function Timeline(props: TimelineProps) {
     }
     clearTimeout(copyTimer.current);
     copyTimer.current = setTimeout(() => setCopyStatus(""), 3000);
-  }
-
-  function richText(
-    body: string,
-    roleLabels: Record<string, string> = {},
-  ): ReactNode[] {
-    const parts: ReactNode[] = [];
-    let offset = 0;
-    for (const token of parseMentionTokens(body).tokens) {
-      parts.push(
-        <Fragment key={`text-${token.start}`}>
-          {formattedText(body.slice(offset, token.start))}
-        </Fragment>,
-      );
-      const className = `mention-tag mention-${token.kind}`;
-      if (token.kind === "user" && token.id) {
-        const id = token.id;
-        parts.push(
-          <button
-            key={`mention-${token.start}`}
-            className={className}
-            type="button"
-            onClick={() => props.onMember(id)}
-          >
-            @{displayName(id)}
-          </button>,
-        );
-      } else if (token.kind === "role" && token.id) {
-        const label =
-          roleList.find((role) => role.id === token.id)?.name ??
-          roleLabels[token.id] ??
-          t("role");
-        parts.push(
-          props.onRole ? (
-            <button
-              key={`mention-${token.start}`}
-              className={className}
-              type="button"
-              onClick={props.onRole}
-            >
-              @{label}
-            </button>
-          ) : (
-            <span key={`mention-${token.start}`} className={className}>
-              @{label}
-            </span>
-          ),
-        );
-      } else
-        parts.push(
-          <span key={`mention-${token.start}`} className={className}>
-            @{token.kind}
-          </span>,
-        );
-      offset = token.end;
-    }
-    parts.push(
-      <Fragment key="remaining">{formattedText(body.slice(offset))}</Fragment>,
-    );
-    return parts;
   }
 
   return (
@@ -306,17 +293,18 @@ export function Timeline(props: TimelineProps) {
                         <Icon name="reply" />
                         <span>
                           {quote
-                            ? `${displayName(quote.sender)}　${displayMentionText(quote.content.body, props.participants, roleList)}`
+                            ? `${displayName(quote.sender)}　${markdownPreview(displayMentionText(quote.content.body, props.participants, roleList))}`
                             : t("previous")}
                         </span>
                       </button>
                     )}
                     {showBody && (
                       <div className="message-bubble">
-                        {richText(
-                          event.content.body,
-                          metadata?.mentions?.roleLabels,
-                        )}
+                        <MessageBody
+                          body={event.content.body}
+                          roleLabels={metadata?.mentions?.roleLabels}
+                          renderMention={renderMention}
+                        />
                       </div>
                     )}
                     {attachments.length > 0 && (

@@ -14,6 +14,7 @@ import { readStored } from "../api";
 import { newRequestId } from "../identifiers";
 import { useTranslation } from "../locale";
 import { chatMessages } from "../locales/chat";
+import { markdownPreview } from "../markdown";
 import { Icon } from "./Icons";
 import type {
   Attachment,
@@ -486,7 +487,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             <div className="reply-copy">
               <span>{t("replying", { name: "" })}</span>
               <strong id="reply-preview-name">{props.reply?.senderName}</strong>
-              <span id="reply-preview-body">{props.reply?.body}</span>
+              <span id="reply-preview-body">
+                {markdownPreview(props.reply?.body ?? "")}
+              </span>
             </div>
             <Button
               variant="ghost"

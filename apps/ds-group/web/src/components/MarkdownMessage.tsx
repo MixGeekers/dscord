@@ -37,19 +37,26 @@ function hastText(node: HastNode | undefined): string {
 
 function CodeBlock({ code, language }: { code: string; language: string }) {
   const t = useTranslation(markdownMessages);
-  const [html, setHtml] = useState<string | null>(null);
+  const [highlighted, setHighlighted] = useState<{
+    source: string;
+    html: string;
+  } | null>(null);
+  const source = `${language}\n${code}`;
+  const html = highlighted?.source === source ? highlighted.html : null;
   const [status, setStatus] = useState("");
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
 
   useEffect(() => {
-    setHtml(null);
     if (!language) return;
     let active = true;
     void loadHighlighter()
       .then((hljs) => {
         if (!active || !hljs.getLanguage(language)) return;
         // highlight.js escapes the source; its output only adds span markup.
-        setHtml(hljs.highlight(code, { language, ignoreIllegals: true }).value);
+        setHighlighted({
+          source: `${language}\n${code}`,
+          html: hljs.highlight(code, { language, ignoreIllegals: true }).value,
+        });
       })
       .catch(() => undefined);
     return () => {
@@ -104,13 +111,11 @@ export interface MarkdownMessageProps {
 }
 
 /** Renders a chat message body as GitHub-flavoured Markdown with clickable mentions. */
-export const MarkdownMessage = memo(function MarkdownMessage(
-  props: MarkdownMessageProps,
-) {
-  const { source, tokens } = useMemo(
-    () => prepareMentions(props.body),
-    [props.body],
-  );
+export const MarkdownMessage = memo(function MarkdownMessage({
+  body,
+  renderMention,
+}: MarkdownMessageProps) {
+  const { source, tokens } = useMemo(() => prepareMentions(body), [body]);
   const components = useMemo<Components>(
     () => ({
       a: ({ href, children }) =>
@@ -156,13 +161,13 @@ export const MarkdownMessage = memo(function MarkdownMessage(
         );
         const token = Number.isInteger(index) ? tokens[index] : undefined;
         return token ? (
-          props.renderMention(token, `mention-${index}`)
+          renderMention(token, `mention-${index}`)
         ) : (
           <span>{children}</span>
         );
       },
     }),
-    [tokens, props.renderMention],
+    [tokens, renderMention],
   );
   return (
     <div className="markdown-body">

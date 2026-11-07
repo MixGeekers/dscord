@@ -71,3 +71,12 @@ test('fenced code keeps its language class and stays literal', () => {
   const html = render('```ts\nconst a = "**不加粗**";\n```');
   assert.ok(html.includes('<code class="language-ts">const a = &quot;**不加粗**&quot;;\n</code>'));
 });
+
+test('previews drop Markdown syntax but keep the words', async () => {
+  const { markdownPreview } = await import('../web/src/markdown.ts');
+  assert.equal(markdownPreview('## 结果\n**结论：**见 [报告](https://example.org)\n- 第一项 *斜体*\n> 引用 `code`'),
+    '结果 结论：见 报告 第一项 斜体 引用 code');
+  assert.equal(markdownPreview('| 列 | 值 |\n|---|---|\n| a | 1 |'), '列 值 a 1');
+  assert.equal(markdownPreview('```ts\nconst a = 1;\n```'), 'const a = 1;');
+  assert.equal(markdownPreview('snake_case_name 和 2*3*4'), 'snake_case_name 和 2*3*4');
+});

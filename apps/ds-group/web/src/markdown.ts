@@ -36,9 +36,9 @@ export function prepareMentions(body: string): {
   tokens: MentionToken[];
 } {
   const clean = body.replace(privateMarkers, "");
-  const tokens = (parseMentionTokens(clean).tokens as Omit<MentionToken, "text">[]).map(
-    (token) => ({ ...token, text: clean.slice(token.start, token.end) }),
-  );
+  const tokens = (
+    parseMentionTokens(clean).tokens as Omit<MentionToken, "text">[]
+  ).map((token) => ({ ...token, text: clean.slice(token.start, token.end) }));
   let source = "";
   let offset = 0;
   tokens.forEach((token, index) => {
@@ -93,19 +93,29 @@ function trimLiteralLink(node: MarkdownNode): MarkdownNode[] {
   if (cut === 0) return [text(label.value)];
   const kept = label.value.slice(0, cut);
   return [
-    { ...node, url: node.url.slice(0, node.url.length - label.value.length + cut), children: [text(kept)] },
+    {
+      ...node,
+      url: node.url.slice(0, node.url.length - label.value.length + cut),
+      children: [text(kept)],
+    },
     text(label.value.slice(cut)),
   ];
 }
 
-function transform(children: MarkdownNode[], tokens: MentionToken[]): MarkdownNode[] {
+function transform(
+  children: MarkdownNode[],
+  tokens: MentionToken[],
+): MarkdownNode[] {
   const result: MarkdownNode[] = [];
   for (const child of children) {
     // Indented code is not skipped by the mention scanner; put the typed token back.
     if (child.type === "code" || child.type === "inlineCode") {
       result.push({
         ...child,
-        value: (child.value ?? "").replace(placeholder, (match, index: string) => tokens[Number(index)]?.text ?? match),
+        value: (child.value ?? "").replace(
+          placeholder,
+          (match, index: string) => tokens[Number(index)]?.text ?? match,
+        ),
       });
       continue;
     }
@@ -138,7 +148,9 @@ function transform(children: MarkdownNode[], tokens: MentionToken[]): MarkdownNo
       continue;
     }
     // Trim before the label is split, so a mention right after a bare link stays a mention.
-    for (const part of child.type === "link" ? trimLiteralLink(child) : [child]) {
+    for (const part of child.type === "link"
+      ? trimLiteralLink(child)
+      : [child]) {
       if (part.type === "text") result.push(...splitText(part.value ?? ""));
       else {
         if (part.children) part.children = transform(part.children, tokens);
@@ -154,4 +166,19 @@ export function remarkChat(options: { tokens: MentionToken[] }) {
   return (tree: MarkdownNode) => {
     if (tree.children) tree.children = transform(tree.children, options.tokens);
   };
+}
+
+/** One-line plain text for quotes and notifications: Markdown syntax removed, wording kept. */
+export function markdownPreview(text: string): string {
+  return text
+    .replace(/```[^\n]*\n?([\s\S]*?)(?:```|$)/g, " $1 ")
+    .replace(/`([^`\n]+)`/g, "$1")
+    .replace(/!?\[([^\]\n]*)\]\([^)\s]*\)/g, "$1")
+    .replace(/^ {0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+(?:\[[ xX]\]\s+)?|\d+[.)]\s+)/gm, "")
+    .replace(/^\s*\|?(?:\s*:?-{3,}:?\s*\|)+\s*:?-{0,}:?\s*$/gm, "")
+    .replace(/\s*\|\s*/g, " ")
+    .replace(/(\*\*|__|~~)(?=\S)([\s\S]*?\S)\1/g, "$2")
+    .replace(/(^|[^\w*])[*_](?=\S)([^*_\n]*?\S)[*_](?![\w*])/g, "$1$2")
+    .replace(/\s+/g, " ")
+    .trim();
 }
