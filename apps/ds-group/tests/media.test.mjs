@@ -93,7 +93,9 @@ async function fixture(t, { maxUploadBytes = 1024, uploadDelay = 0, upstreamRang
           return json(200, { membership: 'join' });
         }
         if (request.method === 'GET' && room[2] === 'messages') {
-          return json(200, { chunk: [...events.values()].reverse() });
+          // One page of history: the cursor it hands out leads to the start of the room.
+          if (url.searchParams.get('from') === 'fixture-older') return json(200, { chunk: [], end: 'fixture-start' });
+          return json(200, { chunk: [...events.values()].reverse(), end: 'fixture-older' });
         }
         if (request.method === 'GET' && room[2].startsWith('event/')) {
           const event = events.get(room[2].slice('event/'.length));
@@ -471,7 +473,11 @@ test('opening an actual old conversation recovers its shared local file index bu
   app.core.media.db.prepare('DELETE FROM attachment_sources').run();
   app.events.set('$forged-old', { event_id: '$forged-old', room_id: roomId, sender: participants[1].id, type: 'm.room.message',
     content: { body: '伪造字段不应阻断时间线', 'org.ds_group': { attachments: [{ ...privateFile, name: 'another-file.txt' }, null] } } });
-  assert.equal((await app.request('bob', 'GET', `/api/rooms/${encodeURIComponent(roomId)}/messages`)).status, 200);
+  const latest = await app.request('bob', 'GET', `/api/rooms/${encodeURIComponent(roomId)}/messages`);
+  assert.equal(latest.status, 200);
+  assert.equal((await latest.json()).before, 'fixture-older');
+  const older = await app.request('bob', 'GET', `/api/rooms/${encodeURIComponent(roomId)}/messages?before=fixture-older`);
+  assert.deepEqual(await older.json(), { events: [], before: null });
   assert.equal(app.core.media.sources(shared.id)[0].eventId, posted.body.event_id);
   assert.equal(app.core.media.sources(privateFile.id).length, 0);
   assert.equal((await app.request('bob', 'GET', `/api/attachments/${shared.id}/metadata`)).status, 200);

@@ -134,11 +134,12 @@ test('unreads deduplicate replay, preserve read markers and keep here under the 
   const two = event('$two', { hereUsers: [bob] }, 2000);
   const three = event('$three', { roleUsers: [bob] }, 3000);
   feature.recordEvents(bob, [one, two, three, one]);
-  assert.deepEqual(feature.unreadFor(bob, roomId), { unreadCount: 3, mentionCount: 3, lastEventId: '$three' });
+  assert.deepEqual(feature.unreadFor(bob, roomId), { unreadCount: 3, mentionCount: 3, lastEventId: '$three', firstUnreadEventId: '$one' });
   assert.deepEqual(feature.inbox(bob, [roomId]).events.map(item => item.event_id), ['$three', '$one']);
   assert.deepEqual(feature.inbox(bob, [roomId], { includeRoles: false }).events.map(item => item.event_id), ['$one']);
   feature.markRead(bob, roomId, '$two');
   assert.equal(feature.unreadFor(bob, roomId).unreadCount, 1);
+  assert.equal(feature.unreadFor(bob, roomId).firstUnreadEventId, '$three');
   assert.equal(feature.inbox(bob, [roomId], { filter: 'unread' }).events[0].event_id, '$three');
   feature.markRead(bob, roomId, '$one');
   assert.equal(feature.unreadFor(bob, roomId).unreadCount, 1);
@@ -148,5 +149,7 @@ test('unreads deduplicate replay, preserve read markers and keep here under the 
   feature.close();
   const restored = open();
   assert.equal(restored.unreadFor(bob, roomId).unreadCount, 1);
+  restored.markRead(bob, roomId, '$three');
+  assert.equal(restored.unreadFor(bob, roomId).firstUnreadEventId, null);
   assert.deepEqual(mentionKindsFor(one, bob), ['user']);
 });

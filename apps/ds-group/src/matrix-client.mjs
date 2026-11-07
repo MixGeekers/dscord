@@ -143,9 +143,17 @@ export class MatrixClient {
   }
 
   async timeline(roomId, limit = 50) {
+    return (await this.timelinePage(roomId, { limit })).events;
+  }
+
+  /** One backwards page in chronological order; `end` continues further back and is null at the start of the room. */
+  async timelinePage(roomId, { limit = 50, from } = {}) {
     if (!Number.isInteger(limit) || limit < 1 || limit > 1000) throw new Error('Timeline limit must be between 1 and 1000');
-    const result = await this.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages?dir=b&limit=${limit}`);
-    return [...(result.chunk ?? [])].reverse();
+    if (from !== undefined && (typeof from !== 'string' || !from)) throw new Error('Timeline cursor must be a non-empty string');
+    const query = from === undefined ? '' : `&from=${encodeURIComponent(from)}`;
+    const result = await this.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages?dir=b&limit=${limit}${query}`);
+    const chunk = result.chunk ?? [];
+    return { events: [...chunk].reverse(), end: chunk.length && typeof result.end === 'string' ? result.end : null };
   }
 
   sync({ since, timeout = 0, signal } = {}) {

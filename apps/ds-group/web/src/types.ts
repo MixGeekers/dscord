@@ -45,6 +45,8 @@ export interface Room {
   participantIds: string[];
   topic?: string;
   unreadCount?: number;
+  /** First message from someone else after the reader's marker, when Core has observed it. */
+  firstUnreadEventId?: string | null;
   mentionCount?: number;
   status?: string;
   joinResults?: { participantId: string; status: string }[];

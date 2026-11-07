@@ -185,7 +185,12 @@ export class ChatFeatures {
       AND (event_ts>? OR (event_ts=? AND sequence>?))`).get(userId, roomId, userId,
       read?.event_ts || 0, read?.event_ts || 0, read?.sequence || 0);
     const last = this.db.prepare('SELECT event_id FROM chat_events WHERE user_id=? AND room_id=? ORDER BY event_ts DESC,sequence DESC LIMIT 1').get(userId, roomId);
-    return { unreadCount: counts.unread_count, mentionCount: counts.mention_count, lastEventId: last?.event_id || null };
+    // Only messages Core has observed count; the client places its "new messages" divider before this one.
+    const firstUnread = counts.unread_count ? this.db.prepare(`SELECT event_id FROM chat_events WHERE user_id=? AND room_id=? AND sender_id<>?
+      AND (event_ts>? OR (event_ts=? AND sequence>?)) ORDER BY event_ts,sequence LIMIT 1`).get(userId, roomId, userId,
+      read?.event_ts || 0, read?.event_ts || 0, read?.sequence || 0) : undefined;
+    return { unreadCount: counts.unread_count, mentionCount: counts.mention_count, lastEventId: last?.event_id || null,
+      firstUnreadEventId: firstUnread?.event_id || null };
   }
 
   markRead(userId, roomId, eventId) {

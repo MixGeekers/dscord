@@ -34,6 +34,12 @@ const en = {
   online: "Online",
   offline: "Offline",
   uploads: "Files to send",
+  newMessages: "New messages",
+  unreadSince: "{count} new messages",
+  jumpUnread: "Jump to first unread",
+  markRead: "Mark as read",
+  loadingOlder: "Loading earlier messages",
+  historyStart: "This is the beginning of the conversation",
 };
 export const chatMessages = {
   en,
@@ -73,5 +79,11 @@ export const chatMessages = {
     online: "在线",
     offline: "离线",
     uploads: "待发送附件",
+    newMessages: "新消息",
+    unreadSince: "{count} 条新消息",
+    jumpUnread: "跳到首条未读",
+    markRead: "标为已读",
+    loadingOlder: "正在加载更早的消息",
+    historyStart: "已经到达对话开头",
   } satisfies Record<keyof typeof en, string>,
 };

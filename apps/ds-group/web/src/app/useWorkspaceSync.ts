@@ -65,6 +65,7 @@ export interface WorkspaceSync {
     tasks: Setter<WorkTask[]>;
     mentionables: Setter<Mentionables>;
     roles: Setter<Role[]>;
+    historyCursor: (roomId: string, before: string | null) => void;
   };
 }
 
@@ -227,14 +228,17 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
       const base = `/api/rooms/${encodeURIComponent(targetRoom)}`;
       const [messages, work, mentions, roleList] = await settle<
         [
-          { events: ChatEvent[] },
+          { events: ChatEvent[]; before?: string | null },
           { tasks: WorkTask[] },
           Mentionables,
           { roles: Role[] },
           unknown,
         ]
       >([
-        api<{ events: ChatEvent[] }>(`${base}/messages?limit=200`, options),
+        api<{ events: ChatEvent[]; before?: string | null }>(
+          `${base}/messages?limit=200`,
+          options,
+        ),
         api<{ tasks: WorkTask[] }>(`${base}/tasks`, options),
         api<Mentionables>(`${base}/mentionables`, options),
         home
@@ -250,6 +254,7 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
       set.events((previous) =>
         mergeEvents(previous, messages.events, targetRoom),
       );
+      set.historyCursor(targetRoom, messages.before ?? null);
       set.tasks(work.tasks.filter((task) => task.roomId === targetRoom));
       set.mentionables(mentions);
       set.roles(roleList.roles);

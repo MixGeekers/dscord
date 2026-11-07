@@ -226,8 +226,9 @@ export function roomRoutes(router, app) {
   });
 
   router.get(/^\/api\/rooms\/([^/]+)\/messages$/, async ({ userId, client, url, send }, roomId) => {
-    const events = await client().timeline(roomId, Math.min(Number(url.searchParams.get('limit')) || 100, 200));
-    send(200, { events: observed(userId, roomId, events) });
+    const before = url.searchParams.get('before') || undefined;
+    const page = await client().timelinePage(roomId, { limit: Math.min(Number(url.searchParams.get('limit')) || 100, 200), from: before });
+    send(200, { events: observed(userId, roomId, page.events), before: page.end });
   });
 
   router.post(/^\/api\/rooms\/([^/]+)\/messages$/, async ({ userId, client, token, body, send }, roomId) => {

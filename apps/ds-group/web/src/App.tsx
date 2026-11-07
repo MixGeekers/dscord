@@ -41,6 +41,7 @@ import {
   restoredOwnedBots,
 } from "./app/workspace";
 import { useWorkspaceSync } from "./app/useWorkspaceSync";
+import { useTimelineHistory } from "./app/useTimelineHistory";
 import type {
   Bootstrap,
   ChatEvent,
@@ -425,6 +426,14 @@ export default function App({
     [config, navigate, ownedBots],
   );
 
+  const timelineHistory = useTimelineHistory({
+    api,
+    roomId,
+    room,
+    setEvents,
+    onError: notify,
+  });
+
   useWorkspaceSync({
     api,
     authApi,
@@ -461,6 +470,7 @@ export default function App({
       tasks: setTasks,
       mentionables: setMentionables,
       roles: setRoles,
+      historyCursor: timelineHistory.seed,
     },
   });
 
@@ -1000,6 +1010,7 @@ export default function App({
           }}
           onRead={(id) => void markRead(id)}
           onRole={homeSelected ? () => setRolesOpen(true) : undefined}
+          history={timelineHistory}
         />
         <Composer
           ref={composer}

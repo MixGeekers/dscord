@@ -26,6 +26,7 @@ import { Icon } from "./Icons";
 import { markdownPreview } from "../markdown";
 import type { MentionToken } from "../markdown";
 import { MarkdownMessage } from "./MarkdownMessage";
+import type { TimelineHistory } from "../app/useTimelineHistory";
 
 export interface TimelineProps {
   events: ChatEvent[];
@@ -39,7 +40,11 @@ export interface TimelineProps {
   onRole?(): void;
   onJump(eventId: string): void;
   onRead(eventId: string): void;
+  history?: TimelineHistory;
 }
+
+/** Load the next older page once the reader is this close to the top. */
+const OLDER_THRESHOLD_PX = 400;
 
 type RenderMention = (
   token: MentionToken,
@@ -69,6 +74,14 @@ export function Timeline(props: TimelineProps) {
   const latestProps = useRef(props);
   latestProps.current = props;
   const [showJump, setShowJump] = useState(false);
+  const [unreadAbove, setUnreadAbove] = useState(false);
+  const positioned = useRef(false);
+  const snapshot = useRef<{ first?: string; height: number; top: number }>({
+    height: 0,
+    top: 0,
+  });
+  const history = props.history;
+  const unreadEventId = history?.unreadEventId ?? null;
   const [copyStatus, setCopyStatus] = useState("");
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -153,6 +166,47 @@ export function Timeline(props: TimelineProps) {
       latestProps.current.onRead(latest.event_id);
   }
 
+  function unreadDivider() {
+    return container.current?.querySelector<HTMLElement>(".unread-separator");
+  }
+
+  /** The banner shows while the first unread message is above the viewport or not loaded yet. */
+  function updateUnread() {
+    const element = container.current;
+    if (!element || !latestProps.current.history?.unreadEventId) {
+      setUnreadAbove(false);
+      return;
+    }
+    const divider = unreadDivider();
+    setUnreadAbove(
+      !divider ||
+        divider.getBoundingClientRect().bottom <
+          element.getBoundingClientRect().top,
+    );
+  }
+
+  function remember() {
+    const element = container.current;
+    if (!element) return;
+    snapshot.current = {
+      first: latestProps.current.events[0]?.event_id,
+      height: element.scrollHeight,
+      top: element.scrollTop,
+    };
+  }
+
+  function loadOlderIfNear() {
+    const element = container.current;
+    const older = latestProps.current.history;
+    if (
+      element &&
+      older?.hasOlder &&
+      !older.loadingOlder &&
+      element.scrollTop < OLDER_THRESHOLD_PX
+    )
+      void older.loadOlder();
+  }
+
   function onScroll() {
     const element = container.current;
     if (!element) return;
@@ -160,6 +214,21 @@ export function Timeline(props: TimelineProps) {
       element.scrollHeight - element.scrollTop - element.clientHeight < 100;
     setShowJump(!nearBottom.current);
     readLatest();
+    remember();
+    updateUnread();
+    loadOlderIfNear();
+  }
+
+  function jumpToUnread() {
+    const divider = unreadDivider();
+    if (divider) divider.scrollIntoView({ block: "start", behavior: "smooth" });
+    else if (unreadEventId) props.onJump(unreadEventId);
+  }
+
+  function markAllRead() {
+    history?.dismissUnread();
+    const latest = props.events.at(-1);
+    if (latest && props.session) props.onRead(latest.event_id);
   }
 
   function scrollToBottom() {
@@ -172,8 +241,32 @@ export function Timeline(props: TimelineProps) {
   }
 
   useLayoutEffect(() => {
-    if (nearBottom.current) scrollToBottom();
-  }, [props.events]);
+    const element = container.current;
+    if (!element) return;
+    const first = props.events[0]?.event_id;
+    const previous = snapshot.current;
+    if (!positioned.current && props.events.length) {
+      // Open at the first unread message when it is loaded, otherwise at the latest.
+      positioned.current = true;
+      const divider = unreadDivider();
+      if (divider) {
+        divider.scrollIntoView({ block: "start" });
+        nearBottom.current =
+          element.scrollHeight - element.scrollTop - element.clientHeight < 100;
+        setShowJump(!nearBottom.current);
+        readLatest();
+      } else scrollToBottom();
+    } else if (nearBottom.current) scrollToBottom();
+    else if (previous.first && first !== previous.first)
+      // Older messages were added above: keep the reader's place.
+      element.scrollTop = previous.top + element.scrollHeight - previous.height;
+    remember();
+    updateUnread();
+    // Short rooms never scroll, so fetch older pages until the view fills or history ends.
+    loadOlderIfNear();
+    // The helpers read the latest props through refs.
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [props.events, history?.hasOlder, history?.loadingOlder, unreadEventId]);
 
   useEffect(() => {
     const observer = new ResizeObserver(() => {
@@ -213,11 +306,43 @@ export function Timeline(props: TimelineProps) {
         aria-relevant="additions text"
         onScroll={onScroll}
       >
+        {unreadEventId && unreadAbove && (
+          // A zero-height sticky dock, so showing the banner never shifts the messages.
+          <div className="unread-banner-dock">
+            <div className="unread-banner">
+              <button
+                className="unread-banner-jump"
+                type="button"
+                onClick={jumpToUnread}
+              >
+                <span>
+                  {t("unreadSince", { count: history?.unreadCount ?? 0 })}
+                </span>
+                <span className="unread-banner-action">{t("jumpUnread")}</span>
+              </button>
+              <button
+                className="unread-banner-read"
+                type="button"
+                onClick={markAllRead}
+              >
+                {t("markRead")}
+              </button>
+            </div>
+          </div>
+        )}
         {!props.events.length && (
           <div id="empty-state" className="empty-state">
             <h2>{t("empty")}</h2>
             {!props.session && <p id="empty-description">{t("signedOut")}</p>}
           </div>
+        )}
+        {history?.loadingOlder && (
+          <div className="history-status" role="status">
+            {t("loadingOlder")}
+          </div>
+        )}
+        {history?.atStart && props.events.length > 0 && (
+          <div className="history-status">{t("historyStart")}</div>
         )}
         <div id="message-list" ref={list}>
           {props.events.map((event, index) => {
@@ -229,7 +354,9 @@ export function Timeline(props: TimelineProps) {
             const quoteId =
               metadata?.replyTo ??
               event.content["m.relates_to"]?.["m.in_reply_to"]?.event_id;
+            const unreadStart = event.event_id === unreadEventId;
             const grouped =
+              !unreadStart &&
               sameDay &&
               previous.sender === event.sender &&
               !quoteId &&
@@ -252,6 +379,11 @@ export function Timeline(props: TimelineProps) {
             return (
               <Fragment key={event.event_id}>
                 {!sameDay && <div className="date-separator">{day}</div>}
+                {unreadStart && (
+                  <div className="unread-separator" role="separator">
+                    <span>{t("newMessages")}</span>
+                  </div>
+                )}
                 <article className={className} data-event-id={event.event_id}>
                   <button
                     className="message-avatar-button"
