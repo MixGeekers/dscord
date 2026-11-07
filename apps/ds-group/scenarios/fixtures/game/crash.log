@@ -1,0 +1,9 @@
+[2026-11-07 21:14:03.118] [INFO] Fogharbor demo-0.9.3 (build 4412) starting
+[2026-11-07 21:14:05.902] [INFO] GPU: NVIDIA GeForce GTX 1660, driver 566.14
+[2026-11-07 21:31:47.551] [INFO] Scene load: chapter1/bell_tower
+[2026-11-07 21:31:47.560] [INFO] SaveLoader: restoring slot 2 (autosave)
+[2026-11-07 21:31:47.561] [ERROR] Unhandled exception: System.NullReferenceException: Object reference not set to an instance of an object.
+   at Fogharbor.Save.SaveLoader.RestoreTowerState(TowerSnapshot snapshot) in SaveLoader.cs:line 412
+   at Fogharbor.Save.SaveLoader.Restore(SaveSlot slot) in SaveLoader.cs:line 188
+   at Fogharbor.Scenes.Chapter1.BellTower.OnEnter() in BellTower.cs:line 57
+[2026-11-07 21:31:47.590] [FATAL] Crash dump written to %LOCALAPPDATA%/Fogharbor/crash-20261107-213147.dmp
