@@ -1,7 +1,7 @@
 import { t, formatFileSize, onLocaleChange } from "./i18n.js";
 import { createActionIcon, createFileIcon } from "./src/icons.ts";
 import { newRequestId } from "./src/identifiers.ts";
-import { attachmentResponse } from "./src/attachment-proof.ts";
+import { roomAttachmentRoute } from "./src/attachment-proof.ts";
 
 export { formatFileSize } from "./i18n.js";
 
@@ -469,7 +469,6 @@ export function renderAttachmentCard(
     request,
     roomId,
     eventId,
-    allowLegacy = false,
     onPreview,
     onError = () => {},
   } = {},
@@ -493,27 +492,25 @@ export function renderAttachmentCard(
   let busy = false;
 
   async function readResponse(metadata, session) {
-    const response = await attachmentResponse({
-      request:
-        request ??
-        ((route, init) =>
-          fetch(route, {
-            ...init,
-            headers: { Authorization: `Bearer ${session.access_token}` },
-            credentials: "omit",
-            redirect: "error",
-            cache: "no-store",
-          })),
-      attachment,
-      source: { roomId, eventId },
-      allowLegacy,
-      homeServerName: session.user_id.slice(session.user_id.indexOf(":") + 1),
-      metadata,
-      signal: AbortSignal.any([
-        controller.signal,
-        AbortSignal.timeout(5 * 60 * 1000),
-      ]),
-    });
+    const send =
+      request ??
+      ((route, init) =>
+        fetch(route, {
+          ...init,
+          headers: { Authorization: `Bearer ${session.access_token}` },
+          credentials: "omit",
+          redirect: "error",
+          cache: "no-store",
+        }));
+    const response = await send(
+      roomAttachmentRoute(attachment.id, { roomId, eventId }, metadata),
+      {
+        signal: AbortSignal.any([
+          controller.signal,
+          AbortSignal.timeout(5 * 60 * 1000),
+        ]),
+      },
+    );
     if (!response.ok) {
       const result = await response.json().catch(() => null);
       throw new Error(

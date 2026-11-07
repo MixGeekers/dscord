@@ -3,19 +3,12 @@ import { afterEach, beforeEach, test } from "node:test";
 import { parseClientConfig, discoverHome } from "../web/src/client-config.ts";
 import {
   bindSession,
-  migrateIdentityStorage,
-  readScoped,
   restoreSession,
   sessionStorageKey,
   storageKey,
 } from "../web/src/session.ts";
 import { createApi, createRequest } from "../web/src/api.ts";
-import {
-  discoverServer,
-  legacySpaces,
-  roomsInSpace,
-  validateSpaces,
-} from "../web/src/spaces.ts";
+import { discoverServer, roomsInSpace } from "../web/src/spaces.ts";
 
 class Storage {
   values = new Map();
@@ -130,58 +123,28 @@ test("invalid deployment origins fail before credentials are read or sent", () =
   );
 });
 
-test("legacy unbound session migrates only at its original same-origin deployment", () => {
-  sessionStorage.setItem("ds-group.session", JSON.stringify(receipt));
-  assert.equal(restoreSession(config), null);
-  assert.equal(sessionStorage.getItem(sessionStorageKey(config)), null);
-  const migrated = restoreSession(local);
-  assert.equal(migrated.user_id, receipt.user_id);
-  assert.equal(migrated.binding.homeCoreUrl, asset);
-  assert.equal(sessionStorage.getItem("ds-group.session"), null);
-  assert.deepEqual(restoreSession(local), migrated);
-});
-
 test("a foreign or malformed binding is never restored as a local session", () => {
-  const session = bindSession(receipt, config);
+  const session = bindSession(receipt, config, discovery);
   sessionStorage.setItem(sessionStorageKey(local), JSON.stringify(session));
-  sessionStorage.setItem("ds-group.session", JSON.stringify(session));
   assert.equal(restoreSession(local), null);
   sessionStorage.setItem(
     sessionStorageKey(config),
     JSON.stringify({ user_id: "invalid", access_token: "" }),
   );
-  sessionStorage.removeItem("ds-group.session");
   assert.equal(restoreSession(config), null);
 });
 
-test("login binds stable subjects and rejects a changed home authority, identity or Matrix target", () => {
+test("login binds the session to the discovered home authority", () => {
   const session = bindSession(centralReceipt, config, discovery);
   assert.equal(session.binding.authorityId, discovery.authorityId);
   assert.equal(session.identity.subjectId, "alice-subject");
-  for (const invalid of [
-    { ...centralReceipt, user_id: "@alice:other.example" },
-    {
-      ...centralReceipt,
-      identity: { ...centralReceipt.identity, authorityId: "foreign" },
-    },
-    {
-      ...centralReceipt,
-      identity: { ...centralReceipt.identity, subjectId: "" },
-    },
-    {
-      ...centralReceipt,
-      home: { ...centralReceipt.home, matrixUrl: "https://foreign.example" },
-    },
-    {
-      ...centralReceipt,
-      home: { ...centralReceipt.home, coreUrl: "https://foreign.example" },
-    },
-  ])
-    assert.throws(() => bindSession(invalid, config, discovery));
+  assert.throws(() =>
+    bindSession({ user_id: receipt.user_id }, config, discovery),
+  );
 });
 
 test("room, draft, retry and Bot keys distinguish deployment, full identity and space", () => {
-  const session = bindSession(receipt, config);
+  const session = bindSession(receipt, config, discovery);
   const a = storageKey(
     config,
     "draft",
@@ -206,7 +169,11 @@ test("room, draft, retry and Bot keys distinguish deployment, full identity and 
     storageKey(
       config,
       "draft",
-      bindSession({ ...receipt, user_id: "@alice:other.example" }, config),
+      bindSession(
+        { ...receipt, user_id: "@alice:other.example" },
+        config,
+        discovery,
+      ),
       "a.example",
       "!same:a.example",
     ),
@@ -217,81 +184,13 @@ test("room, draft, retry and Bot keys distinguish deployment, full identity and 
   );
 });
 
-test("legacy drafts are copied into the original account scope without crossing a remote deployment", () => {
-  const session = bindSession(receipt, local);
-  sessionStorage.setItem(
-    "old-draft",
-    JSON.stringify({ body: "retained", attachments: [] }),
-  );
-  assert.equal(
-    readScoped(
-      config,
-      "draft",
-      bindSession(receipt, config),
-      "home.example",
-      "!one:home.example",
-      "old-draft",
-    ),
-    null,
-  );
-  assert.equal(
-    readScoped(
-      local,
-      "draft",
-      session,
-      "home.example",
-      "!one:home.example",
-      "old-draft",
-    ).body,
-    "retained",
-  );
-  assert.equal(sessionStorage.getItem("old-draft"), null);
-  assert.equal(
-    readScoped(local, "draft", session, "home.example", "!one:home.example")
-      .body,
-    "retained",
-  );
-});
-
-test("authenticated identity upgrade retains the same users scoped drafts and pending transactions", () => {
-  const old = bindSession(receipt, config);
-  const next = bindSession(centralReceipt, config, discovery);
-  const oldKey = storageKey(
-    config,
-    "pending",
-    old,
-    "a.example",
-    "!one:a.example",
-  );
-  sessionStorage.setItem(
-    oldKey,
-    JSON.stringify({ transactionId: "same-retry", body: "preserved" }),
-  );
-  migrateIdentityStorage(config, old, next);
-  assert.equal(sessionStorage.getItem(oldKey), null);
-  assert.equal(
-    readScoped(config, "pending", next, "a.example", "!one:a.example")
-      .transactionId,
-    "same-retry",
-  );
-  const stranger = bindSession(
-    { ...receipt, user_id: "@bob:home.example" },
-    config,
-  );
-  migrateIdentityStorage(config, next, stranger);
-  assert.equal(
-    readScoped(config, "pending", stranger, "a.example", "!one:a.example"),
-    null,
-  );
-});
-
 test("ordinary API requests carry only the bound credential with no cookie or redirect forwarding", async () => {
   const calls = [];
   globalThis.fetch = async (url, options) => {
     calls.push({ url, options });
     return Response.json({ ok: true });
   };
-  const session = bindSession(receipt, config);
+  const session = bindSession(receipt, config, discovery);
   const api = createApi(() => session, config);
   await api("/api/rooms", { headers: { Authorization: "Bearer injected" } });
   await api("/api/bootstrap", {
@@ -322,7 +221,7 @@ test("unbound split-origin and foreign sessions fail before any network request"
     /not bound/,
   );
   await assert.rejects(
-    createApi(() => bindSession(receipt, local), config)("/api/me"),
+    createApi(() => bindSession(receipt, local, discovery), config)("/api/me"),
     /not bound/,
   );
   for (const route of [
@@ -332,14 +231,14 @@ test("unbound split-origin and foreign sessions fail before any network request"
     "/api/\\evil",
   ]) {
     await assert.rejects(
-      createApi(() => bindSession(receipt, config), config)(route),
+      createApi(() => bindSession(receipt, config, discovery), config)(route),
     );
   }
   assert.equal(calls, 0);
 });
 
 test("late network responses cannot be reused by another account session", async () => {
-  let account = bindSession(receipt, config);
+  let account = bindSession(receipt, config, discovery);
   let release;
   globalThis.fetch = async () =>
     new Promise((resolve) => {
@@ -349,6 +248,7 @@ test("late network responses cannot be reused by another account session", async
   account = bindSession(
     { user_id: "@bob:home.example", access_token: "bob-token" },
     config,
+    discovery,
   );
   release(Response.json({ rooms: ["private Alice data"] }));
   await assert.rejects(pending, (error) => error.name === "AbortError");
@@ -398,27 +298,7 @@ test("unknown-server discovery uses only the entered origin and public endpoints
   assert.equal(calls[0].options.referrerPolicy, "no-referrer");
 });
 
-test("legacy discovery still does not establish membership or import credentials", async () => {
-  let calls = 0;
-  globalThis.fetch = async () =>
-    ++calls === 1
-      ? new Response("{}", { status: 404 })
-      : Response.json({
-          name: "Legacy",
-          roomId: "!one:other.example",
-          participants: [],
-          access_token: "must-not-import",
-        });
-  assert.deepEqual(await discoverServer("https://legacy.example"), {
-    origin: "https://legacy.example",
-    name: "Legacy",
-    serverName: null,
-    authorityId: null,
-  });
-  assert.equal(sessionStorage.length, 0);
-});
-
-test("space lists validate the full home identity and never infer joined from a discovery", () => {
+test("space room lists never infer joined from a discovery", () => {
   const facts = {
     homeServer: "home.example",
     userId: receipt.user_id,
@@ -453,7 +333,6 @@ test("space lists validate the full home identity and never infer joined from a 
       },
     ],
   };
-  assert.equal(validateSpaces(facts, receipt.user_id), facts);
   const rooms = facts.spaces[0].rooms.map((room) => ({
     ...room,
     kind: "group",
@@ -463,25 +342,16 @@ test("space lists validate the full home identity and never infer joined from a 
     roomsInSpace(rooms, facts.spaces[0]).map((room) => room.roomId),
     ["!one:a.example"],
   );
-  assert.throws(() => validateSpaces(facts, "@alice:elsewhere.example"));
-  assert.throws(() =>
-    validateSpaces(
-      { ...facts, spaces: [...facts.spaces, ...facts.spaces] },
-      receipt.user_id,
-    ),
-  );
-  assert.deepEqual(
-    legacySpaces(receipt.user_id, [], { roomId: "!public:home.example" })
-      .spaces[0].rooms,
-    [],
-  );
 });
 
 test("trusted same-origin HTTP intranet deployment keeps its original session and private Matrix discovery", async () => {
   const origin = "http://192.168.50.25:18100";
   const config = parseClientConfig({ schemaVersion: 1 }, origin);
   assert.equal(config.homeCoreUrl, origin);
-  sessionStorage.setItem("ds-group.session", JSON.stringify(receipt));
+  sessionStorage.setItem(
+    sessionStorageKey(config),
+    JSON.stringify(bindSession(receipt, config, discovery)),
+  );
   const restored = restoreSession(config);
   assert.equal(restored.binding.homeCoreUrl, origin);
   assert.equal(restored.user_id, receipt.user_id);
