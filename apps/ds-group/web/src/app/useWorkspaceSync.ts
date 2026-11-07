@@ -6,7 +6,8 @@ import { storageKey } from "../session";
 import { roomsInSpace } from "../spaces";
 import type { SpacesResult } from "../spaces";
 import type { ClientConfig, ClientDiscovery } from "../client-config";
-import { emptyMentions, mergeEvents, ownedBotCacheKey } from "./workspace";
+import { emptyMentions, ownedBotCacheKey } from "./workspace";
+import { mergeEvents } from "./timeline-events";
 import type {
   AccountProfile,
   ChatEvent,

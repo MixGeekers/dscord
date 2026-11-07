@@ -153,3 +153,16 @@ test('unreads deduplicate replay, preserve read markers and keep here under the 
   assert.equal(restored.unreadFor(bob, roomId).firstUnreadEventId, null);
   assert.deepEqual(mentionKindsFor(one, bob), ['user']);
 });
+
+test('edits are not new unreads and withdrawn messages leave unreads and the inbox', async t => {
+  const { feature } = await fixture(t);
+  const original = event('$original', { users: [bob] }, 1000);
+  const edit = { ...event('$edit', { users: [bob] }, 2000), content: { body: '* changed', 'm.relates_to': { rel_type: 'm.replace', event_id: '$original' } } };
+  feature.recordEvents(bob, [original, edit, event('$kept', { users: [bob] }, 3000)]);
+  assert.equal(feature.unreadFor(bob, roomId).unreadCount, 2);
+  feature.recordEvents(bob, [{ type: 'm.room.redaction', event_id: '$redaction', room_id: roomId, sender: alice, redacts: '$original', content: {} }]);
+  assert.deepEqual(feature.unreadFor(bob, roomId), { unreadCount: 1, mentionCount: 1, lastEventId: '$kept', firstUnreadEventId: '$kept' });
+  feature.recordEvents(bob, [{ ...event('$kept', {}, 3000), content: {}, unsigned: { redacted_because: { event_id: '$r2', type: 'm.room.redaction' } } }]);
+  assert.equal(feature.unreadFor(bob, roomId).unreadCount, 0);
+  assert.equal(feature.inbox(bob, [roomId]).events.length, 0);
+});

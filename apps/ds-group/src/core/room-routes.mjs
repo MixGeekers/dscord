@@ -31,7 +31,7 @@ async function validateMessageReferences(client, roomId, input) {
 }
 
 export function roomRoutes(router, app) {
-  const { setup, chat, chatFeatures, attachmentAccess, media, accounts } = app;
+  const { setup, chat, chatFeatures, attachmentAccess, media, accounts, tasks } = app;
   chat.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;
     CREATE TABLE IF NOT EXISTS direct_rooms (pair_key TEXT PRIMARY KEY, room_id TEXT NOT NULL, participants_json TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS group_requests (request_key TEXT PRIMARY KEY, input_hash TEXT NOT NULL, status TEXT NOT NULL, room_id TEXT);
@@ -242,5 +242,44 @@ export function roomRoutes(router, app) {
     const matrix = client();
     const members = await chatFeatures.roomMembers(matrix, roomId, userId);
     send(200, await sendMessage({ client: matrix, userId, roomId, input: { ...input, body: text, to }, attachments, members, token: token() }));
+  });
+
+  // Only the sender changes or withdraws a message, and only the original (not an earlier edit).
+  async function ownMessage(client, userId, roomId, eventId) {
+    let event;
+    try { event = await client.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/event/${encodeURIComponent(eventId)}`); }
+    catch (error) {
+      if (![403, 404].includes(error.status)) throw error;
+      throw httpError(404, 'The message is unavailable in this conversation', { code: 'MESSAGE_UNAVAILABLE' });
+    }
+    if (event.event_id !== eventId || event.type !== 'm.room.message' || event.content?.['m.relates_to']?.rel_type === 'm.replace') {
+      throw httpError(400, 'Choose an original message', { code: 'INVALID_MESSAGE_TARGET' });
+    }
+    if (event.sender !== userId) throw httpError(403, 'Only the sender can change this message', { code: 'NOT_MESSAGE_SENDER' });
+    if (event.unsigned?.redacted_because) throw httpError(409, 'The message was withdrawn', { code: 'MESSAGE_WITHDRAWN' });
+    return event;
+  }
+
+  router.put(/^\/api\/rooms\/([^/]+)\/messages\/([^/]+)$/, async ({ userId, client, body, send }, roomId, eventId) => {
+    const input = await body();
+    const text = input.body;
+    if (typeof text !== 'string' || !text.trim() || text.length > 16000) return send(400, { error: 'An edited message needs text, with at most 16000 characters' });
+    if (typeof input.transactionId !== 'string' || !REQUEST_ID.test(input.transactionId)) return send(400, { error: 'A stable transaction ID is required' });
+    const matrix = client();
+    const original = await ownMessage(matrix, userId, roomId, eventId);
+    const members = await chatFeatures.roomMembers(matrix, roomId, userId);
+    const meta = original.content['org.ds_group'] || {};
+    const resolved = await chatFeatures.resolveMessage({ userId, roomId, client: matrix, members,
+      input: { body: text, mentions: input.mentions, replyTo: meta.replyTo, replyMention: meta.replyMention } });
+    const receipt = await matrix.edit(roomId, eventId, text, { transactionId: `edit-${input.transactionId}`, mentions: resolved.mentions, mMentions: resolved.mMentions });
+    send(200, { event_id: receipt.event_id });
+  });
+
+  router.delete(/^\/api\/rooms\/([^/]+)\/messages\/([^/]+)$/, async ({ userId, client, send }, roomId, eventId) => {
+    const matrix = client();
+    await ownMessage(matrix, userId, roomId, eventId);
+    const receipt = await matrix.redact(roomId, eventId);
+    // Withdrawing a request also stops the work it started.
+    send(200, { event_id: receipt.event_id, cancelledTasks: tasks.cancelForEvent(roomId, eventId) });
   });
 }

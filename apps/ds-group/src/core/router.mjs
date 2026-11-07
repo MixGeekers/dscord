@@ -9,6 +9,7 @@ export class Router {
 
   get(path, handler) { return this.on('GET', path, handler); }
   post(path, handler) { return this.on('POST', path, handler); }
+  put(path, handler) { return this.on('PUT', path, handler); }
   delete(path, handler) { return this.on('DELETE', path, handler); }
 
   match(method, pathname) {

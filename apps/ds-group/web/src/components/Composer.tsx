@@ -57,6 +57,8 @@ export interface ComposerProps {
   isWorking?: boolean;
   pending: OutgoingMessage | null;
   onSend(message: OutgoingMessage): Promise<boolean>;
+  /** ↑ in an empty composer edits the sender's latest message; returns whether one was found. */
+  onEditLast?(): boolean;
   limits?: { maxBytes: number; maxPerMessage: number };
   onError(message: string): void;
 }
@@ -580,6 +582,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                 suppressContentEditableWarning
                 spellCheck
                 aria-label={t("message", { room: props.room?.name ?? "" })}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "ArrowUp" &&
+                    !event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.metaKey &&
+                    !body.trim() &&
+                    !uploads.length &&
+                    props.onEditLast?.()
+                  )
+                    event.preventDefault();
+                }}
               />
               {props.isWorking && (
                 <span

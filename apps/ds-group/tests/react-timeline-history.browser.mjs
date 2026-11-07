@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createServer } from 'vite';
@@ -132,6 +132,9 @@ try {
   await scrollTo('bottom');
   await page.locator('.unread-banner').waitFor();
   assert.equal(await page.locator('.unread-banner-jump').innerText(), '20 new messages\nJump to first unread');
+  const screenshots = path.join(packageRoot, '.local', 'chat-timeline');
+  await mkdir(screenshots, { recursive: true });
+  await page.screenshot({ path: path.join(screenshots, 'unread-banner-dark-en.png') });
   assert.equal(await page.evaluate(() => window.reads.at(-1)), '$79');
   await page.locator('.unread-banner-jump').click();
   await page.waitForFunction(() => {
@@ -139,6 +142,7 @@ try {
     return top >= 0 && top < 60;
   });
   await page.locator('.unread-banner').waitFor({ state: 'detached' });
+  await page.screenshot({ path: path.join(screenshots, 'unread-divider-dark-en.png') });
 
   // Bot replies render as Markdown inside the timeline.
   assert.equal(await page.locator('[data-event-id="$75"] .markdown-table td').first().textContent(), '读取');

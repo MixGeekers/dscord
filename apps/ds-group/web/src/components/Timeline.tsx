@@ -27,6 +27,9 @@ import { markdownPreview } from "../markdown";
 import type { MentionToken } from "../markdown";
 import { MarkdownMessage } from "./MarkdownMessage";
 import type { TimelineHistory } from "../app/useTimelineHistory";
+import { lastVisible, visibleEvents } from "../app/timeline-events";
+import type { MentionValue } from "../../mention-editor.js";
+import { MessageEditor } from "./MessageEditor";
 
 export interface TimelineProps {
   events: ChatEvent[];
@@ -41,6 +44,11 @@ export interface TimelineProps {
   onJump(eventId: string): void;
   onRead(eventId: string): void;
   history?: TimelineHistory;
+  /** The message being edited in place, if any. */
+  editingId?: string | null;
+  onEditing?(eventId: string | null): void;
+  onEdit?(eventId: string, value: MentionValue): Promise<boolean>;
+  onWithdraw?(eventId: string): Promise<boolean>;
 }
 
 /** Load the next older page once the reader is this close to the top. */
@@ -81,6 +89,10 @@ export function Timeline(props: TimelineProps) {
     top: 0,
   });
   const history = props.history;
+  const shown = useMemo(() => visibleEvents(props.events), [props.events]);
+  const shownRef = useRef(shown);
+  shownRef.current = shown;
+  const [confirmWithdraw, setConfirmWithdraw] = useState<string | null>(null);
   const unreadEventId = history?.unreadEventId ?? null;
   const [copyStatus, setCopyStatus] = useState("");
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
@@ -156,7 +168,8 @@ export function Timeline(props: TimelineProps) {
   }
 
   function readLatest() {
-    const latest = latestProps.current.events.at(-1);
+    // Edits and withdrawn messages are not read markers; the newest shown message is.
+    const latest = lastVisible(shownRef.current);
     if (
       latest &&
       nearBottom.current &&
@@ -227,7 +240,7 @@ export function Timeline(props: TimelineProps) {
 
   function markAllRead() {
     history?.dismissUnread();
-    const latest = props.events.at(-1);
+    const latest = lastVisible(shown);
     if (latest && props.session) props.onRead(latest.event_id);
   }
 
@@ -330,7 +343,7 @@ export function Timeline(props: TimelineProps) {
             </div>
           </div>
         )}
-        {!props.events.length && (
+        {!shown.length && (
           <div id="empty-state" className="empty-state">
             <h2>{t("empty")}</h2>
             {!props.session && <p id="empty-description">{t("signedOut")}</p>}
@@ -341,12 +354,12 @@ export function Timeline(props: TimelineProps) {
             {t("loadingOlder")}
           </div>
         )}
-        {history?.atStart && props.events.length > 0 && (
+        {history?.atStart && shown.length > 0 && (
           <div className="history-status">{t("historyStart")}</div>
         )}
         <div id="message-list" ref={list}>
-          {props.events.map((event, index) => {
-            const previous = props.events[index - 1];
+          {shown.map((event, index) => {
+            const previous = shown[index - 1];
             const day = formatDate(event.origin_server_ts);
             const sameDay =
               previous && formatDate(previous.origin_server_ts) === day;
@@ -365,9 +378,7 @@ export function Timeline(props: TimelineProps) {
               (member) => member.id === event.sender,
             );
             const name = displayName(event.sender);
-            const quote = props.events.find(
-              (item) => item.event_id === quoteId,
-            );
+            const quote = shown.find((item) => item.event_id === quoteId);
             const attachments = metadata?.attachments ?? [];
             const showBody =
               event.content.body &&
@@ -375,6 +386,9 @@ export function Timeline(props: TimelineProps) {
             const mentioned =
               event.sender !== props.session?.user_id &&
               mentionKindsFor(event, props.session?.user_id).length > 0;
+            const own = event.sender === props.session?.user_id;
+            const editing =
+              props.editingId === event.event_id && !event.withdrawn;
             const className = `message ${person?.kind === "bot" ? "bot" : "human"}${grouped ? " grouped" : ""}${mentioned ? " mentioned" : ""}`;
             return (
               <Fragment key={event.event_id}>
@@ -430,16 +444,61 @@ export function Timeline(props: TimelineProps) {
                         </span>
                       </button>
                     )}
-                    {showBody && (
-                      <div className="message-bubble">
-                        <MessageBody
-                          body={event.content.body}
-                          roleLabels={metadata?.mentions?.roleLabels}
-                          renderMention={renderMention}
-                        />
+                    {event.withdrawn ? (
+                      <div className="message-withdrawn">
+                        {t("withdrawnMessage")}
+                      </div>
+                    ) : editing && props.onEdit ? (
+                      <MessageEditor
+                        body={event.content.body}
+                        mentionables={props.mentionables}
+                        onSave={(value) => props.onEdit!(event.event_id, value)}
+                        onCancel={() => props.onEditing?.(null)}
+                      />
+                    ) : (
+                      showBody && (
+                        <div className="message-bubble">
+                          <MessageBody
+                            body={event.content.body}
+                            roleLabels={metadata?.mentions?.roleLabels}
+                            renderMention={renderMention}
+                          />
+                        </div>
+                      )
+                    )}
+                    {event.edited && !event.withdrawn && !editing && (
+                      <span
+                        className="message-edited"
+                        title={t("editedAt", {
+                          time: formatDateTime(event.edited),
+                        })}
+                      >
+                        {t("edited")}
+                      </span>
+                    )}
+                    {confirmWithdraw === event.event_id && (
+                      <div className="message-confirm" role="group">
+                        <span>{t("confirmWithdraw")}</span>
+                        <button
+                          type="button"
+                          className="message-editor-button"
+                          onClick={() => setConfirmWithdraw(null)}
+                        >
+                          {t("cancel")}
+                        </button>
+                        <button
+                          type="button"
+                          className="message-editor-button danger"
+                          onClick={() => {
+                            setConfirmWithdraw(null);
+                            void props.onWithdraw?.(event.event_id);
+                          }}
+                        >
+                          {t("withdraw")}
+                        </button>
                       </div>
                     )}
-                    {attachments.length > 0 && (
+                    {!event.withdrawn && attachments.length > 0 && (
                       <div className="message-attachments">
                         {attachments.map((attachment) => (
                           <AttachmentView
@@ -454,7 +513,21 @@ export function Timeline(props: TimelineProps) {
                       </div>
                     )}
                   </div>
-                  <div className="message-actions">
+                  <div className="message-actions" hidden={event.withdrawn}>
+                    {own && props.onEdit && !event.withdrawn && (
+                      <button
+                        className="message-action"
+                        type="button"
+                        title={t("edit")}
+                        aria-label={t("edit")}
+                        onClick={() => {
+                          setConfirmWithdraw(null);
+                          props.onEditing?.(event.event_id);
+                        }}
+                      >
+                        <Icon name="edit" />
+                      </button>
+                    )}
                     <button
                       className="message-action"
                       type="button"
@@ -473,6 +546,20 @@ export function Timeline(props: TimelineProps) {
                     >
                       <Icon name="copy" />
                     </button>
+                    {own && props.onWithdraw && !event.withdrawn && (
+                      <button
+                        className="message-action danger"
+                        type="button"
+                        title={t("withdraw")}
+                        aria-label={t("withdraw")}
+                        onClick={() => {
+                          props.onEditing?.(null);
+                          setConfirmWithdraw(event.event_id);
+                        }}
+                      >
+                        <Icon name="trash" />
+                      </button>
+                    )}
                   </div>
                 </article>
               </Fragment>

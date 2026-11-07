@@ -3,7 +3,7 @@ import type { Dispatch, SetStateAction } from "react";
 import { messageOf } from "../api";
 import type { createApi } from "../api";
 import type { ChatEvent, Room } from "../types";
-import { mergeEvents } from "./workspace";
+import { mergeEvents } from "./timeline-events";
 
 type Api = ReturnType<typeof createApi>;
 const PAGE_SIZE = 50;

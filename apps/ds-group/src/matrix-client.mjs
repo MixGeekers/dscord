@@ -142,6 +142,27 @@ export class MatrixClient {
     return this.request('PUT', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(transactionId)}`, content);
   }
 
+  /** Replace a message's text (Matrix `m.replace`); relations, recipients and attachments stay on the original. */
+  edit(roomId, eventId, body, { transactionId = randomUUID(), mentions, mMentions } = {}) {
+    if (typeof eventId !== 'string' || !eventId) throw new Error('The edited message needs an event ID');
+    if (typeof body !== 'string' || !body.trim()) throw new Error('An edited message needs text');
+    const replacement = { msgtype: 'm.text', body, 'org.ds_group': mentions !== undefined ? { mentions } : {},
+      ...(mMentions !== undefined ? { 'm.mentions': mMentions } : {}) };
+    // The outer content is the fallback for clients without edit support; it mentions nobody again.
+    // https://spec.matrix.org/latest/client-server-api/#event-replacements
+    return this.request('PUT', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/send/m.room.message/${encodeURIComponent(transactionId)}`, {
+      msgtype: 'm.text', body: `* ${body}`, 'm.mentions': {}, 'm.new_content': replacement,
+      'm.relates_to': { rel_type: 'm.replace', event_id: eventId },
+    });
+  }
+
+  /** Withdraw an event; Matrix strips its content for everyone. */
+  redact(roomId, eventId, { transactionId = randomUUID(), reason } = {}) {
+    if (typeof eventId !== 'string' || !eventId) throw new Error('The withdrawn message needs an event ID');
+    return this.request('PUT', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/redact/${encodeURIComponent(eventId)}/${encodeURIComponent(transactionId)}`,
+      reason ? { reason } : {});
+  }
+
   async timeline(roomId, limit = 50) {
     return (await this.timelinePage(roomId, { limit })).events;
   }

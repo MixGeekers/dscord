@@ -170,7 +170,13 @@ export class ChatFeatures {
   recordEvents(userId, events) {
     const insert = this.db.prepare(`INSERT OR IGNORE INTO chat_events
       (user_id,event_id,room_id,sender_id,event_ts,event_json,mention_kinds_json) VALUES (?,?,?,?,?,?,?)`);
+    const forget = this.db.prepare('DELETE FROM chat_events WHERE user_id=? AND event_id=?');
     for (const event of events) {
+      // A withdrawn message leaves unreads and the inbox; an edit is not a new message.
+      const withdrawn = event.type === 'm.room.redaction' ? event.redacts || event.content?.redacts
+        : event.unsigned?.redacted_because ? event.event_id : undefined;
+      if (typeof withdrawn === 'string') { forget.run(userId, withdrawn); continue; }
+      if (event.content?.['m.relates_to']?.rel_type === 'm.replace') continue;
       if (event.type !== 'm.room.message' || !event.event_id || !event.room_id || !event.sender || typeof event.content?.body !== 'string') continue;
       insert.run(userId, event.event_id, event.room_id, event.sender,
         Number.isFinite(event.origin_server_ts) ? event.origin_server_ts : this.now(), JSON.stringify(event), JSON.stringify(mentionKindsFor(event, userId)));
