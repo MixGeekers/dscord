@@ -1,4 +1,4 @@
-import { chmod, mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -212,6 +212,14 @@ export async function privateJson(filename, value) {
   await chmod(filename, 0o600);
 }
 
+function deepFreeze(value) {
+  if (value && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const item of Object.values(value)) deepFreeze(item);
+    Object.freeze(value);
+  }
+  return value;
+}
+
 /** Single admin writer. Revision CAS prevents stale browser edits; readers fail closed on corrupt policy. */
 export class Governance {
   constructor({
@@ -224,16 +232,24 @@ export class Governance {
     this.filename = path.join(this.root, "policy.json");
     this.writing = Promise.resolve();
   }
+  // The admin service writes the same file from another process, so the cache is keyed by file identity.
   async read() {
+    let info;
     try {
-      return validatePolicy(
-        JSON.parse(await readFile(this.filename, "utf8")),
-        this.domain,
-      );
+      info = await stat(this.filename, { bigint: true });
     } catch (error) {
       if (error.code === "ENOENT") return emptyPolicy(this.domain);
       throw error;
     }
+    const key = `${info.ino}:${info.mtimeNs}:${info.size}`;
+    if (this.cached?.key !== key) {
+      const policy = validatePolicy(
+        JSON.parse(await readFile(this.filename, "utf8")),
+        this.domain,
+      );
+      this.cached = { key, policy: deepFreeze(policy) };
+    }
+    return this.cached.policy;
   }
   async save(input, afterSave) {
     const operation = this.writing

@@ -12,7 +12,10 @@ function accountInput(value) {
   return value;
 }
 
+const SESSION_CACHE_MS = 15000;
+
 /** Persistent local identities. Matrix owns passwords and browser sessions. */
+
 export class AccountService {
   constructor({ setup, config = {}, dataRoot, onParticipant, registrationSecret, clientFactory } = {}) {
     this.setup = setup;
@@ -25,6 +28,7 @@ export class AccountService {
     this.mode = config.registrationMode ?? 'open';
     if (!['open', 'closed'].includes(this.mode)) throw new Error('registrationMode must be open or closed');
     this.operations = new Map();
+    this.sessions = new Map();
   }
 
   async initialize() {
@@ -111,10 +115,17 @@ export class AccountService {
     return userId;
   }
 
+  // Matrix owns token validity; a short cache avoids one whoami round trip per API call.
   async authenticate(token) {
-    const result = await this.clientFactory(token).whoami();
-    this.assertActive(result.user_id);
-    return result;
+    const now = Date.now();
+    let cached = this.sessions.get(token);
+    if (!cached || cached.expires <= now) {
+      if (this.sessions.size > 1000) for (const [key, value] of this.sessions) if (value.expires <= now) this.sessions.delete(key);
+      cached = { result: await this.clientFactory(token).whoami(), expires: now + SESSION_CACHE_MS };
+      this.sessions.set(token, cached);
+    }
+    this.assertActive(cached.result.user_id);
+    return cached.result;
   }
 
   session(session) {
@@ -320,6 +331,7 @@ export class AccountService {
   }
 
   async logout(token) {
+    this.sessions.delete(token);
     // Synthetic demo credentials are also the Core service credential. They are never revoked here.
     if (this.setup.participants.some(person => person.accessToken === token)) return { loggedOut: true, localOnly: true };
     try { await this.clientFactory(token).request('POST', '/_matrix/client/v3/logout', {}); }

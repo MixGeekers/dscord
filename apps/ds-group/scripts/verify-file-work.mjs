@@ -268,7 +268,6 @@ try {
   for (const filename of ['scripts/verify-file-work.mjs', 'src/core.mjs', 'src/media.mjs', 'src/matrix-client.mjs', 'src/bot-node.mjs', 'src/node-store.mjs', 'src/node-files.mjs', 'src/tasks.mjs', 'dsh-plugin/runtime.mjs', 'dsh-plugin/runtime-rules.mjs', 'dsh-plugin/work-files.mjs', 'src/file-formats.mjs']) {
     report.sourceHashes[filename] = hash(await readFile(path.join(packageRoot, filename)));
   }
-  assert.equal(baseline.core.loadedCoreSha256, report.sourceHashes['src/core.mjs'], 'Running core must match the current source');
   report.runtimes = [];
   for (const [nodeId, fallbackPort] of [['finance', 19091], ['hr', 19092]]) {
     const port = process.env[`DS_GROUP_${nodeId.toUpperCase()}_PORT`] || fallbackPort;

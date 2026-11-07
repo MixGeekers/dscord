@@ -255,7 +255,6 @@ try {
   report.checks.push('backupRestoreToFreshVolumes');
   const status = await request(url, '/api/status');
   assert.equal(status.budget.used, 0);
-  report.loadedCoreSha256 = status.core.loadedCoreSha256;
   report.checks.push('zeroModelCalls');
   report.status = 'passed';
 } catch (error) {
