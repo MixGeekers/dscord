@@ -85,24 +85,20 @@ async function fileDigest(filename, limit) {
 }
 
 export class NodeFiles {
-  constructor({ coreUrl, accessToken, directory, fetchImpl = fetch, maxBytes = maximumBytes, work, matrix }) {
+  constructor({ coreUrl, accessToken, directory, fetchImpl = fetch, maxBytes = maximumBytes }) {
     this.coreUrl = coreUrl;
     this.accessToken = accessToken;
     this.directory = path.resolve(directory);
     this.fetch = fetchImpl;
     this.maxBytes = maxBytes;
-    this.work = work;
-    this.matrix = matrix;
   }
 
   async prepare(request, signal) {
-    const scoped = request.authorization?.kind === 'scoped';
-    const workdir = scoped ? path.join(this.directory, 'domains', request.authorization.domainId, digest(request.requestId).slice(0, 32))
-      : path.join(this.directory, digest(request.requestId).slice(0, 32));
+    const workdir = path.join(this.directory, digest(request.requestId).slice(0, 32));
     const inputs = path.join(workdir, 'inputs');
     await mkdir(inputs, { recursive: true, mode: 0o700 });
     await mkdir(path.join(workdir, 'outputs'), { recursive: true, mode: 0o700 });
-    const attachments = scoped ? request.event.attachments || [] : selectInputAttachments(request);
+    const attachments = selectInputAttachments(request);
     const files = [];
     const selected = attachments.slice(0, 64);
     for (const attachment of selected) {
@@ -121,15 +117,10 @@ export class NodeFiles {
   }
 
   async download(attachment, directory, signal, request) {
-    const scoped = request?.authorization?.kind === 'scoped';
-    if (scoped) {
-      if (!this.work || !this.matrix || !/^[a-f0-9]{64}$/.test(request.authorization.domainId)) throw new Error('Scoped file transfer needs the home work authority and Matrix client');
-      await this.work.check(request, 'download', { attachment });
-    }
     if (attachment.size > this.maxBytes) throw new Error('Input attachment exceeds this node’s file size limit');
-    const key = scoped ? JSON.stringify([attachment.source, attachment.id, attachment.contentUri, attachment.sha256]) : attachment.id;
+    const key = attachment.id;
     const filename = path.join(directory, `${digest(key).slice(0, 16)}-${localName(attachment.name)}`);
-    const cacheDirectory = scoped ? path.join(this.directory, '_attachments', request.authorization.domainId) : path.join(this.directory, '_attachments');
+    const cacheDirectory = path.join(this.directory, '_attachments');
     const cacheFile = /^[a-f0-9]{64}$/.test(attachment.sha256 || '') ? path.join(cacheDirectory, attachment.sha256) : null;
     if (typeof attachment.sha256 === 'string') {
       try {
@@ -152,8 +143,7 @@ export class NodeFiles {
       const downloadPath = source
         ? `/api/rooms/${encodeURIComponent(source.roomId)}/attachments/${encodeURIComponent(attachment.id)}?eventId=${encodeURIComponent(source.eventId)}`
         : `/api/attachments/${encodeURIComponent(attachment.id)}`;
-      response = scoped ? await this.matrix.downloadMedia(attachment.contentUri, { signal })
-        : await this.fetch(new URL(downloadPath, this.coreUrl), {
+      response = await this.fetch(new URL(downloadPath, this.coreUrl), {
         headers: { Authorization: `Bearer ${this.accessToken}` },
         redirect: 'error',
         signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(120_000)]) : AbortSignal.timeout(120_000),
@@ -192,7 +182,6 @@ export class NodeFiles {
   }
 
   async upload(artifact, request, signal) {
-    await this.work?.check(request, 'upload');
     const workspace = await realpath(request.workdir);
     const filename = await realpath(artifact.path);
     if (request.executionMode !== 'native' && !filename.startsWith(workspace + path.sep)) throw new Error('Task artifact is outside its working directory');
@@ -215,9 +204,6 @@ export class NodeFiles {
     if (!body.attachment?.id || body.attachment.sha256 !== actual.sha256 || body.attachment.size !== actual.size) {
       throw new Error('Artifact upload returned an inconsistent file receipt');
     }
-    let observationPending = false;
-    try { await this.work?.check(request, 'observe', { effectStatus: 'completed', callId: `upload:${body.attachment.id}` }); }
-    catch { observationPending = true; }
-    return { ...body.attachment, ...(observationPending ? { observationPending: true } : {}) };
+    return body.attachment;
   }
 }

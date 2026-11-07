@@ -207,11 +207,7 @@ export class NodeDelivery {
       const intent = this.validate(intentOf(route), item.event);
       let roomId = delivery.room_id;
       const direct = intent.kind === 'direct' && !['ack', 'control'].includes(role);
-      const scoped = item.request?.authorization?.kind === 'scoped';
-      if (scoped && (['delegate', 'peer'].includes(role) || direct && item.request.authorization.conversationKind !== 'direct')) {
-        throw Object.assign(new Error('This cross-server grant permits delivery only in the original approved conversation'), { status: 403 });
-      }
-      if (direct && !scoped) {
+      if (direct) {
         if (!this.client) throw new Error('Direct delivery service is unavailable');
         const recipient = role === 'delegate' ? item.response?.delegate?.to || delivery.options.to[0]
           : role === 'peer' ? metadataOf(item.event).returnTo || item.event.sender : intent.recipientId;

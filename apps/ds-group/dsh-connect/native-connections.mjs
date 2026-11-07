@@ -73,7 +73,7 @@ export class NativeConnections {
         decisionProvider: this.decisionSettings?.provider,
         observe: input => this.observe(entry, input),
         readAttentionView: input => bridge.readAttentionView(input),
-        files: new NodeFiles({ coreUrl: node.serverUrl, accessToken: participant.accessToken, directory: path.join(directory, 'tasks'), work, matrix }),
+        files: new NodeFiles({ coreUrl: node.serverUrl, accessToken: participant.accessToken, directory: path.join(directory, 'tasks') }),
         tasks: createTaskClient(node.serverUrl, config.nodeSecret),
         delivery: createDeliveryClient(node.serverUrl, participant.accessToken),
         roster: createRosterClient(node.serverUrl, participant.accessToken),

@@ -1,13 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createHash } from 'node:crypto';
 import { BotNode } from '../src/bot-node.mjs';
 import { NodeStore } from '../src/node-store.mjs';
-import { NodeFiles } from '../src/node-files.mjs';
-import { workHash, workRequestId } from '../src/bot-work-policy.mjs';
 
 const botId = '@helper:a.node.test';
 const humanId = '@alice:b.node.test';
@@ -38,38 +35,9 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
       'org.ds_group': { to: [botId], ...meta },
     },
   };
-  const work = {
-    kind: 'scoped',
-    requestId: workRequestId(botId, event.event_id),
-    botId,
-    ownerId: participant.ownerId,
-    requesterId: humanId,
-    roomId,
-    eventId: event.event_id,
-    authority: 'b.node.test',
-    tools: ['read', 'write'],
-    proofHash: workHash('proof'),
-    domainId: workHash('domain'),
-    conversationKind: 'group',
-    canDelegate: false,
-  };
-  let revoked = false;
   let calls = 0;
-  const decisions = [];
   const sent = [];
-  const client = {
-    admit: async () => {
-      if (revoked) throw Object.assign(new Error('Revoked'), { status: 403 });
-      return { mode: 'scoped', work, event, participants, inputs: [] };
-    },
-    check: async (request, stage, details = {}) => {
-      decisions.push({ stage, details, request });
-      assert.equal(request.authorization?.kind, 'scoped');
-      if (revoked && stage !== 'observe')
-        throw Object.assign(new Error('Revoked'), { status: 403 });
-      return { authorized: !revoked };
-    },
-  };
+  const client = {};
   const bridge = {
     turn: async (request) => {
       calls++;
@@ -112,17 +80,12 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
     filename,
     runtime,
     event,
-    work,
     bridge,
     client,
     matrix,
     sent,
-    decisions,
     store: () => store,
     calls: () => calls,
-    revoke: () => {
-      revoked = true;
-    },
     restart: () => {
       store.close();
       store = new NodeStore(filename, botId);
@@ -130,64 +93,6 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
     },
   };
 }
-
-test('late native results retain their effects but revoked tasks cannot upload or send', async (t) => {
-  const f = await fixture(t);
-  let finish;
-  f.bridge.turn = () =>
-    new Promise((resolve) => {
-      finish = resolve;
-    });
-  const processing = f.runtime.processOne();
-  for (let pass = 0; pass < 20 && !finish; pass++) await Promise.resolve();
-  assert.ok(finish);
-  f.revoke();
-  finish({
-    status: 'completed',
-    text: '{"text":"Already wrote the file"}',
-    artifacts: [{ path: '/never-upload.txt' }],
-    toolReceipts: [{ name: 'write', status: 'completed' }],
-  });
-  await processing;
-  const item = f.store().item(f.event.event_id);
-  assert.equal(item.status, 'failed');
-  assert.equal(item.response.toolReceipts[0].status, 'completed');
-  assert.equal(item.response.artifacts.length, 1);
-  assert.equal(f.store().pendingDelivery(), undefined);
-  assert.deepEqual(f.sent, []);
-});
-
-test('a known uploaded attachment survives an observation outage as a separately pending audit', async (t) => {
-  const f = await fixture(t);
-  const artifactPath = path.join(f.directory, 'result.txt');
-  const data = Buffer.from('actual artifact');
-  await writeFile(artifactPath, data);
-  const sha256 = createHash('sha256').update(data).digest('hex');
-  const files = new NodeFiles({
-    directory: f.directory,
-    coreUrl: 'https://home.test',
-    accessToken: 'synthetic',
-    work: {
-      check: async (_request, stage) => {
-        if (stage === 'observe') throw new Error('Audit unavailable');
-      },
-    },
-    fetchImpl: async () =>
-      new Response(
-        JSON.stringify({
-          attachment: { id: 'known-upload', sha256, size: data.length },
-        }),
-        { status: 200 },
-      ),
-  });
-  const result = await files.upload(
-    { path: artifactPath, sha256, size: data.length },
-    { requestId: 'upload', botId, workdir: f.directory },
-  );
-  assert.equal(result.id, 'known-upload');
-  assert.equal(result.observationPending, true);
-  assert.equal(await readFile(artifactPath, 'utf8'), 'actual artifact');
-});
 
 test('a denied external invitation survives sync and restart until the owner actually grants it', async (t) => {
   const f = await fixture(t);
@@ -214,36 +119,6 @@ test('a denied external invitation survives sync and restart until the owner act
   await restarted.syncOnce();
   assert.equal(attempts, 2);
   assert.equal(f.store().pendingInvitations().length, 0);
-});
-
-test('a local model cannot implicitly export its private work through an external Bot delegate', async (t) => {
-  const f = await fixture(t);
-  f.client.admit = async () => ({
-    mode: 'local',
-    participants: [f.runtime.participant],
-    event: f.event,
-  });
-  f.client.check = async () => ({ authorized: true });
-  f.bridge.turn = async (request) => {
-    assert.equal(
-      request.event.availableBots.some(
-        (person) => person.id === '@peer:b.node.test',
-      ),
-      false,
-    );
-    return {
-      status: 'completed',
-      text: JSON.stringify({
-        text: 'Handing it over',
-        delegate: { to: '@peer:b.node.test', body: 'private content' },
-      }),
-      artifacts: [],
-    };
-  };
-  await f.runtime.processOne();
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(f.store().pendingDelivery(), undefined);
-  assert.deepEqual(f.sent, []);
 });
 
 test('one hundred permanently denied invitations cannot starve a later approved room', async (t) => {
