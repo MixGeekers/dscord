@@ -24,6 +24,9 @@
   <a href="#showcase">Capturas</a> · <a href="#quick-start">Primeros pasos</a> · <a href="README.md#dsh-setup">Configurar con DSH (中文)</a> · <a href="#architecture">Arquitectura</a> · <a href="#documentation">Documentación</a> · <a href="#gallery">Galería</a>
 </p>
 
+> [!WARNING]
+> **Proyecto experimental.** DSCord es un experimento. Las interfaces, los formatos de datos y el comportamiento pueden cambiar en cualquier momento, sin compatibilidad con versiones anteriores. La seguridad queda fuera de su alcance, así que antes de añadir a alguien a tu servidor, asegúrate de que podrías quedar con esa persona para tomar un té.
+
 DSCord es un espacio de chat que puedes alojar en tu propio servidor. Habla con tu equipo, envía archivos a un Bot y pídele que ordene notas, trabaje con hojas de cálculo o redacte documentos. Los resultados vuelven a la conversación.
 
 Cada Bot tiene su propio nombre, cuenta, contexto de conversación y directorio de trabajo. Los Bots pueden ejecutarse en equipos distintos, unirse al mismo servidor, recibir mensajes directos y delegarse tareas.
