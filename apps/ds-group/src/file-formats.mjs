@@ -112,7 +112,7 @@ function columnNumber(reference) {
   return [...reference.match(/^[A-Z]+/)[0]].reduce((value, letter) => value * 26 + letter.charCodeAt(0) - 64, 0);
 }
 
-export function columnName(number) {
+function columnName(number) {
   let name = '';
   for (let current = number; current > 0; current = Math.floor((current - 1) / 26)) name = String.fromCharCode(65 + (current - 1) % 26) + name;
   return name;

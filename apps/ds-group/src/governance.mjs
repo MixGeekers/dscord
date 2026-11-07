@@ -10,7 +10,7 @@ export const serverOf = (id) =>
     ? id.slice(id.indexOf(":") + 1)
     : undefined;
 // Matrix room ACL matching excludes ports; federation identity lists do not.
-export const aclHost = (domain) => domain.replace(/:\d+$/, "");
+const aclHost = (domain) => domain.replace(/:\d+$/, "");
 export function serverName(value) {
   if (
     typeof value !== "string" ||

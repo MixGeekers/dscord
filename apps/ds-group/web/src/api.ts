@@ -15,7 +15,7 @@ export class ApiError extends Error {
     this.code = code;
   }
 }
-export function apiUrl(
+function apiUrl(
   config: ClientConfig,
   route: string,
   target: "core" | "auth" = "core",

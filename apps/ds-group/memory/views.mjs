@@ -16,7 +16,7 @@ const lexical = (text, terms) => terms.reduce((score, term) => score + (String(t
 // Historical stores did not attach a Bot to every source. Recover only evidence
 // referenced by this Bot's records/current context; never assign the whole source
 // table to every Bot. New ingress records exact per-Bot observations.
-export function knownSources(memory, botId, { rows = memory.store.list({ botId, history: true }) } = {}) {
+function knownSources(memory, botId, { rows = memory.store.list({ botId, history: true }) } = {}) {
   const { store } = memory;
   const refs = new Map(store.observations(botId).map(ref => [refKey(ref), ref]));
   const current = memory.current(botId);
@@ -54,7 +54,7 @@ const sourceSummary = source => source && ({ id: source.id, revision: source.rev
     targetEventId: source.targetEventId, editVerification: source.editVerification } : {}) });
 function authority(store, row) {
   const sources = row.sourceRefs.map(ref => store.source(ref.id, ref.revision)).filter(Boolean);
-  if (row.kind === 'inference' || row.kind === 'legacy' || row.kind === 'reported') return row.kind;
+  if (row.kind === 'inference' || row.kind === 'reported') return row.kind;
   if (row.kind === 'observation' && sources.some(source => source.authorKind === 'tool')) return 'tool-observation';
   if (sources.some(source => source.authorKind === 'human' && !source.relay && (!row.saidBy || source.authorId === row.saidBy))) return 'direct-human';
   return sources.some(source => source.authorKind === 'bot') ? 'bot-authored' : 'attributed-claim';
@@ -103,7 +103,7 @@ function rankClaims(items, store) {
     const group = groups.get(key) || { score: item.score, index: item.index, items: [] };
     group.score = Math.max(group.score, item.score); group.items.push(item); groups.set(key, group);
   }
-  const evidenceRank = row => ['inference', 'legacy'].includes(row.kind) ? 0
+  const evidenceRank = row => row.kind === 'inference' ? 0
     : row.kind === 'reported' || ['proposal', 'uncertain'].includes(row.claimState) ? 1 : 2;
   const evidenceTime = row => Math.max(row.validFrom || 0, ...row.sourceRefs.map(ref => store.source(ref.id, ref.revision)?.timestamp || 0));
   // A wordier old inference can match more terms than its correction. Keep the

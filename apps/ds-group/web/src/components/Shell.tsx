@@ -55,7 +55,7 @@ export interface ShellProps {
   onMember(id: string): void;
 }
 
-export function Avatar({
+function Avatar({
   member,
   index = 0,
   id,

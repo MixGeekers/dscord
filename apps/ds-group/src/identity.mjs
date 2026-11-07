@@ -1,11 +1,11 @@
 import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-export const IDENTITY_CONTRACT_VERSION = '1.0.1';
+const IDENTITY_CONTRACT_VERSION = '1.0.1';
 const fail = message => { throw new Error(message); };
 const forbidden = message => Object.assign(new Error(message), { status: 403, code: 'CLIENT_ORIGIN_DENIED' });
 
-export function identityOrigin(value, name, { secure = true } = {}) {
+function identityOrigin(value, name, { secure = true } = {}) {
   let url;
   try { url = new URL(value); } catch { fail(`${name} must be an HTTP(S) origin`); }
   if (!['https:', 'http:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
