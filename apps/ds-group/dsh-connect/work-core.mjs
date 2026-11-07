@@ -17,7 +17,10 @@ export const FRONT_TOOLS = new Set([
   'dispatch_work', 'task_status', 'task_cancel', 'task_note',
   'recall', 'contacts', 'memory_source', 'raw_source_query',
   'read_group_chat', 'read_own_chat', 'list_bots', 'message_bot', 'post_to_group', 'group_relay',
-  'read_image', 'web_fetch', 'ask_user',
+  'read_image', 'web_fetch', 'ask_user', 'ask_user_question', 'show_view',
+  // Quick Bot-level actions: memory, team and schedules belong to the Bot itself.
+  'remember', 'forget', 'review_memory', 'schedule_create', 'schedule_edit',
+  'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal',
 ]);
 // Workers do the work; they do not speak for the Bot or change the team.
 export const WORKER_DENY = new Set([

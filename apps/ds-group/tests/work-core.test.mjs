@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { WorkCore, FRONT_REFUSAL } from '../dsh-connect/work-core.mjs';
+import { WorkCore, FRONT_REFUSAL, FRONT_TOOLS, WORKER_DENY } from '../dsh-connect/work-core.mjs';
 
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'work-core-'));
@@ -40,6 +40,8 @@ test('the front keeps only communication tools and is refused everything else', 
   assert.deepEqual(front.restricted, ['bash', 'write']);
   assert.equal(f.guard({ agent: front, name: 'bash' }), FRONT_REFUSAL);
   assert.equal(f.guard({ agent: front, name: 'recall' }), undefined);
+  // Every tool a worker is denied stays available at the front, so nothing becomes unreachable.
+  for (const name of WORKER_DENY) assert.ok(FRONT_TOOLS.has(name), name);
   assert.equal(f.guard({ agent: f.agentFor('someone-else'), name: 'bash' }), undefined);
 });
 
