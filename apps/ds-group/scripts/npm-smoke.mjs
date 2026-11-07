@@ -230,7 +230,7 @@ try {
         } catch (error) {
           process.kill(-core.pid, 'SIGKILL');
           await coreExit;
-          throw error;
+          throw error; // oxlint-disable-line no-unsafe-finally -- caught by the enclosing cleanup try.
         } finally { clearTimeout(timer); }
       }
       await freePort(corePort);

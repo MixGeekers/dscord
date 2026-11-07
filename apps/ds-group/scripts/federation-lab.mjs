@@ -9,7 +9,7 @@ import { parseArgs, promisify } from "node:util";
 import { initializeServer } from "./server-init.mjs";
 import { bootstrapServer } from "./server-bootstrap.mjs";
 import { packageRoot } from "../src/paths.mjs";
-import { Governance, privateJson } from "../src/governance.mjs";
+import { privateJson } from "../src/governance.mjs";
 import { MatrixClient } from "../src/matrix-client.mjs";
 import { AdminAuth } from "../src/admin-auth.mjs";
 

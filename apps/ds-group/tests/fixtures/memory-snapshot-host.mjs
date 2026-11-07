@@ -25,7 +25,7 @@ export async function apply(ctx, config) {
       const seqs = page.records.map(record => record.event.seq);
       if (seqs.length === 0) throw new Error('Native event history did not advance');
       beforeSeq = Math.min(...seqs);
-    } while (true);
+    } while (true); // oxlint-disable-line no-constant-condition -- exits through break/throw.
     const raw = records.map(record => record.event), derived = agent.session.deriveMessages();
     const snapshots = raw.filter(event => event.type === 'user/message' && event.data.source?.kind === 'knowledge-context');
     return { sessionId: agent.id, seq: agent.session.seq, derived, contextTokens: ctx.get('tokenMeter').measure(agent.session).totalTokens,

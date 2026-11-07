@@ -119,146 +119,146 @@ export function RolesDialog({
         </Button>
       </header>
       <div className="dialog-scroll-region">
-      <section>
-        <div className="settings-section-heading">
-          <h3>{t("roles")}</h3>
-          <Button
-            variant="secondary"
-            id="new-role"
-            className="secondary-button"
-            type="button"
-            hidden={!canManage || !!draft}
-            onClick={newRole}
-          >
-            {t("createRole")}
-          </Button>
-        </div>
-        <div id="role-list" className="role-list" hidden={!!draft}>
-          {roles.map((role) => (
+        <section>
+          <div className="settings-section-heading">
+            <h3>{t("roles")}</h3>
             <Button
-              variant="ghost"
-              key={role.id}
-              className="role-row"
+              variant="secondary"
+              id="new-role"
+              className="secondary-button"
               type="button"
-              disabled={!canManage}
-              onClick={() => setDraft({ ...role })}
+              hidden={!canManage || !!draft}
+              onClick={newRole}
             >
-              <span
-                className="role-color"
-                style={{ backgroundColor: role.color }}
-              />
-              <strong>{role.name}</strong>
-              <small>
-                {t("memberCount", {
-                  count: formatNumber(role.memberIds.length),
-                })}
-              </small>
+              {t("createRole")}
             </Button>
-          ))}
-          {!roles.length && <p className="muted small">{t("noRoles")}</p>}
-        </div>
-        <p id="role-feedback" className="settings-feedback" role="status">
-          {feedback}
-        </p>
-        {draft && (
-          <form
-            id="role-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void save();
-            }}
-          >
-            <label htmlFor="role-name">{t("roleName")}</label>
-            <Input
-              id="role-name"
-              maxLength={40}
-              required
-              autoFocus
-              value={draft.name}
-              onChange={(event) =>
-                setDraft({ ...draft, name: event.target.value })
-              }
-            />
-            <label htmlFor="role-color">{t("roleColor")}</label>
-            <ColorInput
-              id="role-color"
-              value={draft.color}
-              onChange={(event) =>
-                setDraft({ ...draft, color: event.target.value })
-              }
-            />
-            <label className="check-label">
-              <Checkbox
-                id="role-mentionable"
-                checked={draft.mentionable}
-                onCheckedChange={(checked) =>
-                  setDraft({ ...draft, mentionable: checked })
+          </div>
+          <div id="role-list" className="role-list" hidden={!!draft}>
+            {roles.map((role) => (
+              <Button
+                variant="ghost"
+                key={role.id}
+                className="role-row"
+                type="button"
+                disabled={!canManage}
+                onClick={() => setDraft({ ...role })}
+              >
+                <span
+                  className="role-color"
+                  style={{ backgroundColor: role.color }}
+                />
+                <strong>{role.name}</strong>
+                <small>
+                  {t("memberCount", {
+                    count: formatNumber(role.memberIds.length),
+                  })}
+                </small>
+              </Button>
+            ))}
+            {!roles.length && <p className="muted small">{t("noRoles")}</p>}
+          </div>
+          <p id="role-feedback" className="settings-feedback" role="status">
+            {feedback}
+          </p>
+          {draft && (
+            <form
+              id="role-form"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void save();
+              }}
+            >
+              <label htmlFor="role-name">{t("roleName")}</label>
+              <Input
+                id="role-name"
+                maxLength={40}
+                required
+                autoFocus
+                value={draft.name}
+                onChange={(event) =>
+                  setDraft({ ...draft, name: event.target.value })
                 }
               />
-              {t("mentionable")}
-            </label>
-            <h3>{t("members")}</h3>
-            <div id="role-members" className="room-choices">
-              {participants.map((person) => (
-                <label className="room-choice" key={person.id}>
-                  <Checkbox
-                    value={person.id}
-                    checked={draft.memberIds.includes(person.id)}
-                    onCheckedChange={(checked) =>
-                      setDraft({
-                        ...draft,
-                        memberIds: checked
-                          ? [...draft.memberIds, person.id]
-                          : draft.memberIds.filter((id) => id !== person.id),
-                      })
-                    }
-                  />
-                  <span className={`avatar avatar-${person.kind}`}>
-                    {person.name.slice(0, 1)}
-                  </span>
-                  <span>
-                    {person.name}
-                    <small className="member-full-id">{person.id}</small>
-                  </span>
-                </label>
-              ))}
-            </div>
-          </form>
-        )}
-      </section>
+              <label htmlFor="role-color">{t("roleColor")}</label>
+              <ColorInput
+                id="role-color"
+                value={draft.color}
+                onChange={(event) =>
+                  setDraft({ ...draft, color: event.target.value })
+                }
+              />
+              <label className="check-label">
+                <Checkbox
+                  id="role-mentionable"
+                  checked={draft.mentionable}
+                  onCheckedChange={(checked) =>
+                    setDraft({ ...draft, mentionable: checked })
+                  }
+                />
+                {t("mentionable")}
+              </label>
+              <h3>{t("members")}</h3>
+              <div id="role-members" className="room-choices">
+                {participants.map((person) => (
+                  <label className="room-choice" key={person.id}>
+                    <Checkbox
+                      value={person.id}
+                      checked={draft.memberIds.includes(person.id)}
+                      onCheckedChange={(checked) =>
+                        setDraft({
+                          ...draft,
+                          memberIds: checked
+                            ? [...draft.memberIds, person.id]
+                            : draft.memberIds.filter((id) => id !== person.id),
+                        })
+                      }
+                    />
+                    <span className={`avatar avatar-${person.kind}`}>
+                      {person.name.slice(0, 1)}
+                    </span>
+                    <span>
+                      {person.name}
+                      <small className="member-full-id">{person.id}</small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </form>
+          )}
+        </section>
       </div>
       {draft && (
         <footer className="dialog-footer settings-actions">
-              <Button
-                variant="default"
-                className="primary-button"
-                type="submit"
-                form="role-form"
-                disabled={busy}
-              >
-                {t(busy ? "saving" : "save")}
-              </Button>
-              <Button
-                variant="secondary"
-                id="cancel-role"
-                className="secondary-button"
-                type="button"
-                disabled={busy}
-                onClick={() => setDraft(null)}
-              >
-                {t("cancel")}
-              </Button>
-              <Button
-                variant="destructive"
-                id="delete-role"
-                className="danger-button"
-                type="button"
-                hidden={!draft.id}
-                disabled={busy}
-                onClick={() => void save(true)}
-              >
-                {t("delete")}
-              </Button>
+          <Button
+            variant="default"
+            className="primary-button"
+            type="submit"
+            form="role-form"
+            disabled={busy}
+          >
+            {t(busy ? "saving" : "save")}
+          </Button>
+          <Button
+            variant="secondary"
+            id="cancel-role"
+            className="secondary-button"
+            type="button"
+            disabled={busy}
+            onClick={() => setDraft(null)}
+          >
+            {t("cancel")}
+          </Button>
+          <Button
+            variant="destructive"
+            id="delete-role"
+            className="danger-button"
+            type="button"
+            hidden={!draft.id}
+            disabled={busy}
+            onClick={() => void save(true)}
+          >
+            {t("delete")}
+          </Button>
         </footer>
       )}
     </dialog>

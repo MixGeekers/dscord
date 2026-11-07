@@ -117,84 +117,84 @@ export function NotificationDialog({
           </Button>
         </header>
         <div className="dialog-scroll-region">
-        <label className="check-label">
-          <Checkbox
-            id="notification-muted"
-            checked={preferences.muted}
-            disabled={loading || saving}
-            onCheckedChange={(checked) =>
-              setPreferences({ ...preferences, muted: checked })
-            }
-          />
-          {t("muteRoom")}
-        </label>
-        <fieldset disabled={loading || saving}>
-          <legend>{t("notificationSettings")}</legend>
-          <RadioGroup
-            name="notification-mode"
-            value={preferences.mode}
-            disabled={loading || saving}
-            onValueChange={(mode) => setPreferences({ ...preferences, mode })}
+          <label className="check-label">
+            <Checkbox
+              id="notification-muted"
+              checked={preferences.muted}
+              disabled={loading || saving}
+              onCheckedChange={(checked) =>
+                setPreferences({ ...preferences, muted: checked })
+              }
+            />
+            {t("muteRoom")}
+          </label>
+          <fieldset disabled={loading || saving}>
+            <legend>{t("notificationSettings")}</legend>
+            <RadioGroup
+              name="notification-mode"
+              value={preferences.mode}
+              disabled={loading || saving}
+              onValueChange={(mode) => setPreferences({ ...preferences, mode })}
+            >
+              {(["all", "mentions", "nothing"] as const).map((mode) => (
+                <label className="check-label" key={mode}>
+                  <Radio value={mode} />
+                  {t(
+                    mode === "all"
+                      ? "allMessages"
+                      : mode === "mentions"
+                        ? "onlyMentions"
+                        : "nothing",
+                  )}
+                </label>
+              ))}
+            </RadioGroup>
+          </fieldset>
+          <label className="check-label">
+            <Checkbox
+              id="notification-everyone"
+              checked={preferences.suppressEveryone}
+              disabled={loading || saving}
+              onCheckedChange={(checked) =>
+                setPreferences({
+                  ...preferences,
+                  suppressEveryone: checked,
+                })
+              }
+            />
+            {t("suppressEveryone")}
+          </label>
+          <label className="check-label">
+            <Checkbox
+              id="notification-roles"
+              checked={preferences.suppressRoles}
+              disabled={loading || saving}
+              onCheckedChange={(checked) =>
+                setPreferences({
+                  ...preferences,
+                  suppressRoles: checked,
+                })
+              }
+            />
+            {t("suppressRoles")}
+          </label>
+          <p
+            id="notification-feedback"
+            className="settings-feedback"
+            role="status"
           >
-            {(["all", "mentions", "nothing"] as const).map((mode) => (
-              <label className="check-label" key={mode}>
-                <Radio value={mode} />
-                {t(
-                  mode === "all"
-                    ? "allMessages"
-                    : mode === "mentions"
-                      ? "onlyMentions"
-                      : "nothing",
-                )}
-              </label>
-            ))}
-          </RadioGroup>
-        </fieldset>
-        <label className="check-label">
-          <Checkbox
-            id="notification-everyone"
-            checked={preferences.suppressEveryone}
-            disabled={loading || saving}
-            onCheckedChange={(checked) =>
-              setPreferences({
-                ...preferences,
-                suppressEveryone: checked,
-              })
-            }
-          />
-          {t("suppressEveryone")}
-        </label>
-        <label className="check-label">
-          <Checkbox
-            id="notification-roles"
-            checked={preferences.suppressRoles}
-            disabled={loading || saving}
-            onCheckedChange={(checked) =>
-              setPreferences({
-                ...preferences,
-                suppressRoles: checked,
-              })
-            }
-          />
-          {t("suppressRoles")}
-        </label>
-        <p
-          id="notification-feedback"
-          className="settings-feedback"
-          role="status"
-        >
-          {loading ? t("loading") : feedback}
-        </p>
+            {loading ? t("loading") : feedback}
+          </p>
         </div>
         <footer className="dialog-footer">
-        <Button
-          className="primary-button login-submit"
-          variant="default"
-          type="submit"
-          disabled={loading || saving}
-        >
-          {t(saving ? "saving" : "save")}
-        </Button>
+          <Button
+            className="primary-button login-submit"
+            variant="default"
+            type="submit"
+            disabled={loading || saving}
+          >
+            {t(saving ? "saving" : "save")}
+          </Button>
         </footer>
       </form>
     </dialog>

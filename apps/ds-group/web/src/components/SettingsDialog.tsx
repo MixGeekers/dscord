@@ -9,12 +9,7 @@ import { useTranslation } from "../locale";
 import { AppearanceControls } from "./AppearanceControls";
 import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
-import type {
-  Api,
-  PwaHandle,
-  Session,
-  SettingsTab,
-} from "../types";
+import type { Api, PwaHandle, Session, SettingsTab } from "../types";
 
 export interface SettingsDialogProps {
   tab: SettingsTab | null;
@@ -117,50 +112,53 @@ export function SettingsDialog(props: SettingsDialogProps) {
           ))}
         </nav>
         <div className="dialog-scroll-region settings-panel-scroll">
-        <section data-settings-panel="account" hidden={tab !== "account"}>
-          <h3>{t("currentAccount")}</h3>
-          <p id="settings-account" className="identity-value">
-            {session?.user_id || t("signedOut")}
-          </p>
-          {session?.identity && (
-            <p className="muted small identity-value">
-              {session.identity.subjectId}
+          <section data-settings-panel="account" hidden={tab !== "account"}>
+            <h3>{t("currentAccount")}</h3>
+            <p id="settings-account" className="identity-value">
+              {session?.user_id || t("signedOut")}
             </p>
-          )}
-          <dl className="account-origins">
-            <dt>{t("homeCore")}</dt>
-            <dd>{config.homeCoreUrl}</dd>
-            <dt>{t("homeMatrix")}</dt>
-            <dd>
-              {session?.home?.matrixUrl ??
-                config.homeMatrixUrl ??
-                t("configuredByHome")}
-            </dd>
-          </dl>
-        </section>
-        <section
-          data-settings-panel="notifications"
-          hidden={tab !== "notifications"}
-        >
-          <h3>{t("deviceNotifications")}</h3>
-          <p id="push-status" role="status" />
-          <label htmlFor="push-device-label">{t("deviceName")}</label>
-          <Input id="push-device-label" maxLength={80} autoComplete="off" />
-          <p id="push-feedback" className="settings-feedback" role="status" />
-          <details className="settings-help">
-            <summary>{t("mobileNotifications")}</summary>
-            <p>{t("mobileHelp")}</p>
-          </details>
-        </section>
-        <section data-settings-panel="appearance" hidden={tab !== "appearance"}>
-          <h3>{t("appearanceLanguage")}</h3>
-          <AppearanceControls />
-          <h3>{t("installApp")}</h3>
-          <p id="install-status" role="status" />
-          <p id="install-help" className="settings-feedback" />
-          <h3>{t("connection")}</h3>
-          <p id="offline-status" />
-        </section>
+            {session?.identity && (
+              <p className="muted small identity-value">
+                {session.identity.subjectId}
+              </p>
+            )}
+            <dl className="account-origins">
+              <dt>{t("homeCore")}</dt>
+              <dd>{config.homeCoreUrl}</dd>
+              <dt>{t("homeMatrix")}</dt>
+              <dd>
+                {session?.home?.matrixUrl ??
+                  config.homeMatrixUrl ??
+                  t("configuredByHome")}
+              </dd>
+            </dl>
+          </section>
+          <section
+            data-settings-panel="notifications"
+            hidden={tab !== "notifications"}
+          >
+            <h3>{t("deviceNotifications")}</h3>
+            <p id="push-status" role="status" />
+            <label htmlFor="push-device-label">{t("deviceName")}</label>
+            <Input id="push-device-label" maxLength={80} autoComplete="off" />
+            <p id="push-feedback" className="settings-feedback" role="status" />
+            <details className="settings-help">
+              <summary>{t("mobileNotifications")}</summary>
+              <p>{t("mobileHelp")}</p>
+            </details>
+          </section>
+          <section
+            data-settings-panel="appearance"
+            hidden={tab !== "appearance"}
+          >
+            <h3>{t("appearanceLanguage")}</h3>
+            <AppearanceControls />
+            <h3>{t("installApp")}</h3>
+            <p id="install-status" role="status" />
+            <p id="install-help" className="settings-feedback" />
+            <h3>{t("connection")}</h3>
+            <p id="offline-status" />
+          </section>
         </div>
         <footer className="dialog-footer settings-dialog-footer">
           <div className="settings-actions" hidden={tab !== "account"}>

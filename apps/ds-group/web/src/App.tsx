@@ -94,27 +94,45 @@ function mergeEvents(
     : result;
 }
 
-function ownedBotCacheKey(config: ClientConfig, account: Session | null): string | null {
+function ownedBotCacheKey(
+  config: ClientConfig,
+  account: Session | null,
+): string | null {
   if (
     !account?.identity?.subjectId ||
     account.identity.kind !== "human" ||
     account.identity.matrixUserId !== account.user_id ||
     !account.binding?.authorityId ||
     account.binding.authorityId !== account.identity.authorityId
-  ) return null;
+  )
+    return null;
   return storageKey(config, "owned-bots", account);
 }
 
-function validOwnedBots(value: unknown, ownerId: string): value is Participant[] {
-  return Array.isArray(value) && value.every((bot) =>
-    bot && typeof bot === "object" &&
-    typeof bot.id === "string" && bot.id.startsWith("@") &&
-    typeof bot.name === "string" &&
-    bot.kind === "bot" && bot.ownerId === ownerId
-  ) && new Set(value.map((bot) => bot.id)).size === value.length;
+function validOwnedBots(
+  value: unknown,
+  ownerId: string,
+): value is Participant[] {
+  return (
+    Array.isArray(value) &&
+    value.every(
+      (bot) =>
+        bot &&
+        typeof bot === "object" &&
+        typeof bot.id === "string" &&
+        bot.id.startsWith("@") &&
+        typeof bot.name === "string" &&
+        bot.kind === "bot" &&
+        bot.ownerId === ownerId,
+    ) &&
+    new Set(value.map((bot) => bot.id)).size === value.length
+  );
 }
 
-function restoredOwnedBots(config: ClientConfig, account: Session | null): Participant[] | null {
+function restoredOwnedBots(
+  config: ClientConfig,
+  account: Session | null,
+): Participant[] | null {
   const key = ownedBotCacheKey(config, account);
   if (!key || !account) return null;
   const value = readStored<unknown>(key);
@@ -177,8 +195,8 @@ export default function App({
     "connecting" | "connected" | "offline"
   >("connecting");
   const [directory, setDirectory] = useState<Participant[]>([]);
-  const [ownedBotsState, setOwnedBotsState] = useState<Participant[] | null>(() =>
-    restoredOwnedBots(config, session),
+  const [ownedBotsState, setOwnedBotsState] = useState<Participant[] | null>(
+    () => restoredOwnedBots(config, session),
   );
   const ownedBots = ownedBotsState ?? [];
   const ownedBotsKnown = ownedBotsState !== null;
@@ -268,10 +286,17 @@ export default function App({
     for (const bot of ownedBots) members.set(bot.id, bot);
     for (const label of mentionables.members) {
       const person = members.get(label.id);
-      if (person && label.name) members.set(label.id, { ...person, name: label.name });
+      if (person && label.name)
+        members.set(label.id, { ...person, name: label.name });
     }
     return [...members.values()];
-  }, [bootstrap?.participants, directory, currentUser, ownedBots, mentionables.members]);
+  }, [
+    bootstrap?.participants,
+    directory,
+    currentUser,
+    ownedBots,
+    mentionables.members,
+  ]);
   const workspace = useMemo(
     () => bootstrap && { ...bootstrap, participants },
     [bootstrap, participants],
@@ -501,15 +526,25 @@ export default function App({
         ? readScoped<string>(config, "room", account, name)
         : null;
       const savedRoom = joined.find((value) => value.roomId === saved);
-      const savedOwnedBotDm = savedRoom?.kind === "direct" &&
-        ownedBots.some((bot) => bot.ownerId === account?.user_id &&
-          savedRoom.participantIds.includes(bot.id));
+      const savedOwnedBotDm =
+        savedRoom?.kind === "direct" &&
+        ownedBots.some(
+          (bot) =>
+            bot.ownerId === account?.user_id &&
+            savedRoom.participantIds.includes(bot.id),
+        );
       navigate(
         (savedOwnedBotDm ? null : savedRoom) ??
           joined.find((value) => value.kind === "group") ??
-          joined.find((value) => value.kind !== "direct" ||
-            !ownedBots.some((bot) => bot.ownerId === account?.user_id &&
-              value.participantIds.includes(bot.id))) ??
+          joined.find(
+            (value) =>
+              value.kind !== "direct" ||
+              !ownedBots.some(
+                (bot) =>
+                  bot.ownerId === account?.user_id &&
+                  value.participantIds.includes(bot.id),
+              ),
+          ) ??
           null,
         name,
       );
@@ -638,7 +673,8 @@ export default function App({
             profile.identity?.authorityId === account.identity?.authorityId &&
             profile.identity?.subjectId === account.identity?.subjectId &&
             profile.identity?.matrixUserId === account.user_id
-          ) sessionStorage.setItem(botCache, JSON.stringify(profile.ownedBots));
+          )
+            sessionStorage.setItem(botCache, JSON.stringify(profile.ownedBots));
           else sessionStorage.removeItem(botCache);
         }
         setDirectory(
@@ -850,8 +886,12 @@ export default function App({
           : spacesRef.current?.spaces.find((value) =>
               value.rooms.some((item) => item.roomId === next.roomId),
             );
-        navigate(next, ownBot ? matrixServer(account.user_id) :
-          (space?.serverName ?? matrixServer(account.user_id)));
+        navigate(
+          next,
+          ownBot
+            ? matrixServer(account.user_id)
+            : (space?.serverName ?? matrixServer(account.user_id)),
+        );
         refresh();
       } catch (reason) {
         if (
@@ -860,10 +900,10 @@ export default function App({
           roomRef.current === sourceRoom &&
           viewRef.current === sourceView &&
           directRequestRef.current === requestId
-        ) notify(messageOf(reason));
+        )
+          notify(messageOf(reason));
       } finally {
-        if (directRequestRef.current === requestId)
-          setOpeningDirectId(null);
+        if (directRequestRef.current === requestId) setOpeningDirectId(null);
       }
     },
     [api, displayName, notify, openLogin, navigate, ownedBots, refresh, t],
@@ -1224,9 +1264,13 @@ export default function App({
   );
   useEffect(() => {
     if (
-      session && room?.kind === "direct" &&
-      ownedBots.some((bot) => bot.ownerId === session.user_id &&
-        room.participantIds.includes(bot.id))
+      session &&
+      room?.kind === "direct" &&
+      ownedBots.some(
+        (bot) =>
+          bot.ownerId === session.user_id &&
+          room.participantIds.includes(bot.id),
+      )
     )
       sessionStorage.setItem(
         storageKey(config, "owned-bot-room", session),
@@ -1271,17 +1315,26 @@ export default function App({
         }}
         onBots={() => {
           const account = sessionRef.current;
-          const saved = account && readScoped<string>(
-            config, "owned-bot-room", account,
-          );
+          const saved =
+            account && readScoped<string>(config, "owned-bot-room", account);
           const home = spacesRef.current?.spaces.find((space) => space.home);
-          const recent = roomsRef.current.find((candidate) =>
-            candidate.roomId === saved && candidate.kind === "direct" &&
-            ownedBots.some((bot) => bot.ownerId === account?.user_id &&
-              candidate.participantIds.includes(bot.id)),
+          const recent = roomsRef.current.find(
+            (candidate) =>
+              candidate.roomId === saved &&
+              candidate.kind === "direct" &&
+              ownedBots.some(
+                (bot) =>
+                  bot.ownerId === account?.user_id &&
+                  candidate.participantIds.includes(bot.id),
+              ),
           );
-          if (recent && home?.rooms.some((item) =>
-            item.roomId === recent.roomId && item.status === "joined"))
+          if (
+            recent &&
+            home?.rooms.some(
+              (item) =>
+                item.roomId === recent.roomId && item.status === "joined",
+            )
+          )
             navigate(recent, home.serverName);
           else {
             viewRef.current = "bots";
@@ -1294,7 +1347,11 @@ export default function App({
         onLogin={openLogin}
         onCreateRoom={() => (session ? setRoomDialog("create") : openLogin())}
         onCreateBot={() => (session ? setCreateBotOpen(true) : openLogin())}
-        onManageBots={() => { setBotsSelection(null); if (session) setBotsOpen(true); else openLogin(); }}
+        onManageBots={() => {
+          setBotsSelection(null);
+          if (session) setBotsOpen(true);
+          else openLogin();
+        }}
         onInvite={() => (session ? setRoomDialog("invite") : openLogin())}
         onInbox={() => (session ? setInboxOpen(true) : openLogin())}
         onNotifications={() =>
@@ -1430,10 +1487,11 @@ export default function App({
           session ? storageKey(config, "pending-bot", session) : ""
         }
         onCreated={(bot) => {
-          setOwnedBotsState((previous) => previous === null ? null : [
-            ...previous.filter((value) => value.id !== bot.id),
-            bot,
-          ]);
+          setOwnedBotsState((previous) =>
+            previous === null
+              ? null
+              : [...previous.filter((value) => value.id !== bot.id), bot],
+          );
           refresh();
         }}
         onClose={() => setCreateBotOpen(false)}
@@ -1465,8 +1523,12 @@ export default function App({
         botStatus={
           status?.nodes.find((node) => node.botId === member?.id)?.status
         }
-        owner={participants.find(person => person.id === member?.ownerId)}
-        onManageBot={(id) => { setMember(null); setBotsSelection(id); setBotsOpen(true); }}
+        owner={participants.find((person) => person.id === member?.ownerId)}
+        onManageBot={(id) => {
+          setMember(null);
+          setBotsSelection(id);
+          setBotsOpen(true);
+        }}
         onClose={() => setMember(null)}
         onDirect={(id) => {
           setMember(null);

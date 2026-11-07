@@ -265,7 +265,7 @@ try {
       const prefix = 'ds-group.v2.' + configModule.bindingKey(config) + '.';
       for (const key of Object.keys(sessionStorage)) {
         if (!key.startsWith(prefix)) continue;
-        const [kind, authority, subject, userId, space, roomId] = JSON.parse(decodeURIComponent(key.slice(prefix.length)));
+        const [kind, , , userId, , roomId] = JSON.parse(decodeURIComponent(key.slice(prefix.length)));
         if (legacy === 'ds-group.' + kind + '.' + userId + (roomId ? '.' + roomId : '')) return JSON.parse(sessionStorage.getItem(key));
       }
       return JSON.parse(sessionStorage.getItem(legacy) ?? 'null');

@@ -1,0 +1,28 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["eslint", "unicorn", "oxc", "import", "react", "react-hooks"],
+  "categories": {
+    "correctness": "error"
+  },
+  "env": {
+    "browser": true,
+    "node": true,
+    "es2024": true
+  },
+  "ignorePatterns": ["dist/**", "node_modules/**", "vendor/**", ".local/**", "web/licenses/**", "admin/licenses/**"],
+  "rules": {
+    "eslint/no-unused-vars": ["error", { "ignoreRestSiblings": true, "caughtErrors": "none", "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }],
+    "eslint/no-control-regex": "off",
+    "eslint/no-useless-escape": "off",
+    "unicorn/no-useless-spread": "off",
+    "unicorn/no-useless-fallback-in-spread": "off",
+    "unicorn/prefer-string-starts-ends-with": "off",
+    "unicorn/no-invalid-fetch-options": "off",
+    "unicorn/no-thenable": "off",
+    "react-hooks/exhaustive-deps": "warn",
+    "react/refs": "warn",
+    "react/set-state-in-effect": "warn",
+    "react/purity": "warn",
+    "react/immutability": "warn"
+  }
+}

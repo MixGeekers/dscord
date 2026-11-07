@@ -2,7 +2,6 @@
 // Social and source-priority judgments are review items, not keyword scores.
 const review = (...criteria) => ({ review: criteria });
 const file = (name, extra = {}) => ({ files: [name], ...extra });
-const execute = { execution: true };
 const code = { files: ['packing.mjs', 'packing-tests.txt'], execution: true, codeContract: true };
 export const naturalOracles = {
   'full-008': review('安排与当时信息相称；三件事可以有不同合理选择，不替人宣布未定计划'),

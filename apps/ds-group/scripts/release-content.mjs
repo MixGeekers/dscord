@@ -3,7 +3,7 @@ import path from 'node:path';
 
 export const PUBLIC_SOURCE_POLICY = 'public-source-v1';
 export const sourceRootFiles = [
-  'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'cordis.patch.yml',
+  'package.json', 'package-lock.json', 'tsconfig.json', 'vite.config.ts', 'cordis.patch.yml', '.oxlintrc.json', '.prettierrc.json',
   'README.md', 'README.en.md', 'README.es.md', '模型配置与迁移.md',
   '.gitignore', '.gitattributes', '.dockerignore', 'Dockerfile',
   'LICENSE', 'LICENSE.md', 'LICENSE.txt', 'LICENCE', 'LICENCE.md', 'LICENCE.txt', 'NOTICE', 'NOTICE.md',

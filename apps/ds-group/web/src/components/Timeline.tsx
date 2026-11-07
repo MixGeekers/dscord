@@ -39,12 +39,30 @@ function formattedText(text: string): ReactNode[] {
   return messageParts(text).map((part) => {
     const key = `${part.offset}:${part.kind}`;
     if (part.kind === "pre")
-      return <pre key={key} className="message-code">{part.text}</pre>;
+      return (
+        <pre key={key} className="message-code">
+          {part.text}
+        </pre>
+      );
     if (part.kind === "code")
-      return <code key={key} className="inline-code">{part.text}</code>;
+      return (
+        <code key={key} className="inline-code">
+          {part.text}
+        </code>
+      );
     if (part.kind === "strong") return <strong key={key}>{part.text}</strong>;
     if (part.kind === "link")
-      return <a key={key} className="message-link" href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>;
+      return (
+        <a
+          key={key}
+          className="message-link"
+          href={part.href}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {part.text}
+        </a>
+      );
     return part.text;
   });
 }

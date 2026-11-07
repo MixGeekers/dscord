@@ -130,7 +130,6 @@ let trapOrigin;
 let browser;
 let page;
 let failure;
-let build;
 
 function publicConfig(origin = homeOrigin) {
   return {
@@ -577,7 +576,7 @@ const contentTypes = {
 
 try {
   await mkdir(output, { recursive: true });
-  build = await promisify(execFile)("npm", ["run", "build"], {
+  await promisify(execFile)("npm", ["run", "build"], {
     cwd: packageRoot,
     maxBuffer: 2 ** 20,
   });
@@ -1321,7 +1320,7 @@ try {
   });
   await page.waitForFunction(() => navigator.serviceWorker.controller);
   await page.evaluate(
-    ({ homeUser, homeOrigin, homeRoom }) =>
+    ({ homeOrigin, homeRoom }) =>
       navigator.serviceWorker.dispatchEvent(
         new MessageEvent("message", {
           source: navigator.serviceWorker.controller,

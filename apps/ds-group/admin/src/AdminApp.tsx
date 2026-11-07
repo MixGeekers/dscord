@@ -68,7 +68,12 @@ const icons = {
 const SESSION_KEY = `dscord.management.${location.origin}`;
 const fileTools = ["read", "write", "edit", "read_image"];
 const policySections: Section[] = [
-  "overview", "partners", "members", "rooms", "bots", "deployment",
+  "overview",
+  "partners",
+  "members",
+  "rooms",
+  "bots",
+  "deployment",
 ];
 const errorText = (error: unknown) =>
   error instanceof Error ? error.message : String(error);
@@ -77,7 +82,8 @@ const knownErrorKeys = {
   "An instance administrator session is required": "sessionRequired",
   "Administrator session expired": "sessionExpired",
   "Your administrator role cannot perform this operation": "roleForbidden",
-  "Too many administrator login attempts; try again in 15 minutes": "signInLimited",
+  "Too many administrator login attempts; try again in 15 minutes":
+    "signInLimited",
   "Invalid management origin": "invalidManagementOrigin",
   "Use this instance’s management origin": "wrongManagementOrigin",
   "Keep at least one active owner": "keepOwner",
@@ -260,7 +266,10 @@ function PolicyCollection({
   );
   return (
     <div className={`admin-section-layout ${readOnly ? "is-single" : ""}`}>
-      <section className="admin-panel admin-list-panel" aria-label={t("entries")}>
+      <section
+        className="admin-panel admin-list-panel"
+        aria-label={t("entries")}
+      >
         <div className="admin-panel-heading">
           <div>
             <h2>{t("entries")}</h2>
@@ -294,7 +303,9 @@ function PolicyCollection({
                   {Object.entries(row)
                     .filter(
                       ([field, val]) =>
-                        ![idKey, "enabled", "name", "canDelegate"].includes(field) &&
+                        ![idKey, "enabled", "name", "canDelegate"].includes(
+                          field,
+                        ) &&
                         val !== undefined &&
                         val !== "" &&
                         (!Array.isArray(val) || val.length > 0),
@@ -348,7 +359,9 @@ function PolicyCollection({
                     role="group"
                     aria-label={t("confirmRemove")}
                   >
-                    <p>{t("confirmRemove")} <code>{id}</code></p>
+                    <p>
+                      {t("confirmRemove")} <code>{id}</code>
+                    </p>
                     <div className="admin-actions">
                       <Button
                         variant="destructive"
@@ -382,35 +395,37 @@ function PolicyCollection({
                 {section === "rooms" &&
                   row.authority === policy.serverName &&
                   !readOnly && (
-                  <form
-                    className="admin-invite"
-                    onSubmit={(event) => {
-                      event.preventDefault();
-                      invite(
-                        String(row.roomId),
-                        String(new FormData(event.currentTarget).get("memberId")),
-                      );
-                    }}
-                  >
-                    <Field label={t("inviteMember")}>
-                      <NativeSelect name="memberId" required>
-                        {(row.memberIds as string[]).map((memberId) => (
-                          <option key={memberId} value={memberId}>
-                            {memberId}
-                          </option>
-                        ))}
-                      </NativeSelect>
-                    </Field>
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      type="submit"
-                      disabled={busy || !(row.memberIds as string[]).length}
+                    <form
+                      className="admin-invite"
+                      onSubmit={(event) => {
+                        event.preventDefault();
+                        invite(
+                          String(row.roomId),
+                          String(
+                            new FormData(event.currentTarget).get("memberId"),
+                          ),
+                        );
+                      }}
                     >
-                      {t("invite")}
-                    </Button>
-                  </form>
-                )}
+                      <Field label={t("inviteMember")}>
+                        <NativeSelect name="memberId" required>
+                          {(row.memberIds as string[]).map((memberId) => (
+                            <option key={memberId} value={memberId}>
+                              {memberId}
+                            </option>
+                          ))}
+                        </NativeSelect>
+                      </Field>
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        type="submit"
+                        disabled={busy || !(row.memberIds as string[]).length}
+                      >
+                        {t("invite")}
+                      </Button>
+                    </form>
+                  )}
               </article>
             );
           })}
@@ -470,7 +485,10 @@ function PolicyCollection({
                   />
                 </Field>
                 <Field label={t("kind")}>
-                  <NativeSelect name="kind" defaultValue={value("kind", "human")}>
+                  <NativeSelect
+                    name="kind"
+                    defaultValue={value("kind", "human")}
+                  >
                     <option value="human">{t("human")}</option>
                     <option value="bot">{t("bot")}</option>
                   </NativeSelect>
@@ -483,7 +501,11 @@ function PolicyCollection({
             {section === "rooms" && (
               <>
                 <Field label={t("roomId")}>
-                  <Input name="roomId" required defaultValue={value("roomId")} />
+                  <Input
+                    name="roomId"
+                    required
+                    defaultValue={value("roomId")}
+                  />
                 </Field>
                 <Field label={t("authority")}>
                   <Input
@@ -564,7 +586,8 @@ export default function AdminApp() {
   const { locale, preference, setPreference } = useLocale();
   const [session, setSession] = useState(storedSession);
   const [section, setSection] = useState<Section>("overview");
-  const [lastPolicySection, setLastPolicySection] = useState<Section>("overview");
+  const [lastPolicySection, setLastPolicySection] =
+    useState<Section>("overview");
   const navigation = useRef<HTMLElement>(null);
   const [policy, setPolicy] = useState<Policy | null>(null);
   const [saved, setSaved] = useState("");
@@ -590,10 +613,13 @@ export default function AdminApp() {
   const dirty = !!policy && JSON.stringify(policy) !== saved;
   const readOnly = session?.administrator.role === "auditor";
   const showPolicyActions = policySections.includes(section);
-  const policyNeedsAttention = !!policy && (
-    dirty || application?.restartRequired || !application?.livePolicyObserved ||
-    (application?.application != null && application.application.status !== "applied")
-  );
+  const policyNeedsAttention =
+    !!policy &&
+    (dirty ||
+      application?.restartRequired ||
+      !application?.livePolicyObserved ||
+      (application?.application != null &&
+        application.application.status !== "applied"));
   const applicationStatus = (status: string) => {
     const labels: Record<string, string> = {
       pending: t("pending"),
@@ -800,7 +826,9 @@ export default function AdminApp() {
             <small>{t("title")}</small>
           </div>
         </div>
-        <code className="admin-server-name">{policy?.serverName || overview?.serverName}</code>
+        <code className="admin-server-name">
+          {policy?.serverName || overview?.serverName}
+        </code>
         <nav ref={navigation} aria-label={t("title")}>
           {sections.map((name) => {
             const Icon = icons[name];
@@ -824,7 +852,8 @@ export default function AdminApp() {
         </nav>
         <div className="admin-account">
           <span>
-            {session.administrator.username} · {roleLabel(session.administrator.role)}
+            {session.administrator.username} ·{" "}
+            {roleLabel(session.administrator.role)}
           </span>
           <Button
             variant="ghost"
@@ -851,59 +880,128 @@ export default function AdminApp() {
         {showPolicyActions ? (
           <section className="admin-policy-bar" aria-label={t("policyStatus")}>
             <div className="admin-policy-summary">
-              <strong className={dirty ? "admin-state is-warning" : "admin-state"}>
-                {dirty ? t("unsaved") : t("saved", { revision: policy?.revision || 0 })}
+              <strong
+                className={dirty ? "admin-state is-warning" : "admin-state"}
+              >
+                {dirty
+                  ? t("unsaved")
+                  : t("saved", { revision: policy?.revision || 0 })}
               </strong>
-              <span className={`admin-status-note ${application?.livePolicyObserved ? "is-good" : "is-warning"}`}>
-                {application?.livePolicyObserved ? t("observed") : t("unobserved")}
+              <span
+                className={`admin-status-note ${application?.livePolicyObserved ? "is-good" : "is-warning"}`}
+              >
+                {application?.livePolicyObserved
+                  ? t("observed")
+                  : t("unobserved")}
               </span>
-              {application?.restartRequired && <span className="admin-status-note is-warning">{t("restart")}</span>}
+              {application?.restartRequired && (
+                <span className="admin-status-note is-warning">
+                  {t("restart")}
+                </span>
+              )}
             </div>
             <div className="admin-actions">
-              <Button variant="secondary" size="sm" disabled={busy} onClick={() => void action(load)}>
+              <Button
+                variant="secondary"
+                size="sm"
+                disabled={busy}
+                onClick={() => void action(load)}
+              >
                 <RefreshCw size={16} aria-hidden="true" />
                 {dirty ? t("discardReload") : t("reload")}
               </Button>
               {!readOnly && (
                 <>
-                  <Button variant="default" size="sm" disabled={busy || !dirty} onClick={() => void action(async () => {
-                    const result = await api<{ policy: Policy; application: Application }>("policy", "PUT", policy);
-                    setPolicy(result.policy);
-                    setSaved(JSON.stringify(result.policy));
-                    setApplication(result.application);
-                  })}>{t("save")}</Button>
-                  <Button variant="secondary" size="sm" disabled={busy || dirty || !policy} onClick={() => void action(async () =>
-                    setApplication(await api<Application>("apply", "POST", { revision: policy?.revision })),
-                  )}>{busy ? t("busy") : t("apply")}</Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    disabled={busy || !dirty}
+                    onClick={() =>
+                      void action(async () => {
+                        const result = await api<{
+                          policy: Policy;
+                          application: Application;
+                        }>("policy", "PUT", policy);
+                        setPolicy(result.policy);
+                        setSaved(JSON.stringify(result.policy));
+                        setApplication(result.application);
+                      })
+                    }
+                  >
+                    {t("save")}
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busy || dirty || !policy}
+                    onClick={() =>
+                      void action(async () =>
+                        setApplication(
+                          await api<Application>("apply", "POST", {
+                            revision: policy?.revision,
+                          }),
+                        ),
+                      )
+                    }
+                  >
+                    {busy ? t("busy") : t("apply")}
+                  </Button>
                 </>
               )}
             </div>
           </section>
-        ) : policyNeedsAttention && (
-          <div className="admin-pending-bar" role="status">
-            <span><AlertCircle size={16} aria-hidden="true" />{
-              dirty ? t("unsaved") : application?.restartRequired ? t("restart") :
-              !application?.livePolicyObserved ? t("unobserved") : t("applicationNeedsAttention")
-            }</span>
-            <Button variant="secondary" size="sm" onClick={() => setSection(lastPolicySection)}>{t("reviewPolicy")}</Button>
-          </div>
+        ) : (
+          policyNeedsAttention && (
+            <div className="admin-pending-bar" role="status">
+              <span>
+                <AlertCircle size={16} aria-hidden="true" />
+                {dirty
+                  ? t("unsaved")
+                  : application?.restartRequired
+                    ? t("restart")
+                    : !application?.livePolicyObserved
+                      ? t("unobserved")
+                      : t("applicationNeedsAttention")}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setSection(lastPolicySection)}
+              >
+                {t("reviewPolicy")}
+              </Button>
+            </div>
+          )
         )}
-        {readOnly && showPolicyActions && <p className="admin-readonly-note">{t("readOnly")}</p>}
+        {readOnly && showPolicyActions && (
+          <p className="admin-readonly-note">{t("readOnly")}</p>
+        )}
         {error && (
           <div className="admin-error" role="alert">
             <AlertCircle size={18} aria-hidden="true" />
-            <span><strong>{t("error")}</strong><span>{localizedError(error)}</span></span>
+            <span>
+              <strong>{t("error")}</strong>
+              <span>{localizedError(error)}</span>
+            </span>
           </div>
         )}
         {notice && (
           <div className="admin-notice" role="status">
-            <CheckCircle2 size={18} aria-hidden="true" />{notice}
+            <CheckCircle2 size={18} aria-hidden="true" />
+            {notice}
           </div>
         )}
-        {!policy && !error && <div className="admin-loading" role="status">{t("busy")}</div>}
+        {!policy && !error && (
+          <div className="admin-loading" role="status">
+            {t("busy")}
+          </div>
+        )}
         {section === "overview" && (
           <>
-            <section className="admin-panel admin-metrics" aria-label={t("overview")}>
+            <section
+              className="admin-panel admin-metrics"
+              aria-label={t("overview")}
+            >
               {(
                 [
                   ["revision", policy?.revision || 0],
@@ -925,40 +1023,61 @@ export default function AdminApp() {
               ))}
             </section>
             <div className="admin-overview-grid">
-            <section className="admin-panel">
-              <div className="admin-panel-heading"><h2>{t("initialRoom")}</h2></div>
-              <code className="admin-primary-value">{overview?.initialRoomId || "—"}</code>
-            </section>
-            <section className="admin-panel">
-              <div className="admin-panel-heading"><h2>{t("application")}</h2></div>
-              {!application?.application ? (
-                <p className="admin-empty">{t("noApplication")}</p>
-              ) : (
-                <>
-                  <div className="admin-application-summary">
-                    <span>{t("revision")} <strong>{application.application.revision}</strong></span>
-                    <span className={`admin-state ${application.application.status === "applied" ? "is-good" : "is-warning"}`}>{applicationStatus(application.application.status)}</span>
-                  </div>
-                  {application.application.configuration?.error && (
-                    <div className="admin-inline-error"><AlertCircle size={16} aria-hidden="true" />{application.application.configuration.error}</div>
-                  )}
-                  {application.application.rooms.map((room) => (
-                    <div className="admin-application-row" key={room.roomId}>
-                      <code>{room.roomId}</code>
-                      <span className="admin-state">{applicationStatus(room.status)}</span>
-                      {room.error && (
-                        <span className="admin-inline-error">{room.error}</span>
-                      )}
-                      {room.bans.map((ban) => (
-                        <span key={ban.id}>
-                          {t("ban")}: {ban.id} · {applicationStatus(ban.status)} {ban.error}
-                        </span>
-                      ))}
+              <section className="admin-panel">
+                <div className="admin-panel-heading">
+                  <h2>{t("initialRoom")}</h2>
+                </div>
+                <code className="admin-primary-value">
+                  {overview?.initialRoomId || "—"}
+                </code>
+              </section>
+              <section className="admin-panel">
+                <div className="admin-panel-heading">
+                  <h2>{t("application")}</h2>
+                </div>
+                {!application?.application ? (
+                  <p className="admin-empty">{t("noApplication")}</p>
+                ) : (
+                  <>
+                    <div className="admin-application-summary">
+                      <span>
+                        {t("revision")}{" "}
+                        <strong>{application.application.revision}</strong>
+                      </span>
+                      <span
+                        className={`admin-state ${application.application.status === "applied" ? "is-good" : "is-warning"}`}
+                      >
+                        {applicationStatus(application.application.status)}
+                      </span>
                     </div>
-                  ))}
-                </>
-              )}
-            </section>
+                    {application.application.configuration?.error && (
+                      <div className="admin-inline-error">
+                        <AlertCircle size={16} aria-hidden="true" />
+                        {application.application.configuration.error}
+                      </div>
+                    )}
+                    {application.application.rooms.map((room) => (
+                      <div className="admin-application-row" key={room.roomId}>
+                        <code>{room.roomId}</code>
+                        <span className="admin-state">
+                          {applicationStatus(room.status)}
+                        </span>
+                        {room.error && (
+                          <span className="admin-inline-error">
+                            {room.error}
+                          </span>
+                        )}
+                        {room.bans.map((ban) => (
+                          <span key={ban.id}>
+                            {t("ban")}: {ban.id} ·{" "}
+                            {applicationStatus(ban.status)} {ban.error}
+                          </span>
+                        ))}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </section>
             </div>
           </>
         )}
@@ -986,18 +1105,30 @@ export default function AdminApp() {
         {section === "storage" && overview && (
           <div className="admin-storage-grid">
             <section className="admin-panel">
-              <div className="admin-panel-heading"><h2>{t("backend")}</h2></div>
-              <strong className="admin-primary-value">{overview.storage.backend}</strong>
+              <div className="admin-panel-heading">
+                <h2>{t("backend")}</h2>
+              </div>
+              <strong className="admin-primary-value">
+                {overview.storage.backend}
+              </strong>
               {overview.storage.bucket && (
                 <dl className="admin-detail-list admin-detail-list-wide">
-                  <div><dt>{t("bucket")}</dt><dd>{overview.storage.bucket}</dd></div>
-                  <div><dt>{t("prefix")}</dt><dd>{overview.storage.prefix || "—"}</dd></div>
+                  <div>
+                    <dt>{t("bucket")}</dt>
+                    <dd>{overview.storage.bucket}</dd>
+                  </div>
+                  <div>
+                    <dt>{t("prefix")}</dt>
+                    <dd>{overview.storage.prefix || "—"}</dd>
+                  </div>
                 </dl>
               )}
               <p className="admin-supporting-text">{t("storageHint")}</p>
             </section>
             <section className="admin-panel">
-              <div className="admin-panel-heading"><h2>{t("localFiles")}</h2></div>
+              <div className="admin-panel-heading">
+                <h2>{t("localFiles")}</h2>
+              </div>
               {overview.storage.files.map((file) => (
                 <div className="admin-record-detail" key={file.filename}>
                   <code>{file.filename}</code>
@@ -1006,10 +1137,14 @@ export default function AdminApp() {
                   </span>
                 </div>
               ))}
-              {!overview.storage.files.length && <p className="admin-empty">{t("none")}</p>}
+              {!overview.storage.files.length && (
+                <p className="admin-empty">{t("none")}</p>
+              )}
             </section>
             <section className="admin-panel admin-backup-panel">
-              <div className="admin-panel-heading"><h2>{t("backup")}</h2></div>
+              <div className="admin-panel-heading">
+                <h2>{t("backup")}</h2>
+              </div>
               <p className="admin-supporting-text">{t("backupHint")}</p>
               <Button variant="secondary" onClick={exportPolicy}>
                 {t("exportPolicy")}
@@ -1020,97 +1155,120 @@ export default function AdminApp() {
         {section === "deployment" && policy && (
           <section className="admin-panel admin-deployment-panel">
             <div className="admin-panel-heading">
-              <div><h2>{t("serverSettings")}</h2><p>{t("deploymentHint")}</p></div>
+              <div>
+                <h2>{t("serverSettings")}</h2>
+                <p>{t("deploymentHint")}</p>
+              </div>
             </div>
             <div className="admin-settings-grid">
-            <div className="admin-settings-group">
-            <h3>{t("serverIdentity")}</h3>
-            <Field label={t("server")}>
-              <Input readOnly value={policy.serverName} />
-            </Field>
-            <Field label={t("publicUrl")}>
-              <Input readOnly value={overview?.publicUrl || ""} />
-            </Field>
-            </div>
-            <div className="admin-settings-group">
-            <h3>{t("requestLimits")}</h3>
-            <Field label={t("registration")}>
-              <NativeSelect
-                disabled={readOnly}
-                value={policy.settings.registrationMode || ""}
-                onChange={(event) =>
-                  setPolicy({
-                    ...policy,
-                    settings: {
-                      ...policy.settings,
-                      registrationMode: (event.target.value || null) as
-                        | "open"
-                        | "closed"
-                        | null,
-                    },
-                  })
-                }
-              >
-                <option value="">{t("inherited")}</option>
-                <option value="open">{t("open")}</option>
-                <option value="closed">{t("closed")}</option>
-              </NativeSelect>
-            </Field>
-            <Field label={t("upload")}>
-              <Input
-                type="number"
-                min="0.001"
-                max="50"
-                step="0.001"
-                placeholder={t("existingLimit")}
-                disabled={readOnly}
-                value={
-                  policy.settings.maxUploadBytes === null
-                    ? ""
-                    : policy.settings.maxUploadBytes / 1048576
-                }
-                onChange={(event) =>
-                  setPolicy({
-                    ...policy,
-                    settings: {
-                      ...policy.settings,
-                      maxUploadBytes: event.target.value
-                        ? Math.round(Number(event.target.value) * 1048576)
-                        : null,
-                    },
-                  })
-                }
-              />
-            </Field>
-            </div>
+              <div className="admin-settings-group">
+                <h3>{t("serverIdentity")}</h3>
+                <Field label={t("server")}>
+                  <Input readOnly value={policy.serverName} />
+                </Field>
+                <Field label={t("publicUrl")}>
+                  <Input readOnly value={overview?.publicUrl || ""} />
+                </Field>
+              </div>
+              <div className="admin-settings-group">
+                <h3>{t("requestLimits")}</h3>
+                <Field label={t("registration")}>
+                  <NativeSelect
+                    disabled={readOnly}
+                    value={policy.settings.registrationMode || ""}
+                    onChange={(event) =>
+                      setPolicy({
+                        ...policy,
+                        settings: {
+                          ...policy.settings,
+                          registrationMode: (event.target.value || null) as
+                            "open" | "closed" | null,
+                        },
+                      })
+                    }
+                  >
+                    <option value="">{t("inherited")}</option>
+                    <option value="open">{t("open")}</option>
+                    <option value="closed">{t("closed")}</option>
+                  </NativeSelect>
+                </Field>
+                <Field label={t("upload")}>
+                  <Input
+                    type="number"
+                    min="0.001"
+                    max="50"
+                    step="0.001"
+                    placeholder={t("existingLimit")}
+                    disabled={readOnly}
+                    value={
+                      policy.settings.maxUploadBytes === null
+                        ? ""
+                        : policy.settings.maxUploadBytes / 1048576
+                    }
+                    onChange={(event) =>
+                      setPolicy({
+                        ...policy,
+                        settings: {
+                          ...policy.settings,
+                          maxUploadBytes: event.target.value
+                            ? Math.round(Number(event.target.value) * 1048576)
+                            : null,
+                        },
+                      })
+                    }
+                  />
+                </Field>
+              </div>
             </div>
           </section>
         )}
         {section === "administrators" && (
-          <div className={`admin-section-layout ${session.administrator.role === "owner" ? "" : "is-single"}`}>
-            <section className="admin-panel admin-list-panel" aria-label={t("administrators")}>
+          <div
+            className={`admin-section-layout ${session.administrator.role === "owner" ? "" : "is-single"}`}
+          >
+            <section
+              className="admin-panel admin-list-panel"
+              aria-label={t("administrators")}
+            >
               <div className="admin-panel-heading">
-                <div><h2>{t("entries")}</h2><p>{t("adminHint")}</p></div>
-                <span className="admin-count" aria-label={t("entryCount", { count: administrators.length })}>{new Intl.NumberFormat(locale).format(administrators.length)}</span>
+                <div>
+                  <h2>{t("entries")}</h2>
+                  <p>{t("adminHint")}</p>
+                </div>
+                <span
+                  className="admin-count"
+                  aria-label={t("entryCount", { count: administrators.length })}
+                >
+                  {new Intl.NumberFormat(locale).format(administrators.length)}
+                </span>
               </div>
               <div className="admin-list">
-              {administrators.map((admin) => (
-                <article className="admin-list-row" key={admin.username}>
-                  <div className="admin-row-top">
-                    <div className="admin-row-identity"><strong>{admin.username}</strong><span>{t("role")}: {roleLabel(admin.role)}</span></div>
-                    <span className={`admin-state ${admin.enabled ? "is-good" : "is-muted"}`}>{admin.enabled ? t("enabled") : t("closed")}</span>
-                  </div>
-                  {session.administrator.role === "owner" && (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => setAdminEdit(admin)}
-                    >
-                      {t("edit")}
-                    </Button>
-                  )}
-                </article>
-              ))}
+                {administrators.map((admin) => (
+                  <article className="admin-list-row" key={admin.username}>
+                    <div className="admin-row-top">
+                      <div className="admin-row-identity">
+                        <strong>{admin.username}</strong>
+                        <span>
+                          {t("role")}: {roleLabel(admin.role)}
+                        </span>
+                      </div>
+                      <span
+                        className={`admin-state ${admin.enabled ? "is-good" : "is-muted"}`}
+                      >
+                        {admin.enabled ? t("enabled") : t("closed")}
+                      </span>
+                    </div>
+                    {session.administrator.role === "owner" && (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => setAdminEdit(admin)}
+                      >
+                        {t("edit")}
+                      </Button>
+                    )}
+                  </article>
+                ))}
               </div>
             </section>
             {session.administrator.role === "owner" && (
@@ -1139,42 +1297,46 @@ export default function AdminApp() {
                   });
                 }}
               >
-                <div className="admin-panel-heading"><h2>{adminEdit ? t("editAdministrator") : t("addAdministrator")}</h2></div>
+                <div className="admin-panel-heading">
+                  <h2>
+                    {adminEdit ? t("editAdministrator") : t("addAdministrator")}
+                  </h2>
+                </div>
                 <div className="admin-form-fields">
-                <Field label={t("username")}>
-                  <Input
-                    name="username"
-                    required
-                    pattern="[a-z][a-z0-9_.-]{2,63}"
-                    defaultValue={adminEdit?.username || ""}
-                  />
-                </Field>
-                <Field label={t("role")}>
-                  <NativeSelect
-                    name="role"
-                    defaultValue={adminEdit?.role || "operator"}
-                  >
-                    <option value="owner">{t("ownerRole")}</option>
-                    <option value="operator">{t("operatorRole")}</option>
-                    <option value="auditor">{t("auditorRole")}</option>
-                  </NativeSelect>
-                </Field>
-                <Field label={t("newPassword")}>
-                  <Input
-                    name="password"
-                    type="password"
-                    minLength={12}
-                    autoComplete="new-password"
-                    required={!adminEdit}
-                  />
-                </Field>
-                <label className="admin-checkbox">
-                  <Checkbox
-                    name="enabled"
-                    defaultChecked={adminEdit?.enabled ?? true}
-                  />
-                  {t("enabled")}
-                </label>
+                  <Field label={t("username")}>
+                    <Input
+                      name="username"
+                      required
+                      pattern="[a-z][a-z0-9_.-]{2,63}"
+                      defaultValue={adminEdit?.username || ""}
+                    />
+                  </Field>
+                  <Field label={t("role")}>
+                    <NativeSelect
+                      name="role"
+                      defaultValue={adminEdit?.role || "operator"}
+                    >
+                      <option value="owner">{t("ownerRole")}</option>
+                      <option value="operator">{t("operatorRole")}</option>
+                      <option value="auditor">{t("auditorRole")}</option>
+                    </NativeSelect>
+                  </Field>
+                  <Field label={t("newPassword")}>
+                    <Input
+                      name="password"
+                      type="password"
+                      minLength={12}
+                      autoComplete="new-password"
+                      required={!adminEdit}
+                    />
+                  </Field>
+                  <label className="admin-checkbox">
+                    <Checkbox
+                      name="enabled"
+                      defaultChecked={adminEdit?.enabled ?? true}
+                    />
+                    {t("enabled")}
+                  </label>
                 </div>
                 <div className="admin-form-actions">
                   <Button variant="default" type="submit" disabled={busy}>
@@ -1194,7 +1356,9 @@ export default function AdminApp() {
         )}
         {section === "audit" && (
           <section className="admin-panel admin-audit">
-            <div className="admin-panel-heading"><h2>{t("events")}</h2></div>
+            <div className="admin-panel-heading">
+              <h2>{t("events")}</h2>
+            </div>
             <div className="admin-list">
               {events.map((event) => (
                 <article className="admin-list-row" key={event.sequence}>
@@ -1202,7 +1366,9 @@ export default function AdminApp() {
                     <strong>{event.action}</strong>
                     <time>{date(event.at)}</time>
                   </div>
-                  <p className="admin-audit-meta">{t("actor")}: {event.actor} · #{event.sequence}</p>
+                  <p className="admin-audit-meta">
+                    {t("actor")}: {event.actor} · #{event.sequence}
+                  </p>
                   <pre>{JSON.stringify(event.detail, null, 2)}</pre>
                 </article>
               ))}

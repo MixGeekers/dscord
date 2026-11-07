@@ -208,73 +208,75 @@ export function RoomDialog({
           </Button>
         </div>
         <div className="dialog-scroll-region">
-        <div id="room-name-field" hidden={isInvite}>
-          <label htmlFor="new-room-name">{t("groupName")}</label>
-          <Input
-            id="new-room-name"
-            maxLength={80}
-            autoComplete="off"
-            required={!isInvite}
-            value={name}
-            disabled={busy}
-            onChange={(event) => setName(event.target.value)}
-          />
-        </div>
-        <label id="room-choice-label">
-          {t(isInvite ? "selectBot" : "inviteMembers")}
-        </label>
-        <div id="room-choices" className="room-choices">
-          {choices.map((person) => (
-            <label key={person.id} className="room-choice">
-              <Checkbox
-                value={person.id}
-                checked={selectedIds.includes(person.id)}
-                disabled={busy}
-                onCheckedChange={(checked) => toggleMember(person.id, checked)}
-              />
-              <span
-                className={`avatar avatar-${person.kind}`}
-                aria-hidden="true"
-              >
-                {person.name.slice(0, 1)}
-              </span>
-              <span className="room-choice-identity">
-                <span>{person.name}</span>
-                <small className="member-full-id">{person.id}</small>
-              </span>
-              {person.kind === "bot" && (
-                <span className="member-kind">BOT</span>
-              )}
-            </label>
-          ))}
-          {!choices.length && (
-            <p className="muted small">
-              {t(isInvite ? "noBots" : "noMembers")}
-            </p>
-          )}
-        </div>
-        <p id="room-form-error" className="settings-feedback" role="alert">
-          {error || (restored ? t("pendingGroup") : "")}
-        </p>
+          <div id="room-name-field" hidden={isInvite}>
+            <label htmlFor="new-room-name">{t("groupName")}</label>
+            <Input
+              id="new-room-name"
+              maxLength={80}
+              autoComplete="off"
+              required={!isInvite}
+              value={name}
+              disabled={busy}
+              onChange={(event) => setName(event.target.value)}
+            />
+          </div>
+          <label id="room-choice-label">
+            {t(isInvite ? "selectBot" : "inviteMembers")}
+          </label>
+          <div id="room-choices" className="room-choices">
+            {choices.map((person) => (
+              <label key={person.id} className="room-choice">
+                <Checkbox
+                  value={person.id}
+                  checked={selectedIds.includes(person.id)}
+                  disabled={busy}
+                  onCheckedChange={(checked) =>
+                    toggleMember(person.id, checked)
+                  }
+                />
+                <span
+                  className={`avatar avatar-${person.kind}`}
+                  aria-hidden="true"
+                >
+                  {person.name.slice(0, 1)}
+                </span>
+                <span className="room-choice-identity">
+                  <span>{person.name}</span>
+                  <small className="member-full-id">{person.id}</small>
+                </span>
+                {person.kind === "bot" && (
+                  <span className="member-kind">BOT</span>
+                )}
+              </label>
+            ))}
+            {!choices.length && (
+              <p className="muted small">
+                {t(isInvite ? "noBots" : "noMembers")}
+              </p>
+            )}
+          </div>
+          <p id="room-form-error" className="settings-feedback" role="alert">
+            {error || (restored ? t("pendingGroup") : "")}
+          </p>
         </div>
         <footer className="dialog-footer">
-        <Button
-          variant="default"
-          id="room-submit"
-          className="primary-button login-submit"
-          type="submit"
-          disabled={busy || (isInvite && !choices.length)}
-        >
-          {t(
-            isInvite
-              ? busy
-                ? "inviting"
-                : "invite"
-              : busy
-                ? "creating"
-                : "create",
-          )}
-        </Button>
+          <Button
+            variant="default"
+            id="room-submit"
+            className="primary-button login-submit"
+            type="submit"
+            disabled={busy || (isInvite && !choices.length)}
+          >
+            {t(
+              isInvite
+                ? busy
+                  ? "inviting"
+                  : "invite"
+                : busy
+                  ? "creating"
+                  : "create",
+            )}
+          </Button>
         </footer>
       </form>
     </dialog>
@@ -333,34 +335,53 @@ export function MemberDialog({
         <Icon name="close" />
       </Button>
       <div className="dialog-scroll-region">
-      <div id="member-dialog-avatar">
-        <span
-          className={`avatar avatar-${member?.kind ?? "human"}`}
-          aria-hidden="true"
-        >
-          {member?.name.slice(0, 1)}
-        </span>
-      </div>
-      <h2 id="member-dialog-name">{member?.name}</h2>
-      <p id="member-dialog-id">{member?.id}</p>
-      {member?.kind === "bot" && (
-        <p className="bot-connection-status">
-          {kernelText(connectionLabel(botStatus))}
-        </p>
-      )}
-      {member?.kind === "bot" && member.ownerId && <p className="bot-profile-owner">{kernelText("owner")} · {owner?.name ?? member.ownerId}<small className="member-full-id">{owner?.name && member.ownerId}</small></p>}
-      {member?.kind === "bot" && member.ownerId === session?.user_id && onManageBot && <Button id="member-bot-settings" variant="ghost" type="button" onClick={() => onManageBot(member.id)}><Icon name="gear" />{kernelText("settings")}</Button>}
-      <div id="member-dialog-roles" className="member-role-list">
-        {membership.map((role) => (
+        <div id="member-dialog-avatar">
           <span
-            key={role.id}
-            className="role-badge"
-            style={{ "--role-color": role.color } as CSSProperties}
+            className={`avatar avatar-${member?.kind ?? "human"}`}
+            aria-hidden="true"
           >
-            {role.name}
+            {member?.name.slice(0, 1)}
           </span>
-        ))}
-      </div>
+        </div>
+        <h2 id="member-dialog-name">{member?.name}</h2>
+        <p id="member-dialog-id">{member?.id}</p>
+        {member?.kind === "bot" && (
+          <p className="bot-connection-status">
+            {kernelText(connectionLabel(botStatus))}
+          </p>
+        )}
+        {member?.kind === "bot" && member.ownerId && (
+          <p className="bot-profile-owner">
+            {kernelText("owner")} · {owner?.name ?? member.ownerId}
+            <small className="member-full-id">
+              {owner?.name && member.ownerId}
+            </small>
+          </p>
+        )}
+        {member?.kind === "bot" &&
+          member.ownerId === session?.user_id &&
+          onManageBot && (
+            <Button
+              id="member-bot-settings"
+              variant="ghost"
+              type="button"
+              onClick={() => onManageBot(member.id)}
+            >
+              <Icon name="gear" />
+              {kernelText("settings")}
+            </Button>
+          )}
+        <div id="member-dialog-roles" className="member-role-list">
+          {membership.map((role) => (
+            <span
+              key={role.id}
+              className="role-badge"
+              style={{ "--role-color": role.color } as CSSProperties}
+            >
+              {role.name}
+            </span>
+          ))}
+        </div>
       </div>
       <div className="dialog-footer settings-actions">
         <Button

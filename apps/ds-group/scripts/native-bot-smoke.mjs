@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { mkdtemp, mkdir, readFile, writeFile, open, symlink } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, writeFile, open } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { packageRoot } from '../src/paths.mjs';

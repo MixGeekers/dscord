@@ -9,7 +9,8 @@ export const adminMessages = {
     entryCount: "{count} entries",
     addEntry: "Add entry",
     editEntry: "Edit entry",
-    entryFormHint: "Changes are staged. Save the policy, then prepare and apply it.",
+    entryFormHint:
+      "Changes are staged. Save the policy, then prepare and apply it.",
     confirmRemove: "Remove this entry from the draft policy?",
     confirm: "Confirm removal",
     cancel: "Cancel",
