@@ -1,5 +1,0 @@
-- insert:
-    - id: shiyu-workbench
-      name: '@shiyu/workbench'
-      config:
-        initialWorkspace: '/Users/caja/Documents/识雨'
