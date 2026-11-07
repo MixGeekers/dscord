@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
 import { parseArgs } from 'node:util';
-import { verificationModel } from './memory-test-model.mjs';
+import { verificationModel } from './verification-model.mjs';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { randomUUID, createHash } from 'node:crypto';

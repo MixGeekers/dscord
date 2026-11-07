@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import assert from 'node:assert/strict';
-import { verificationModel } from './memory-test-model.mjs';
+import { verificationModel } from './verification-model.mjs';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import { mkdir, readFile, stat, writeFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
