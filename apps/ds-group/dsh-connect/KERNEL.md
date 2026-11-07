@@ -31,6 +31,12 @@ DSH 内已认证、同源的 `POST /api/dscord/kernel` 接收 `{endpoint,payload
 
 模型与工具工作使用原生 Agent inbox 和消息接纳流程。来源保留稳定发送者、种类、transport、room、event 与 request；人类和 Bot 的实际输入与工具／后台上下文分开。收到来源不代表已经理解、完成任务或送达结果。
 
+## 前台、程序核心和工作者
+
+连接到 DSCord 的每个 Bot 分成三部分。前台是 Bot 原有的原生 Session，只保留沟通、回忆和派活工具（`dispatch_work`、`task_status`、`task_cancel`、`task_note`），其他工具在前台被拒绝。程序核心是 `dsh-connect/work-core.mjs`，不调用模型：维护任务台账、并发槽位（默认 3 个）、超时（默认 60 分钟）、取消、补充说明和交付文件核对。工作者是每个任务新建的一个 Session 和目录（节点数据目录下 `workers/<任务 ID>/`），有完整工具，只能用 `work_report` 汇报、用 `work_ask` 提问。
+
+工作者汇报完成时，核心核对列出的文件或 `outputs/` 下的文件，再生成一条 `task.result` 消息交给前台；前台用自己的口吻回复到原消息，文件随回复附上。工作者一轮结束却没有汇报，会被提醒一次，再不汇报就记为失败。任务状态的每次迁移记录在任务的 `events` 里，当前工作者和队列出现在节点 kernel 状态的 `work.workers` 与 `work.queue`。宿主重启时未结束的任务记为 `unknown` 并通知前台。
+
 Core 的 owner 管理接口通过节点通道访问本内核；网页不接收节点模型凭据。[人物和来源视图](../memory/当前上下文与回顾.md)
 
 ## 单实例和原目录采用
