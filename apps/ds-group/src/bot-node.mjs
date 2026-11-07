@@ -11,7 +11,7 @@ import { boundTaskRequest } from './node-request.mjs';
 import { NodeDelivery, createDeliveryClient } from './node-delivery.mjs';
 import { normalizeDelivery } from './delivery-policy.mjs';
 import { runtimeSettings } from '../scripts/runtime-config.mjs';
-import { createNodeWorkClient, scopedTaskRequest } from './node-work.mjs';
+import { createNodeWorkClient } from './node-work.mjs';
 import { conversationContext, messageSource, speakerOf, threadOf } from './message-context.mjs';
 import { normalizeAttentionConfig, reliableAttentionRoute, attentionMessage, attentionConflict,
   participationDelay, trailingBotTurns } from './attention.mjs';
@@ -164,7 +164,6 @@ export class BotNode {
       || executionMode === 'scoped')) throw new Error('Native Bot binding does not match this node');
     this.executionMode = executionMode || (nativeBinding ? 'native' : undefined);
     this.nativeBinding = nativeBinding;
-    this.nodeTools = [];
     this.roomRosters = new Map();
     this.roomRosterTimes = new Map();
     this.transferAttempts = transferAttempts;
@@ -239,7 +238,7 @@ export class BotNode {
     this.observing = (async () => {
       for (let batch = this.store.observationBatch(); batch.events.length; batch = this.store.observationBatch()) {
         try {
-          await attentionCall(signal => this.observe({ botId: this.participant.id, events: batch.events,
+          await attentionCall(signal => this.observe({ botId: this.participant.id, events: batch.events.filter(event => !metadataOf(event).workerTask),
             cursor: batch.cursor, watermark: batch.watermark,
             rooms: Object.fromEntries([...new Set(batch.events.map(event => event.room_id))].map(roomId => [roomId, this.roomContextFor(roomId)])),
             eventRooms: Object.fromEntries(batch.events.map(event => [event.event_id, this.store.roomContextForEvent(event)])),
@@ -466,6 +465,24 @@ export class BotNode {
     if (this.unknownParticipants(events).length) throw new Error('Message participants are not yet registered in the core roster');
   }
 
+  routeOf(event) {
+    // A worker result is the Bot's own core speaking to its front; nothing else from the Bot itself is routed.
+    if (event.sender === this.participant.id && metadataOf(event).workerTask) return { kind: 'reliable', reason: 'worker_result' };
+    return reliableAttentionRoute(event, { botId: this.participant.id, store: this.store, participants: this.participants });
+  }
+
+  /** The core hands a worker's result (or question) back to the front as a local task.result message. */
+  acceptWorkerResult(task, message, text) {
+    const origin = task.origin;
+    const eventId = message.kind === 'result' ? `$dscord-${task.id}-result` : `$dscord-${task.id}-q-${Date.now()}`;
+    const event = { type: 'm.room.message', event_id: eventId, room_id: origin.roomId, sender: this.participant.id,
+      origin_server_ts: Date.now(), content: { msgtype: 'm.notice', body: text, 'org.ds_group': { kind: 'task.result', workerTask: task.id,
+        originSenderId: origin.senderId, originRoomId: origin.roomId, originEventId: origin.eventId,
+        ...(origin.threadRootId ? { originThreadRootId: origin.threadRootId } : {}) } } };
+    this.store.ingest([event], undefined, item => this.delivery.register(item), { route: candidate => this.routeOf(candidate),
+      roomContext: roomId => this.roomContextFor(roomId) });
+  }
+
   async ingestEvents(events, cursor) {
     await this.refreshRoster();
     if (this.work) {
@@ -490,7 +507,7 @@ export class BotNode {
         if (original) this.taskUpdate(original, { status: 'cancelled', stage: 'cancelled',
           summary: route.cancel ? '任务已取消' : '任务要求已更新，等待处理新要求' });
       }
-    }, { route: event => reliableAttentionRoute(event, { botId: this.participant.id, store: this.store, participants: this.participants }),
+    }, { route: event => this.routeOf(event),
       roomContext: roomId => this.roomContextFor(roomId) });
   }
 
@@ -502,7 +519,6 @@ export class BotNode {
       instructions: this.instructions(),
       ...(this.executionMode ? { mode: this.executionMode } : {}),
       ...(this.nativeBinding ? { nativeBinding: this.nativeBinding } : {}) });
-    this.nodeTools = setup?.tools || [];
     this.model = setup?.model;
     this.bridgeMode = setup?.mode || this.executionMode;
     await this.heartbeat();
@@ -634,6 +650,7 @@ export class BotNode {
         ...(replyTo ? { replyTo } : {}),
         ...(sourceThreadRootId ? { threadRootId: sourceThreadRootId } : {}),
         ...(meta.kind ? { kind: meta.kind } : {}), ...(meta.returnTo ? { returnTo: meta.returnTo } : {}),
+        ...(meta.workerTask ? { workerTask: meta.workerTask } : {}),
         ...(meta.fileBatch ? { fileBatch: meta.fileBatch } : {}),
         ...(meta.originSenderId ? { originSenderId: meta.originSenderId } : {}), ...(Number.isInteger(meta.hop) ? { hop: meta.hop } : {}),
         ...(meta.originRoomId ? { originRoomId: meta.originRoomId } : {}), ...(meta.originEventId ? { originEventId: meta.originEventId } : {}),
@@ -658,7 +675,7 @@ export class BotNode {
     if (previous?.status === 'cancelled' && changes.status !== 'cancelled') return;
     const meta = metadataOf(item.event);
     const payload = { requestId: request.requestId, botId: this.participant.id, roomId: item.event.room_id,
-      eventId: item.event_id, taskId: request.authorization ? request.event.taskId : meta.taskId || `task-${digest(item.event_id).slice(0, 24)}`,
+      eventId: item.event_id, taskId: meta.taskId || `task-${digest(item.event_id).slice(0, 24)}`,
       status: 'running', stage: 'thinking', summary: '', artifacts: [], toolCalls: 0,
       ...previous, ...changes, delivery: this.delivery.publicRoute(item), updatedAt: new Date().toISOString() };
     this.store.updateTask(item.event_id, payload);
@@ -784,7 +801,7 @@ export class BotNode {
       const meta = metadataOf(item.event);
       const delegated = meta.kind === 'task.request' && meta.returnTo === item.event.sender
         && this.participants.some(person => person.kind === 'bot' && person.id === item.event.sender);
-      if (status === 'failed' && delegated && !response.authorizationDenied) {
+      if (status === 'failed' && delegated) {
         this.queueFailure(item, response, `${this.participant.name}执行任务失败。${reason}`);
       } else this.store.failed(item.event_id, reason, status);
       this.taskUpdate(item, { status, stage: status, summary: reason, toolCalls: response.toolCalls || 0 });
@@ -814,19 +831,12 @@ export class BotNode {
     this.taskUpdate(item, { status: 'running', stage: 'uploading', summary: '正在保存成果', toolCalls: response.toolCalls || 0 });
     await this.flushTaskUpdates();
     try {
-      if (this.work) await this.work.check(request, 'run');
       const output = parseBotOutput(response.text, this.participant.id, this.participants,
         { ignoreDelivery: !this.delivery.acceptsProposal(item) });
-      if (request.authorization?.kind === 'scoped' && output.delegate) throw Object.assign(new Error('Cross-server delegation is outside this task grant'), { status: 403 });
-      if (this.work && output.delegate && output.delegate.to.slice(output.delegate.to.indexOf(':') + 1)
-        !== this.participant.id.slice(this.participant.id.indexOf(':') + 1)) {
-        throw Object.assign(new Error('Local work cannot implicitly delegate private context to an external Bot'), { status: 403 });
-      }
       this.delivery.applyOutput(item, output);
       output.controlOnly = response.controlOnly === true;
       await this.withTransferControl(item, async signal => {
         for (const artifact of response.artifacts || []) {
-          if (this.work) await this.work.check(request, 'upload');
           if (!this.files) throw new Error('This node has no attachment transfer service');
           const key = digest(`${artifact.path}\0${artifact.sha256 || ''}`);
           let uploaded = this.store.uploaded(item.event_id, key);
@@ -845,9 +855,7 @@ export class BotNode {
           && (!request.event.fileBatch?.id || previous.fileBatch?.id === request.event.fileBatch.id));
         output.resultAttachments = uniqueAttachments([...earlierParts.flatMap(previous => previous.attachments || []), ...(request.event.attachments || eventAttachments(item.event))]);
       }
-      const sourceEvent = request.authorization ? { ...item.event, content: { ...item.event.content,
-        'org.ds_group': { to: [this.participant.id], taskId: request.event.taskId, hop: 0 } } } : item.event;
-      const deliveries = deliveriesFor(sourceEvent, output, this.participant.id, this.participants, this.roomId);
+      const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants, this.roomId);
       const deliveredArtifacts = uniqueAttachments(deliveries.filter(delivery => delivery.options.kind !== 'task.request')
         .flatMap(delivery => delivery.options.attachments || []));
       const published = { ...response, publishedArtifacts: attachments, deliveredArtifacts, delegated: Boolean(output.delegate),
@@ -903,14 +911,6 @@ export class BotNode {
     if (!item) return false;
     this.reconciled.add(item.event_id);
     try {
-      if (this.work && item.request.workGate === 'pending') {
-        await this.acceptResult(item, { status: 'failed', errorCode: 'Task stopped before work authorization was durably accepted', authorizationDenied: true });
-        return true;
-      }
-      if (this.work && !item.request.authorization) {
-        const current = await this.work.admit(item.event, this.nodeTools, this.files?.maxBytes);
-        if (current.mode === 'scoped') throw Object.assign(new Error('An older unscoped result cannot be promoted to cross-server authorization'), { status: 403 });
-      }
       let response = await this.bridge.status(item.request.requestId);
       if (['running', 'queued'].includes(response.status)) {
         this.store.resume(item.event_id);
@@ -932,7 +932,6 @@ export class BotNode {
       const source = this.store.item(delivery.source_event_id);
       const suppressed = this.attentionSuppression(source);
       if (suppressed) { this.suppressAttention(source, suppressed); return true; }
-      let sendAttempted = false;
       const cancelRequested = this.parentCancelled(source) || (this.tasks && (await this.control(source.request.requestId)).cancelRequested);
       if (cancelRequested) {
         this.store.cancelDelivery(source.event_id);
@@ -952,26 +951,13 @@ export class BotNode {
             }
             return this.matrix.send(delivery.room_id, delivery.body, delivery.options);
           };
-          if (!this.work) return send();
-          return (async () => {
-            const scoped = source.request.authorization?.kind === 'scoped';
-            await this.work?.check(source.request, 'deliver', { destinationRoomId: delivery.room_id,
-              recipientId: source.request.authorization?.requesterId || delivery.options.originSenderId || source.event.sender, replyTo: delivery.options.replyTo });
-            sendAttempted = true;
-            const receipt = await send();
-            if (scoped) await this.work.check(source.request, 'observe', { effectStatus: 'completed', callId: delivery.transaction_id })
-              .catch(error => this.onError(`Known Matrix receipt retained; authorization observation pending: ${error.message}`));
-            return receipt;
-          })();
+          return send();
         });
         this.store.sent(delivery.transaction_id, receipt.event_id, () => this.finishDeliveryState(delivery));
         this.lastError = null;
         await this.flushTaskUpdates();
       } catch (error) {
         if (error.attentionSuppressed) { this.suppressAttention(source, error.attentionSuppressed); return true; }
-        if (sendAttempted && source.request.authorization) await this.work.check(source.request, 'observe', {
-          effectStatus: temporaryTransferError(error) ? 'unknown' : 'failed', callId: delivery.transaction_id,
-        }).catch(() => {});
         if (error.taskCancelled) {
           this.store.cancelDelivery(source.event_id);
           this.taskUpdate(source, { status: 'cancelled', stage: 'cancelled', summary: '任务已取消' });
@@ -1014,21 +1000,10 @@ export class BotNode {
     }
     if (this.roster && !this.work) await this.ensureParticipants([item.event]);
     let request = this.requestFor(item);
-    if (this.work) request = { ...request, workGate: 'pending' };
     this.store.begin(item.event_id, request);
     this.state = 'thinking';
     let submitted = false;
     try {
-      if (this.work) {
-        const admission = await this.work.admit(item.event, this.nodeTools, this.files?.maxBytes);
-        for (const person of admission.participants) this.mergeRoomIdentity(person);
-        request = scopedTaskRequest(request, admission, item.event);
-        if (this.executionMode === 'native' && admission.mode !== 'native') throw Object.assign(new Error('Core has not admitted this native Bot binding'), { status: 403 });
-        if (admission.mode === 'native') request.mode = 'native';
-        request.workGate = admission.mode === 'scoped' ? 'scoped' : 'local';
-        this.store.prepared(item.event_id, request);
-        item.request = request;
-      }
       request = boundTaskRequest(request);
       const routing = this.delivery.route(item);
       if (routing.error) throw new Error(routing.error);
@@ -1065,14 +1040,13 @@ export class BotNode {
         }
       }
       submitted = true;
-      if (this.work) await this.work.check(request, 'run');
       const response = await this.bridge.turn(request, this.bridgeOptions(item));
       await this.acceptResult(item, response);
     } catch (error) {
       if (this.store.item(item.event_id).status === 'produced') throw error;
       const uncertain = submitted && temporaryTransferError(error);
       const status = error.taskCancelled ? 'cancelled' : uncertain ? 'unknown' : 'failed';
-      await this.acceptResult(item, { status, errorCode: error.message, authorizationDenied: Boolean(this.work && request.workGate === 'pending') });
+      await this.acceptResult(item, { status, errorCode: error.message });
       this.lastError = status === 'cancelled' ? null : error.message;
       if (status !== 'cancelled') this.onError(`Bot turn ${request.requestId} ended: ${error.message}`);
     } finally { this.state = 'idle'; }

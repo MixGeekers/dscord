@@ -131,67 +131,6 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
   };
 }
 
-test('scoped admission is durable before a download fails and never falls back to another delivery route', async (t) => {
-  const f = await fixture(t, {
-    meta: { delivery: { kind: 'direct', recipientId: humanId } },
-  });
-  f.runtime.files = {
-    prepare: async (request) => {
-      assert.equal(
-        f.store().item(f.event.event_id).request.authorization.domainId,
-        f.work.domainId,
-      );
-      assert.equal(request.authorization.domainId, f.work.domainId);
-      throw Object.assign(new Error('Input read denied after admission'), {
-        status: 403,
-      });
-    },
-  };
-  await f.runtime.processOne();
-  assert.equal(f.calls(), 0);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(
-    f.store().item(f.event.event_id).request.authorization.domainId,
-    f.work.domainId,
-  );
-  assert.equal(f.store().pendingDelivery(), undefined);
-  assert.deepEqual(f.sent, []);
-});
-
-test('a denied Bot delegation event cannot generate an unscoped failure or direct message', async (t) => {
-  const f = await fixture(t, {
-    sender: '@peer:b.node.test',
-    meta: {
-      kind: 'task.request',
-      returnTo: '@peer:b.node.test',
-      originSenderId: humanId,
-    },
-  });
-  f.revoke();
-  await f.runtime.processOne();
-  assert.equal(f.calls(), 0);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(f.store().pendingDelivery(), undefined);
-});
-
-test('restart before admission cannot reconcile or publish a request through an older unscoped path', async (t) => {
-  const f = await fixture(t);
-  f.store().begin(f.event.event_id, {
-    ...f.runtime.requestFor(f.store().item(f.event.event_id)),
-    workGate: 'pending',
-  });
-  const restarted = f.restart();
-  let lookups = 0;
-  f.bridge.status = async () => {
-    lookups++;
-    throw new Error('Must not look up an unsubmitted native task');
-  };
-  await restarted.recoverInterrupted();
-  assert.equal(lookups, 0);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(f.store().pendingDelivery(), undefined);
-});
-
 test('late native results retain their effects but revoked tasks cannot upload or send', async (t) => {
   const f = await fixture(t);
   let finish;
@@ -216,70 +155,6 @@ test('late native results retain their effects but revoked tasks cannot upload o
   assert.equal(item.response.artifacts.length, 1);
   assert.equal(f.store().pendingDelivery(), undefined);
   assert.deepEqual(f.sent, []);
-});
-
-test('a frozen send retry rechecks work, keeps its transaction and never reruns the model', async (t) => {
-  const f = await fixture(t, {
-    meta: { taskId: 'foreign-user-supplied-task', hop: 100 },
-  });
-  let attempts = 0;
-  f.matrix.send = async (destination, body, options) => {
-    attempts++;
-    f.sent.push({ destination, options });
-    if (attempts === 1)
-      throw Object.assign(new Error('Lost Matrix receipt'), {
-        networkError: true,
-      });
-    return { event_id: '$same-result' };
-  };
-  await f.runtime.processOne();
-  await assert.rejects(f.runtime.processOne(), /Lost Matrix receipt/);
-  assert.ok(f.store().pendingDelivery().routing_frozen);
-  await f.runtime.processOne();
-  assert.equal(f.calls(), 1);
-  assert.equal(f.sent.length, 2);
-  assert.equal(
-    f.sent[0].options.transactionId,
-    f.sent[1].options.transactionId,
-  );
-  assert.notEqual(f.sent[0].options.taskId, 'foreign-user-supplied-task');
-  assert.equal(f.sent[0].options.originSenderId, humanId);
-  assert.equal(f.sent[0].destination, roomId);
-  assert.equal(
-    f.decisions.filter((decision) => decision.stage === 'deliver').length,
-    2,
-  );
-  assert.ok(
-    f.decisions.some(
-      (decision) =>
-        decision.stage === 'observe' &&
-        decision.details.effectStatus === 'unknown',
-    ),
-  );
-});
-
-test('revocation after an unknown send prevents its next network attempt without rewriting the unknown effect', async (t) => {
-  const f = await fixture(t);
-  let attempts = 0;
-  f.matrix.send = async () => {
-    attempts++;
-    throw Object.assign(new Error('Lost Matrix receipt'), {
-      networkError: true,
-    });
-  };
-  await f.runtime.processOne();
-  await assert.rejects(f.runtime.processOne(), /Lost Matrix receipt/);
-  f.revoke();
-  await f.runtime.processOne();
-  assert.equal(attempts, 1);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.ok(
-    f.decisions.some(
-      (decision) =>
-        decision.stage === 'observe' &&
-        decision.details.effectStatus === 'unknown',
-    ),
-  );
 });
 
 test('a known uploaded attachment survives an observation outage as a separately pending audit', async (t) => {

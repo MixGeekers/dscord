@@ -344,7 +344,8 @@ export class NodeStore {
           .run(event.event_id, event.room_id, Number(result.lastInsertRowid), JSON.stringify(event));
         accepted++;
         const targets = event.content['org.ds_group']?.to;
-        const evidence = event.sender === this.botId ? undefined : route?.(event)
+        const own = event.sender === this.botId && !event.content['org.ds_group']?.workerTask;
+        const evidence = own ? undefined : route?.(event)
           || (Array.isArray(targets) && targets.includes(this.botId) ? { kind: 'reliable', reason: 'targeted' } : undefined);
         const relation = event.content['m.relates_to'];
         const thread = relation?.rel_type === 'm.thread' && typeof relation.event_id === 'string' ? relation.event_id : '';
@@ -352,7 +353,7 @@ export class NodeStore {
         this.db.prepare("UPDATE attention_events SET available_at=?,reason='new_message' WHERE status='waiting' AND thread_key=? AND event_id IN (SELECT event_id FROM messages WHERE room_id=?)")
           .run(now, thread, event.room_id);
         this.db.prepare('INSERT INTO attention_events(event_id,thread_key,status,received_at,available_at) VALUES (?,?,?,?,?)')
-          .run(event.event_id, thread, event.sender === this.botId ? 'self' : evidence ? 'routed' : 'queued', now, now);
+          .run(event.event_id, thread, own ? 'self' : evidence ? 'routed' : 'queued', now, now);
         if (evidence) {
           this.db.prepare("INSERT INTO inbox(event_id,status,attention_json) VALUES (?, 'queued', ?)")
             .run(event.event_id, JSON.stringify(evidence));

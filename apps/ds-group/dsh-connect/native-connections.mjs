@@ -91,6 +91,7 @@ export class NativeConnections {
       });
       Object.assign(entry, { bridge, botNode });
       await botNode.start();
+      await bridge.onWorkerResult((task, message, text) => botNode.acceptWorkerResult(task, message, text));
       if (this.enableKernelControl) {
         entry.control = new KernelNodeClient({ coreUrl: node.serverUrl, nodeSecret: config.nodeSecret,
           botId: node.id, nodeId: participant.localpart, runtimeId: botNode.runtimeId,
