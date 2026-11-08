@@ -66,3 +66,5 @@ DSCord 的聊天入口是 Matrix。吸收的其他 IM adapter 源码不等于提
 - 跨节点受托时，前台这一轮如果派了工，它的回复只是受理（`reply` / `ack`，不唤醒对方），不算结果；工作者的结果作为对原请求的 `task.result` 交回请求方 Bot，带原任务号和来源链。
 - `delegate` 发到通讯录里双方都在的房间，节点协作房间优先，其次是来源房间；发送彻底失败时在原消息下告诉请求方没有发出去。
 - 往来（exchange）记录每次 Bot 间请求：方向、对方、途径（`message_bot` / `matrix`）、代表的源消息、状态（received → dispatched → delivered，或 sending → sent → returned，失败为 failed）和任务编号。主人通过 kernel 管理通道的 `contacts` 操作只读查看，按联系人过滤，按时间分页。
+
+回复人的一轮里，如果 Bot 没有用 `delegate`，而是写了单独一行以 `@另一个 Bot 的名字` 开头的普通文本，核心把那一行起的内容当作委派发给该 Bot（前面的文字照常回复）。回复另一个 Bot 的一轮、工作者结果不做这种转换。

@@ -59,6 +59,25 @@ async function attentionCall(operation, timeoutMs, parentSignal) {
 
 const STRUCTURED = /^\{\s*"(?:text|delegate|delivery|artifacts)"\s*:/;
 
+/**
+ * A plain reply with a line that starts "@<another Bot's name>" is a handoff written as chat:
+ * left as text it reaches nobody as a request. The lines from there on become the delegation.
+ */
+function addressedHandoff(text, botId, participants) {
+  const bots = participants.filter(person => person.kind === 'bot' && person.id !== botId && person.name)
+    .sort((a, b) => b.name.length - a.name.length);
+  const lines = text.split('\n');
+  for (const [index, line] of lines.entries()) {
+    const bot = bots.find(person => line.trimStart().startsWith(`@${person.name}`));
+    if (!bot) continue;
+    const body = [line.trimStart().slice(bot.name.length + 1).replace(/^[\s,，:：]+/, ''), ...lines.slice(index + 1)].join('\n').trim();
+    if (!body) return undefined;
+    const said = lines.slice(0, index).join('\n').trim() || `我去请${bot.name}处理。`;
+    return { text: said.slice(0, 16000), delegate: { to: bot.id, body: body.slice(0, 16000) } };
+  }
+  return undefined;
+}
+
 /** Escape quotes and raw line breaks inside JSON strings: a quote ends a string only before , : } ] or the end. */
 export function repairJsonStrings(source) {
   let out = '';
@@ -81,7 +100,7 @@ export function repairJsonStrings(source) {
   return out;
 }
 
-export function parseBotOutput(raw, botId, participants, { ignoreDelivery = false } = {}) {
+export function parseBotOutput(raw, botId, participants, { ignoreDelivery = false, handoff = true } = {}) {
   if (typeof raw !== 'string' || !raw.trim()) throw new Error('Bot returned an empty response');
   const text = raw.trim();
   const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -91,7 +110,7 @@ export function parseBotOutput(raw, botId, participants, { ignoreDelivery = fals
   catch {
     // Models often leave quotes inside a string unescaped. A reply that is plainly the
     // delivery protocol must not reach the room as raw JSON with its delegation dropped.
-    if (!STRUCTURED.test(source)) return { text };
+    if (!STRUCTURED.test(source)) return (handoff && addressedHandoff(text, botId, participants)) || { text };
     try { parsed = JSON.parse(repairJsonStrings(source)); }
     catch { throw new Error('Structured Bot response is not valid JSON'); }
   }
@@ -917,8 +936,10 @@ export class BotNode {
     this.taskUpdate(item, { status: 'running', stage: 'uploading', summary: '正在保存成果', toolCalls: response.toolCalls || 0 });
     await this.flushTaskUpdates();
     try {
+      // Only a turn answering a person hands off by naming a Bot; a reply to a Bot, or a worker's result, is not a request.
+      const fromBot = this.participants.some(person => person.id === item.event.sender && person.kind === 'bot');
       const output = parseBotOutput(response.text, this.participant.id, this.participants,
-        { ignoreDelivery: !this.delivery.acceptsProposal(item) });
+        { ignoreDelivery: !this.delivery.acceptsProposal(item), handoff: !fromBot && !metadataOf(item.event).workerTask });
       this.delivery.applyOutput(item, output);
       output.controlOnly = response.controlOnly === true;
       output.accepted = response.dispatched?.length > 0;

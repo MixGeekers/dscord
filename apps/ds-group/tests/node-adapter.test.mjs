@@ -80,6 +80,11 @@ test('synthetic response protocol accepts text/JSON and validates explicit deleg
   assert.deepEqual(parseBotOutput('{"text":"收到，我去找人事","delegate":{"to":"@hr:ds-group.local","body":"不能拿"氛围词"顶上,\n要具体"}}', finance.id, participants),
     { text: '收到，我去找人事', delegate: { to: hr.id, body: '不能拿"氛围词"顶上,\n要具体' } });
   assert.throws(() => parseBotOutput('{"text":"收到","delegate":{"to":"@hr:ds-group.local","body":"a", "b"}}', finance.id, participants), /not valid JSON/);
+  // Script 02 G18 retest: a handoff written as chat ("@人事 …" on its own line) becomes the delegation.
+  assert.deepEqual(parseBotOutput(`唐，我这就去要。\n\n@${hr.name} 唐要两段简介，\n各 50 字`, finance.id, participants),
+    { text: '唐，我这就去要。', delegate: { to: hr.id, body: '唐要两段简介，\n各 50 字' } });
+  assert.deepEqual(parseBotOutput(`@${hr.name} 你好`, finance.id, participants, { handoff: false }), { text: `@${hr.name} 你好` });
+  assert.deepEqual(parseBotOutput(`我刚和 @${hr.name} 聊过`, finance.id, participants), { text: `我刚和 @${hr.name} 聊过` });
   // Ordinary text that merely starts with a brace is still chat content.
   assert.deepEqual(parseBotOutput('{a, b} 是两个元素', finance.id, participants), { text: '{a, b} 是两个元素' });
 });
