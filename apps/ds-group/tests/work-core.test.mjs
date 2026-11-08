@@ -290,6 +290,22 @@ test('ask_bot hands local files over as attachments and stops passing work after
   assert.deepEqual(f.core.takeAsks('req-2'), []);
 });
 
+test('one request is either handed to a worker or waits for another Bot in a turn, so the requester gets one result', async t => {
+  const f = await fixture(t, { origin: { requestId: 'req-g22', roomId: '!r2', eventId: '$g22', senderId: '@tang' } });
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.contacts.seeRoom('!r2', [{ id: '@native:dsh.test', kind: 'bot' }, { id: '@planner:a.test', name: '策划', kind: 'bot' }]);
+  // Asked first: no worker for the same request until the planner's result is back.
+  assert.match(await run(f, 'front', 'ask_bot', { to: '策划', body: '补一段游戏简介' }), /这一轮结束后发给 策划/);
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '资料包', brief: '整理媒体资料包' }), /已经请了 策划.*不要派工/);
+  assert.deepEqual(f.core.handedOff('req-g22'), []);
+  assert.equal(f.core.takeAsks('req-g22').length, 1);
+  // Dispatched first: the worker's result is the answer, so the same turn does not also ask the planner.
+  f.core.origin = { requestId: 'req-g22b', roomId: '!r2', eventId: '$g22b', senderId: '@tang' };
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '资料包', brief: '整理媒体资料包' }), /已派工/);
+  assert.match(await run(f, 'front', 'ask_bot', { to: '策划', body: '补一段游戏简介' }), /已经把这件事交给了工作者/);
+  assert.deepEqual(f.core.takeAsks('req-g22b'), []);
+});
+
 test('a plain-language task cannot hand stack traces or raw logs to the person who asked', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));

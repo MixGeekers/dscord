@@ -383,8 +383,7 @@ export class NativeBridge {
       // Work started or joined for this message: its result comes later, so this turn's reply is an acknowledgement.
       // Requests to other Bots made with ask_bot: the node sends them with this reply.
       record.asks = this.core.takeAsks(input.requestId);
-      record.dispatched = Object.values(this.state.tasks).filter(task => !task.joined && [task.origin, ...(task.followers || [])]
-        .some(origin => origin?.requestId === input.requestId)).map(task => task.id);
+      record.dispatched = this.core.handedOff(input.requestId);
       // The front writes no files; worker results carry theirs without a front turn.
       record.artifacts = [];
       record.status = 'completed'; record.stage = 'completed'; record.summary = '处理完成';

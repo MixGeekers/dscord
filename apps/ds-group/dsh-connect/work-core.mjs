@@ -189,7 +189,7 @@ export class WorkCore {
         parameters: { id: { type: 'string', required: true, description: '任务编号' }, text: { type: 'string', required: true, description: '要转给工作者的内容' } },
         execute: args => this.note(args.id, args.text) },
       { name: 'ask_bot', output,
-        description: '请通讯录里的另一个 Bot 做一件事，这是找别的 Bot 的唯一方式，不管这一轮是在替人还是替另一个 Bot 办事。这一轮结束后，核心把请求发到你们共同所在的房间（没有就开一个私聊房间），附上这条消息带的文件。对方读不到你这边的文件路径：要给它别的文件，把路径放进 files。对方的结果会作为新消息回到你这里，再由你回复请求者。',
+        description: '请通讯录里的另一个 Bot 做一件事，这是找别的 Bot 的唯一方式，不管这一轮是在替人还是替另一个 Bot 办事。这一轮结束后，核心把请求发到你们共同所在的房间（没有就开一个私聊房间），附上这条消息带的文件。对方读不到你这边的文件路径：要给它别的文件，把路径放进 files。对方的结果会作为新消息回到你这里，再由你回复请求者；需要工作者合成时，等结果回来再派工，同一轮里不要既派工又找 Bot。',
         parameters: {
           to: { type: 'string', required: true, description: '对方的完整 ID，或通讯录里只对应一个 Bot 的名字' },
           body: { type: 'string', required: true, description: '完整、自足的请求：对方看不到这里的对话，写清要什么、依据哪些原话或文件、为谁而问' },
@@ -228,6 +228,8 @@ export class WorkCore {
     // Work needs a message to answer. A turn the native host resumed on its own after a
     // restart has none, and must not quietly redo work the restart left unknown.
     if (!origin) return '现在没有要回复的消息，不能派工。宿主重启后结果不确定的任务不会自动重做；对方要重做时会再发消息。';
+    const asked = this.askedThisTurn();
+    if (asked) return asked;
     const task = this.state.tasks[id] = { id, title, brief, ...(deliverables ? { deliverables: String(deliverables) } : {}),
       ...(audience ? { audience: String(audience).trim().slice(0, 500) } : {}), ...(plain === true ? { plain: true } : {}),
       origin, inputFiles: origin?.files || [], createdAt: new Date().toISOString(), notified: false, toolCalls: 0 };
@@ -249,6 +251,9 @@ export class WorkCore {
     const contact = this.contacts?.resolve(to);
     if (!contact?.id) return contact?.error || '对方不在你的通讯录里，联系不上；直接告诉请求者。';
     if (contact.id === this.node.id) return '不能请自己；这件事用 dispatch_work 交给工作者。';
+    // One request gets one result: work a worker delivers on its own does not also wait for another Bot.
+    const handed = this.handedOff(origin.requestId);
+    if (handed.length) return `这一轮已经把这件事交给了工作者 ${handed.join('、')}，它的结果会直接交给请求者，同一件事不要再找别的 Bot。确实需要别的 Bot 的材料，就先用 task_cancel 取消，再用 ask_bot，等结果回来后连同材料一起派工。`;
     const asks = (this.asks ||= new Map()).get(origin.requestId) || [];
     if (asks.some(ask => ask.to === contact.id)) return `这一轮已经请过 ${contact.name}；要补充就写进同一个请求，不要再发一次。`;
     if (asks.length >= ASKS_PER_TURN) return `一轮最多请 ${ASKS_PER_TURN} 个 Bot。`;
@@ -269,6 +274,20 @@ export class WorkCore {
     return `已记下：这一轮结束后发给 ${contact.name}。它的结果会作为新消息回到你这里，那时再回复请求者。现在这一轮的回复简短告诉对方你去问了谁，不要编结果。`;
   }
 
+  /** Tasks started or joined for this request: each delivers its result to the requester on its own. */
+  handedOff(requestId) {
+    return Object.values(this.state.tasks).filter(task => !task.joined && [task.origin, ...(task.followers || [])]
+      .some(origin => origin?.requestId === requestId)).map(task => task.id);
+  }
+
+  /** Why this turn cannot hand the request to a worker: it is already waiting on another Bot's result. */
+  askedThisTurn() {
+    const asks = this.asks?.get(this.origin?.requestId) || [];
+    if (!asks.length) return '';
+    const names = asks.map(ask => this.contacts?.contact?.(ask.to)?.name || ask.to).join('、');
+    return `这一轮已经请了 ${names}，这件事的结果要等它回来再定。现在不要派工；对方的结果回来后，再把它和要求一起交给工作者，请求者只收到那一份结果。`;
+  }
+
   /** The requests to other Bots this turn made; a turn that did not finish sends none. */
   takeAsks(requestId) {
     const asks = this.asks?.get(requestId) || [];
@@ -283,6 +302,8 @@ export class WorkCore {
     if (!task) return '没有这个任务。用 task_status 看最近的任务编号。';
     const origin = this.origin;
     if (!origin) return '现在没有要回复的消息，不能登记。';
+    const asked = this.askedThisTurn();
+    if (asked) return asked;
     const origins = [task.origin, ...(task.followers || [])];
     if (origins.some(other => other?.eventId === origin.eventId)) return `这条消息已经是 ${task.id} 的请求者。`;
     task.followers = [...(task.followers || []), { ...origin, ...(audience ? { audience: String(audience).trim().slice(0, 500) } : {}),
