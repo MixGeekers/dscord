@@ -131,9 +131,11 @@ export function parseBotOutput(raw, botId, participants, { ignoreDelivery = fals
   const delegate = parsed.delegate;
   const bots = participants.filter(person => person.kind === 'bot' && person.id !== botId);
   // The full ID is the address; a display name the Bot saw in the room resolves when it names exactly one Bot.
+  // Models sometimes write the ID as a Matrix link (matrix:@id, matrix:u/id, https://matrix.to/#/@id); it is the same address.
+  const address = String(delegate?.to ?? '').trim().replace(/^https:\/\/matrix\.to\/#\//i, '').replace(/^matrix:(u\/)?/i, (_, u) => u ? '@' : '');
   const byName = name => [...new Set(bots.filter(person => person.name === String(name).replace(/^@/, '')).map(person => person.id))];
-  const to = delegate && typeof delegate === 'object' && (bots.some(person => person.id === delegate.to) ? delegate.to
-    : byName(delegate.to).length === 1 ? byName(delegate.to)[0] : undefined);
+  const to = delegate && typeof delegate === 'object' && (bots.some(person => person.id === address) ? address
+    : byName(address).length === 1 ? byName(address)[0] : undefined);
   // Fields beyond to/body (an audience, a deadline) are part of the request, not a reason to drop it.
   const extra = delegate && typeof delegate === 'object' ? Object.entries(delegate).filter(([key, value]) => !['to', 'body'].includes(key)
     && ['string', 'number', 'boolean'].includes(typeof value) && String(value).trim()).map(([key, value]) => `${key}：${String(value).trim()}`) : [];

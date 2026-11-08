@@ -80,6 +80,11 @@ test('synthetic response protocol accepts text/JSON and validates explicit deleg
   // Script 02 G14 retest: extra fields such as audience go into the request; a display name resolves to the full ID.
   assert.deepEqual(parseBotOutput('{"text":"收到","delegate":{"to":"人事","body":"看日志","audience":"玩家小满：通俗说明"}}', finance.id, participants),
     { text: '收到', delegate: { to: hr.id, body: '看日志\n\naudience：玩家小满：通俗说明' } });
+  // Script 02 G13: the model wrote the full ID as a Matrix link; it is still the same Bot.
+  for (const to of [`matrix:${hr.id}`, `matrix:u/${hr.id.slice(1)}`, `https://matrix.to/#/${hr.id}`, ` ${hr.id} `]) {
+    assert.deepEqual(parseBotOutput(JSON.stringify({ text: '收到', delegate: { to, body: '看日志' } }), finance.id, participants),
+      { text: '收到', delegate: { to: hr.id, body: '看日志' } });
+  }
   // Script 02 G18 retest: a remote Bot whose roster name is its full ID is still found by its room label.
   const cold = [...participants.filter(person => person.id !== hr.id), { id: hr.id, name: hr.id, kind: 'bot' }];
   assert.equal(parseBotOutput(`好的。\n@${hr.name} 写两段`, finance.id, cold).delegate, undefined);
