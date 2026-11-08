@@ -85,6 +85,27 @@ test('listed files that do not exist are refused so the worker can correct its r
   assert.equal(Object.values(f.state.tasks)[0].status, 'running');
 });
 
+test('files written outside outputs/ and left out of files are asked about once, then a second report stands', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  await run(f, 'front', 'dispatch_work', { audience: '林：只要结论', title: '补丁说明', brief: 'patch-notes.md 放在工作目录根', deliverables: 'patch-notes.md' });
+  const task = Object.values(f.state.tasks)[0];
+  await writeFile(path.join(task.dir, 'patch-notes.md'), '# 0.9.1\n');
+  const asked = await run(f, 'worker-1', 'work_report', { status: 'done', reply: '写好了', summary: 'ok' });
+  assert.match(asked, /patch-notes\.md/); assert.match(asked, /files 为空/);
+  assert.equal(task.status, 'running');
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', reply: '写好了', summary: 'ok', files: ['patch-notes.md'] }), /核对了 1 个文件/);
+  assert.equal(task.artifacts[0].name, 'patch-notes.md');
+  const g = await fixture(t);
+  await g.core.serveFront(g.agentFor('front'));
+  await run(g, 'front', 'dispatch_work', { audience: 'x', title: 'x', brief: 'y' });
+  const other = Object.values(g.state.tasks)[0];
+  await writeFile(path.join(other.dir, 'scratch.log'), 'x');
+  assert.match(await run(g, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: 'ok' }), /files 为空/);
+  assert.match(await run(g, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: 'ok' }), /核对了 0 个文件/);
+  assert.equal(other.status, 'done');
+});
+
 test('a worker turn without a report is reminded once, then fails with its last words', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));

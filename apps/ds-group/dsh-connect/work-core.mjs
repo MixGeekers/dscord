@@ -1,5 +1,5 @@
 import path from 'node:path';
-import { mkdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-plugin/work-files.mjs';
 
@@ -74,6 +74,20 @@ const mark = (task, to, by, extra = {}) => {
   (task.events ||= []).push({ at: new Date().toISOString(), from: task.status ?? null, to, by });
   Object.assign(task, extra, { status: to });
 };
+
+/** Files a worker left in its directory outside outputs/, as relative paths. */
+async function looseFiles(dir, prefix = '', depth = 0, found = []) {
+  let entries = [];
+  try { entries = await readdir(path.join(dir, prefix), { withFileTypes: true }); } catch { return found; }
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (found.length >= 10) break;
+    const name = path.join(prefix, entry.name);
+    if (entry.name.startsWith('.') || entry.name === 'node_modules' || (!prefix && entry.name === 'outputs')) continue;
+    if (entry.isFile()) found.push(name);
+    else if (entry.isDirectory() && depth < 2) await looseFiles(dir, name, depth + 1, found);
+  }
+  return found;
+}
 
 export class WorkCore {
   constructor({ ctx, native, node, state, save, maxWorkers = 3, timeoutMs = 60 * 60_000 }) {
@@ -277,6 +291,16 @@ export class WorkCore {
       artifacts = [...new Map(artifacts.map(file => [`${file.name}\0${file.sha256}`, file])).values()];
     } catch (cause) {
       return `文件核对没有通过（${cause.code || cause.message}）。请确认文件存在、是普通文件，再重新调用 work_report。`;
+    }
+    // A worker that wrote files but listed none would deliver only a local path. Ask once;
+    // a second report without files is taken as meaning no file is to be delivered.
+    if (!artifacts.length && !task.filesChecked) {
+      const loose = await looseFiles(task.dir);
+      if (loose.length) {
+        task.filesChecked = true;
+        await this.save();
+        return `没有汇报：工作目录里有 ${loose.join('、')}，但 files 为空，outputs/ 里也没有文件，对方只会收到一段文字，拿不到文件。要交付的文件写进 files 再汇报；确实不交付文件，就原样再调用一次 work_report。`;
+      }
     }
     if (task.plain) {
       for (const file of artifacts.filter(file => TEXT_FILE.test(file.name) && file.size <= 2_000_000)) {
