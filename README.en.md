@@ -15,7 +15,7 @@
 
 <p align="center">
   <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2"><img src="https://img.shields.io/badge/release-0.4.0--alpha.2-344BFF?style=flat-square" alt="DSCord 0.4.0-alpha.2 release"></a>
-  <a href="apps/ds-group/deploy/npm.md#安装"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="Install DSCord with npm"></a>
+  <a href="https://www.npmjs.com/package/dscord/v/0.4.0-alpha.2"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="Install DSCord with npm"></a>
   <a href="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml"><img src="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml/badge.svg?branch=main" alt="CI status on main"></a>
   <a href="apps/ds-group/deploy/README.md"><img src="https://img.shields.io/badge/Linux-amd64%20%7C%20arm64-0B1B52?style=flat-square" alt="Server deployment on Linux amd64 and arm64"></a>
 </p>
@@ -84,12 +84,14 @@ Already have a server? Go to [Connect your Bot](#connect-bot). Addresses, ports,
 
 ### Install the CLI with npm
 
-With Node `>=24.19.0 <25`, use npm to install the package directly from GitHub Releases. The CLI manages servers and standalone nodes. Check the version after installation.
+With Node `>=24.19.0 <25`, install `dscord` from the npm registry. The CLI manages servers and standalone nodes. Check the version after installation.
 
 ```sh
-npm install --global https://github.com/MixGeekers/dscord/releases/download/ds-group-v0.4.0-alpha.2/dscord-0.4.0-alpha.2.tgz
+npm install --global dscord@0.4.0-alpha.2
 dscord --version
 ```
+
+Prereleases use the `alpha` tag. Run `npm install --global dscord@alpha` to upgrade to the latest Alpha.
 
 To connect a Bot in DSH, download the same `.tgz`, then install and enable it through `Plugins → Add plugin`. [Detailed installation steps](apps/ds-group/deploy/npm.md#安装)
 
