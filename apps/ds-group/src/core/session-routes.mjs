@@ -1,5 +1,6 @@
 import { isIP } from 'node:net';
 import { MAX_ATTACHMENTS } from '../media.mjs';
+import { NODE_PROTOCOL } from '../node-protocol.mjs';
 
 function clientIp(request, trustProxy) {
   const forwarded = request.headers['x-forwarded-for'];
@@ -32,7 +33,7 @@ export function sessionRoutes(router, app) {
       identity: identity.discovery(), web: { mode: app.webMode } });
   });
   router.get('/api/status', ({ send }) => send(200, { nodes: app.nodeSnapshot(), budget: app.budget.snapshot(),
-    core: { startedAt: app.startedAt, storage: 'Matrix Synapse', roomId: setup.roomId, webMode: app.webMode } }));
+    core: { startedAt: app.startedAt, storage: 'Matrix Synapse', roomId: setup.roomId, webMode: app.webMode, nodeProtocol: NODE_PROTOCOL } }));
   router.get('/api/push/config', async ({ send }) => send(200, push ? await push.getConfig() : { enabled: false, requiresSecureContext: true }));
 
   router.get('/api/demo-login', ({ url, send }) => {

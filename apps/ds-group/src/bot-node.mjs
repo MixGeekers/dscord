@@ -1477,6 +1477,11 @@ export async function runNode(argv = process.argv.slice(2)) {
   const decisionProvider = process.env.DSCORD_DECISION_ENABLED === 'false' ? undefined
     : createOpenAIDecisionProvider({ apiKey: decisionKey,
       model: process.env.DSCORD_DECISION_MODEL || undefined, endpoint: process.env.DSCORD_DECISION_ENDPOINT || undefined });
+  // Learn the server's protocol before anything else; an incompatible kernel stops here with the upgrade it needs.
+  const { KERNEL_VERSION, hello } = await import('./node-protocol.mjs');
+  let session;
+  try { session = await hello({ coreUrl, nodeSecret: config.nodeSecret, botId: participant.id, nodeId: participant.localpart, capabilities: ['kernel-control'] }); }
+  catch (error) { store.close(); await releaseLock(); throw error; }
   const node = new BotNode({ participant, participants: setup.participants, roomId: setup.roomId,
     matrix: new MatrixClient({ baseUrl: setup.homeserverUrl, accessToken: participant.accessToken }), store,
     bridge, executionMode, nativeBinding, attention: { mode: attentionMode }, decisionProvider,
@@ -1489,7 +1494,8 @@ export async function runNode(argv = process.argv.slice(2)) {
     heartbeat: async body => {
       const response = await fetch(new URL('/internal/nodes/heartbeat', coreUrl), { method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${config.nodeSecret}` },
-        body: JSON.stringify(body), signal: AbortSignal.timeout(10000) });
+        body: JSON.stringify({ ...body, protocol: session.protocol, kernelVersion: KERNEL_VERSION,
+          ...(session.capabilities.includes('kernel-control') ? {} : { kernelControl: undefined }) }), signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error(`Core heartbeat HTTP ${response.status}`);
     },
   });
@@ -1502,7 +1508,7 @@ export async function runNode(argv = process.argv.slice(2)) {
     onError: code => node.onError(`Kernel management: ${code}`) });
   try { await node.start(); }
   catch (error) { store.close(); await releaseLock(); throw error; }
-  node.kernelManagement.start();
+  if (session.capabilities.includes('kernel-control')) node.kernelManagement.start();
   console.log(`DS-Group node ${name} connected as ${participant.id}`);
   let stopping;
   for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => {

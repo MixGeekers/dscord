@@ -10,6 +10,27 @@
 
 所需第三方运行库由 [runtime-dependencies.json](../dsh-plugin/runtime-dependencies.json) 和锁文件定义。启动器将 SDK 解析到实际宿主，将随包内核的其他运行库解析到私有依赖目录。模型和工具目录仍由宿主提供。
 
+## 节点协议与插件版本
+
+节点和 Core 之间的接口有自己的版本号（节点协议），和 DSCord 发行版本、插件（内核）版本分开，定义在 [node-protocol.mjs](../src/node-protocol.mjs)。Core 只说一个版本 `NODE_PROTOCOL`；插件声明自己能说的范围 `KERNEL_PROTOCOL {min,max}`，发布时写进 npm 清单的 `dscord.protocol`。协议号是 `主.次`：次版本只增加可选能力，主版本变化才不兼容。服务器不升级，节点也可以换到更新的插件，只要新插件的范围仍覆盖服务器的协议；兼容旧服务器的负担由插件承担。
+
+- **握手**：节点在其他请求之前 `POST /internal/node/hello`，带 `botId`、`nodeId` 和 `kernel {version, protocol:{min,max}, capabilities}`。Core 能说时返回 `200 {protocol, capabilities, server:{version}}`，不能说时返回 `426 {code:"PROTOCOL_UPGRADE_REQUIRED", protocol}`，426 也告诉节点该找哪个协议。握手的请求和回答只增加字段，永远不改形状。
+- **基线**：协议 1.0 就是握手出现之前的节点接口。没有握手路由（404）的旧服务器按 1.0 对待；心跳里不带 `protocol` 的旧节点也按 1.0 对待。
+- **心跳**：每次心跳带协议和 `kernelVersion`。Core 只接受主版本相同、次版本不高于自己的节点，否则返回 426；`/api/status` 的节点记录里能看到每个节点的协议和插件版本，`core.nodeProtocol` 是 Core 自己的协议。
+- **能力**：Core 在握手里列出它提供的可选能力（目前是 `kernel-control`）；节点只在服务器提供时启用对应功能。
+
+插件按服务器的协议挑版本，不依赖 Core 认识新插件（[kernel-updates.mjs](kernel-updates.mjs)）。节点读取 npm 上 `dscord` 的全部版本，跳过已废弃的、渠道不符的（稳定版或包含预发布）、`dscord.protocol` 不覆盖服务器协议的、`engines.dsh` 不匹配当前 DSH 的，取最新的一个。当前插件兼容时只往新版本换；不兼容时换到兼容此服务器的最好版本，哪怕更旧，保证服务器不升级也不丢节点。安装交给 DSH 插件管理器（`installBundle`）；热重载下管理器拒绝覆盖已有依赖时，先移除本插件再装，失败时装回原来的版本。只有从 npm 安装的插件会被移动，本地路径或 git 安装只提示手动安装。
+
+升级方式由节点所有者在连接页的「插件版本」里设定，保存在数据目录的 `kernel-updates.json`：
+
+| 策略 | 行为 |
+|---|---|
+| `auto` | 发现兼容的新版本后，等所有 Bot 空闲（没有正在进行的一轮，也没有在跑或排队的工作者）时自动安装 |
+| `notify`（默认） | 启动后和每 6 小时检查一次，服务器协议变化时立即检查，只提示 |
+| `manual` | 只在所有者点「检查更新」时查找 |
+
+连接页通过 `POST /api/dscord` 的 `kernel-update-status`、`kernel-update-check`、`kernel-update-policy`（`policy`、`channel`）和 `kernel-update-install` 操作这些设置；`status` 的 `kernelUpdates` 给出当前版本、服务器协议、是否兼容、可换到的版本、安装阶段和错误。
+
 ## 管理 API
 
 DSH 内已认证、同源的 `POST /api/dscord/kernel` 接收 `{endpoint,payload}`，返回 `{ok,value}` 或 `{ok:false,error}`。它不是无需认证的公共 Core 入口。

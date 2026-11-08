@@ -12,10 +12,11 @@ import { NativeBridge } from './native-bridge.mjs';
 import { localBot } from './work-core.mjs';
 import { DecisionSettings } from './decision-settings.mjs';
 import { KernelNodeClient } from '../src/kernel-node-client.mjs';
+import { KERNEL_VERSION, hello } from '../src/node-protocol.mjs';
 
 export class NativeConnections {
-  constructor({ ctx, native, decisionSettings, enableKernelControl = true }) {
-    Object.assign(this, { ctx, native, decisionSettings, enableKernelControl });
+  constructor({ ctx, native, decisionSettings, updates, enableKernelControl = true, introduce = hello }) {
+    Object.assign(this, { ctx, native, decisionSettings, updates, enableKernelControl, introduce });
     this.connections = new Map();
   }
 
@@ -64,6 +65,13 @@ export class NativeConnections {
     let store;
     const entry = { node, release };
     try {
+      // Learn the server's protocol first; a kernel that cannot speak it asks for a compatible release.
+      const session = await this.introduce({ coreUrl: node.serverUrl, nodeSecret: config.nodeSecret, botId: node.id,
+        nodeId: participant.localpart, capabilities: this.enableKernelControl ? ['kernel-control'] : [] })
+        .catch(error => { if (error.protocol) this.updates?.observeProtocol(error.protocol, { compatible: false }); throw error; });
+      this.updates?.observeProtocol(session.protocol);
+      const kernelControl = this.enableKernelControl && session.capabilities.includes('kernel-control');
+      Object.assign(entry, { protocol: session.protocol, capabilities: session.capabilities });
       const work = createNodeWorkClient(node.serverUrl, config.nodeSecret, node.id);
       const matrix = new MatrixClient({ baseUrl: setup.homeserverUrl, accessToken: participant.accessToken });
       bridge = await new NativeBridge({ ctx: this.ctx, native: this.native, node }).initialize();
@@ -81,12 +89,18 @@ export class NativeConnections {
         onError: message => { entry.lastError = message; },
         heartbeat: async body => {
           const kernel = await bridge.kernelState();
+          entry.openWork = (kernel.work?.workers?.length ?? 0) + (kernel.work?.queue?.length ?? 0);
           const response = await fetch(new URL('/internal/nodes/heartbeat', node.serverUrl), { method: 'POST',
             headers: { 'content-type': 'application/json', authorization: `Bearer ${config.nodeSecret}` },
             body: JSON.stringify({ ...body, engine: 'DSCord kernel', executionMode: 'native',
+              protocol: session.protocol, kernelVersion: KERNEL_VERSION,
               kernel: { runtime: kernel.runtime, work: kernel.work, memorySummary: kernel.memorySummary,
                 attention: botNode.attentionStatus() },
-              ...(this.enableKernelControl ? { kernelControl: { version: 1 } } : {}) }), signal: AbortSignal.timeout(10000) });
+              ...(kernelControl ? { kernelControl: { version: 1 } } : {}) }), signal: AbortSignal.timeout(10000) });
+          if (response.status === 426) {
+            const answer = await response.json().catch(() => ({}));
+            if (answer.protocol) this.updates?.observeProtocol(answer.protocol, { compatible: false });
+          }
           if (!response.ok) throw new Error(`Core heartbeat HTTP ${response.status}`);
         },
       });
@@ -95,7 +109,7 @@ export class NativeConnections {
       await botNode.start();
       await bridge.serveFront();
       await bridge.onWorkerResult((task, message, text) => botNode.acceptWorkerResult(task, message, text));
-      if (this.enableKernelControl) {
+      if (kernelControl) {
         entry.control = new KernelNodeClient({ coreUrl: node.serverUrl, nodeSecret: config.nodeSecret,
           botId: node.id, nodeId: participant.localpart, runtimeId: botNode.runtimeId,
           operations: {
@@ -114,6 +128,11 @@ export class NativeConnections {
       }
       throw error;
     }
+  }
+
+  /** No connected Bot is in a turn or has workers running or queued (as of its last heartbeat), so a plugin reload interrupts nothing. */
+  idle() {
+    return [...this.connections.values()].every(entry => entry.botNode?.state !== 'thinking' && !entry.openWork);
   }
 
   async stop(node) {

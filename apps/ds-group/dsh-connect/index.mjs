@@ -5,6 +5,7 @@ import { DshModels } from './models.mjs';
 import { NativeBots } from './native-bots.mjs';
 import { NativeConnections } from './native-connections.mjs';
 import { startNativeTeam } from './native-team.mjs';
+import { KernelUpdates } from './kernel-updates.mjs';
 
 export const name = 'dscord-connect';
 export const inject = ['connection', 'profileContext', 'llm', 'settings', 'credentials', 'sessionController', 'sessions', 'tools', 'systemPrompt', 'sessionTitle', 'workspaceRegistry'];
@@ -15,8 +16,11 @@ export async function apply(ctx, config = {}) {
   const directory = path.resolve(config.dataDirectory || path.join(sourceHome, 'dscord', sourceProfile));
   const native = new NativeBots(ctx, { ensureTeam: () => startNativeTeam(ctx, { home: config.kernelHome }) });
   const models = new DshModels(ctx);
-  const processes = new NativeConnections({ ctx, native });
-  const controller = new ConnectController({ directory, sourceHome, sourceProfile, models, native, processes });
+  let processes;
+  const updates = await new KernelUpdates({ ctx, directory, isIdle: () => processes?.idle() ?? true }).initialize();
+  ctx.effect(() => () => updates.dispose(), 'dscord: kernel update checks');
+  processes = new NativeConnections({ ctx, native, updates });
+  const controller = new ConnectController({ directory, sourceHome, sourceProfile, models, native, processes, updates });
   const ready = controller.initialize();
   ctx.effect(() => ctx.connection.fetch.register({
     path: '/api/dscord', methods: ['POST'], requestBody: 'buffered',

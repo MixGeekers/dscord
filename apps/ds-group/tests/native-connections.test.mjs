@@ -31,6 +31,7 @@ test('native connection processes Matrix traffic in the original Bot and disconn
       const chunks = []; for await (const chunk of request) chunks.push(chunk);
       let value = {};
       if (url.pathname === '/api/bootstrap') value = { participants };
+      else if (url.pathname === '/internal/node/hello') value = { protocol: '1.0', capabilities: ['kernel-control'], server: { version: 'test' } };
       else if (url.pathname === '/internal/nodes/heartbeat') {
         const next = JSON.parse(Buffer.concat(chunks));
         if (heartbeat && heartbeat.status !== 'offline' && heartbeat.runtimeId !== next.runtimeId) {
@@ -87,6 +88,7 @@ test('native connection processes Matrix traffic in the original Bot and disconn
   assert.equal(sent[0].content['org.ds_group'].originEventId, '$input');
   await connections.stop(node);
   assert.equal(heartbeat.status, 'offline');
+  assert.equal(heartbeat.protocol, '1.0'); assert.match(heartbeat.kernelVersion, /^\d+\.\d+\.\d+/);
   const oldRuntime = heartbeat.runtimeId;
   await connections.start(node);
   assert.notEqual(heartbeat.runtimeId, oldRuntime);
