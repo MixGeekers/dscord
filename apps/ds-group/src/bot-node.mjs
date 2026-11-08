@@ -147,7 +147,10 @@ export function deliveriesFor(event, output, botId, participants, seed = event.e
   const sourceAttachments = uniqueAttachments([...eventAttachments(event), ...(output.sourceAttachments || [])]);
   const attachments = uniqueAttachments(output.attachments || []).filter(file => !asks.length
     || !sourceAttachments.some(source => source.sha256 === file.sha256 && source.name === file.name));
-  const replyAttachments = attachments.length ? attachments : isFinalResult && !output.failure ? uniqueAttachments(output.resultAttachments || eventAttachments(event)) : [];
+  // The asked Bot's files go to the human only with a final answer: a reply that hands
+  // the result to a worker leaves the files to the worker's delivery.
+  const replyAttachments = attachments.length ? attachments
+    : isFinalResult && !output.failure && !output.accepted ? uniqueAttachments(output.resultAttachments || eventAttachments(event)) : [];
   const result = [{ roomId: replyRoomId, body: output.text, options: {
     ...common, replyTo: replyEventId, transactionId: `${prefix}-reply`, to: answering ? [returnTo] : [],
     ...(replyThreadRootId ? { threadRootId: replyThreadRootId } : {}),
