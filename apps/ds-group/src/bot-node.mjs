@@ -58,29 +58,7 @@ async function attentionCall(operation, timeoutMs, parentSignal) {
 }
 
 const SPOKEN_ATTENTION_MS = 10 * 60_000;
-const STRUCTURED = /^\{\s*"(?:text|delegate|delivery|artifacts)"\s*:/;
-
-/**
- * A plain reply with a line that starts "@<another Bot's name>" is a handoff written as chat:
- * left as text it reaches nobody as a request. The lines from there on become the delegation.
- */
-function addressedHandoff(text, botId, participants) {
-  // Each Bot is addressed by "@label" or by its full ID; the longest match wins.
-  const handles = participants.filter(person => person.kind === 'bot' && person.id !== botId)
-    .flatMap(person => [...(person.name && person.name !== person.id ? [`@${person.name}`] : []), person.id].map(handle => ({ handle, bot: person })))
-    .sort((a, b) => b.handle.length - a.handle.length);
-  const lines = text.split('\n');
-  for (const [index, line] of lines.entries()) {
-    const found = handles.find(({ handle }) => line.trimStart().startsWith(handle));
-    if (!found) continue;
-    const bot = { ...found.bot, name: found.bot.name && found.bot.name !== found.bot.id ? found.bot.name : found.bot.id };
-    const body = [line.trimStart().slice(found.handle.length).replace(/^[\s,，:：]+/, ''), ...lines.slice(index + 1)].join('\n').trim();
-    if (!body) return undefined;
-    const said = lines.slice(0, index).join('\n').trim() || `我去请${bot.name}处理。`;
-    return { text: said.slice(0, 16000), delegate: { to: bot.id, body: body.slice(0, 16000) } };
-  }
-  return undefined;
-}
+const STRUCTURED = /^\{\s*"(?:text|delivery|artifacts)"\s*:/;
 
 /** Escape quotes and raw line breaks inside JSON strings: a quote ends a string only before , : } ] or the end. */
 export function repairJsonStrings(source) {
@@ -104,7 +82,7 @@ export function repairJsonStrings(source) {
   return out;
 }
 
-export function parseBotOutput(raw, botId, participants, { ignoreDelivery = false, handoff = true } = {}) {
+export function parseBotOutput(raw, participants, { ignoreDelivery = false } = {}) {
   if (typeof raw !== 'string' || !raw.trim()) throw new Error('Bot returned an empty response');
   const text = raw.trim();
   const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
@@ -113,41 +91,21 @@ export function parseBotOutput(raw, botId, participants, { ignoreDelivery = fals
   try { parsed = JSON.parse(source); }
   catch {
     // Models often leave quotes inside a string unescaped. A reply that is plainly the
-    // delivery protocol must not reach the room as raw JSON with its delegation dropped.
-    if (!STRUCTURED.test(source)) return (handoff && addressedHandoff(text, botId, participants)) || { text };
+    // delivery protocol must not reach the room as raw JSON.
+    if (!STRUCTURED.test(source)) return { text };
     try { parsed = JSON.parse(repairJsonStrings(source)); }
     catch { throw new Error('Structured Bot response is not valid JSON'); }
   }
   // Plain JSON data and scalar answers are chat content. Only explicit delivery
-  // fields opt into the text/delegation protocol.
+  // fields opt into the text/delivery protocol.
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)
-    || !['text', 'artifacts', 'delegate', 'delivery'].some(key => Object.hasOwn(parsed, key))) return { text };
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed) || typeof parsed.text !== 'string' || !parsed.text.trim()) {
-    throw new Error('Structured Bot response requires non-empty text');
-  }
+    || !['text', 'artifacts', 'delivery'].some(key => Object.hasOwn(parsed, key))) return { text };
+  if (typeof parsed.text !== 'string' || !parsed.text.trim()) throw new Error('Structured Bot response requires non-empty text');
   if (parsed.text.length > 16000) throw new Error('Bot response is too long');
-  const output = { text: parsed.text.trim(), ...(ignoreDelivery || parsed.delivery === undefined ? {} : { delivery: normalizeDelivery(parsed.delivery, participants) }) };
-  if (parsed.delegate === undefined) return output;
-  const delegate = parsed.delegate;
-  const bots = participants.filter(person => person.kind === 'bot' && person.id !== botId);
-  // The full ID is the address; a display name the Bot saw in the room resolves when it names exactly one Bot.
-  // Models sometimes write the ID as a Matrix link (matrix:@id, matrix:u/id, https://matrix.to/#/@id); it is the same address.
-  const address = String(delegate?.to ?? '').trim().replace(/^https:\/\/matrix\.to\/#\//i, '').replace(/^matrix:(u\/)?/i, (_, u) => u ? '@' : '');
-  const byName = name => [...new Set(bots.filter(person => person.name === String(name).replace(/^@/, '')).map(person => person.id))];
-  const to = delegate && typeof delegate === 'object' && (bots.some(person => person.id === address) ? address
-    : byName(address).length === 1 ? byName(address)[0] : undefined);
-  // Fields beyond to/body (an audience, a deadline) are part of the request, not a reason to drop it.
-  const extra = delegate && typeof delegate === 'object' ? Object.entries(delegate).filter(([key, value]) => !['to', 'body'].includes(key)
-    && ['string', 'number', 'boolean'].includes(typeof value) && String(value).trim()).map(([key, value]) => `${key}：${String(value).trim()}`) : [];
-  const body = typeof delegate?.body === 'string' ? [delegate.body.trim(), ...extra].filter(Boolean).join('\n\n') : '';
-  // A handoff that cannot go out is said plainly instead of failing the whole reply.
-  if (!to || !body || body.length > 16000) {
-    return { ...output, text: `${output.text}\n\n（这次没能转交出去：${!to ? '对方不在我能联系的 Bot 里' : '请求内容为空或太长'}。）` };
-  }
-  return { ...output, delegate: { to, body } };
+  return { text: parsed.text.trim(), ...(ignoreDelivery || parsed.delivery === undefined ? {} : { delivery: normalizeDelivery(parsed.delivery, participants) }) };
 }
 
-export function deliveriesFor(event, output, botId, participants, collaborationRoomId = event.room_id, seed = event.event_id) {
+export function deliveriesFor(event, output, botId, participants, seed = event.event_id) {
   const meta = metadataOf(event);
   // A worker's result for another Bot's request answers that request, as the reply to it would have.
   if (meta.workerTask && meta.answers) {
@@ -156,10 +114,12 @@ export function deliveriesFor(event, output, botId, participants, collaborationR
     // The request was admitted from that Bot; its roster entry may not be loaded again yet after a restart.
     const known = participants.some(person => person.id === request.sender && person.kind === 'bot')
       ? participants : [...participants.filter(person => person.id !== request.sender), { id: request.sender, kind: 'bot' }];
-    return deliveriesFor(request, output, botId, known, collaborationRoomId, event.event_id);
+    return deliveriesFor(request, output, botId, known, event.event_id);
   }
   const hop = Number.isInteger(meta.hop) && meta.hop >= 0 ? meta.hop : 0;
-  if (hop > 4 || (output.delegate && hop >= 4)) throw new Error('Collaboration hop limit reached');
+  // Requests to other Bots this turn made with ask_bot, each in the room the node picked for it.
+  const asks = output.asks || [];
+  if (hop > 4 || (asks.length && hop >= 4)) throw new Error('Collaboration hop limit reached');
   const taskId = typeof meta.taskId === 'string' && meta.taskId ? meta.taskId : `task-${digest(event.event_id).slice(0, 24)}`;
   const requestedByBot = participants.some(p => p.kind === 'bot' && p.id === event.sender);
   const originSenderId = requestedByBot && typeof meta.originSenderId === 'string' ? meta.originSenderId : event.sender;
@@ -174,9 +134,9 @@ export function deliveriesFor(event, output, botId, participants, collaborationR
   const returnTo = requestedByBot && meta.kind === 'task.request'
     && meta.returnTo === event.sender ? meta.returnTo : undefined;
   const prefix = `ds-group-${digest(`${botId}\0${seed}`).slice(0, 40)}`;
-  const isFinalResult = requestedByBot && ['task.result', 'task.failure'].includes(meta.kind) && !output.delegate;
+  const isFinalResult = requestedByBot && ['task.result', 'task.failure'].includes(meta.kind) && !asks.length;
   // A reply that only says the work was handed to a worker is not the result another Bot waits for.
-  const answering = returnTo && !output.delegate && !output.accepted;
+  const answering = returnTo && !asks.length && !output.accepted;
   const replyRoomId = isFinalResult ? originRoomId : event.room_id;
   const replyEventId = isFinalResult ? originEventId : event.event_id;
   const replyThreadRootId = isFinalResult ? originThreadRootId : sourceThreadRootId;
@@ -185,29 +145,30 @@ export function deliveriesFor(event, output, botId, participants, collaborationR
     ...(output.delivery || meta.delivery ? { delivery: output.delivery || meta.delivery } : {}) };
   const replyRecipient = isFinalResult ? originSenderId : event.sender;
   const sourceAttachments = uniqueAttachments([...eventAttachments(event), ...(output.sourceAttachments || [])]);
-  const attachments = uniqueAttachments(output.attachments || []).filter(file => !output.delegate
+  const attachments = uniqueAttachments(output.attachments || []).filter(file => !asks.length
     || !sourceAttachments.some(source => source.sha256 === file.sha256 && source.name === file.name));
   const replyAttachments = attachments.length ? attachments : isFinalResult && !output.failure ? uniqueAttachments(output.resultAttachments || eventAttachments(event)) : [];
   const result = [{ roomId: replyRoomId, body: output.text, options: {
     ...common, replyTo: replyEventId, transactionId: `${prefix}-reply`, to: answering ? [returnTo] : [],
     ...(replyThreadRootId ? { threadRootId: replyThreadRootId } : {}),
-    deliveryRole: output.controlOnly ? 'control' : output.delegate || output.accepted ? 'ack' : returnTo ? 'peer' : 'final',
+    deliveryRole: output.controlOnly ? 'control' : asks.length || output.accepted ? 'ack' : returnTo ? 'peer' : 'final',
     kind: answering ? output.failure ? 'task.failure' : 'task.result' : 'reply',
     ...(replyAttachments.length ? { attachments: replyAttachments } : {}),
     mentions: { users: [], roles: [], everyone: false, here: false, replyUserId: replyRecipient,
       roleUsers: [], everyoneUsers: [], hereUsers: [] },
     mMentions: { user_ids: replyRecipient === botId ? [] : [replyRecipient] },
   } }];
-  if (output.delegate) {
-    const delegatedFiles = uniqueAttachments([...sourceAttachments, ...attachments]);
-    result.push({ roomId: collaborationRoomId, body: output.delegate.body, options: {
-      ...common, transactionId: `${prefix}-delegate`, to: [output.delegate.to], returnTo: botId, kind: 'task.request',
-      deliveryRole: 'delegate',
-      ...(event.room_id === collaborationRoomId ? { replyTo: event.event_id,
+  const askedFiles = uniqueAttachments([...sourceAttachments, ...attachments]);
+  for (const [index, ask] of asks.entries()) {
+    result.push({ roomId: ask.roomId, body: ask.body, options: {
+      ...common, transactionId: `${prefix}-ask-${index + 1}`, to: [ask.to], returnTo: botId, kind: 'task.request',
+      // The asked Bot, also on file parts that do not notify it (their to is empty); not sent to Matrix.
+      deliveryRole: 'delegate', askTo: ask.to,
+      ...(event.room_id === ask.roomId ? { replyTo: event.event_id,
         ...(sourceThreadRootId ? { threadRootId: sourceThreadRootId } : {}) } : {}),
-      ...(delegatedFiles.length ? { attachments: delegatedFiles } : {}),
-      mentions: { users: [output.delegate.to], roles: [], everyone: false, here: false },
-      mMentions: { user_ids: [output.delegate.to] },
+      ...(askedFiles.length ? { attachments: askedFiles } : {}),
+      mentions: { users: [ask.to], roles: [], everyone: false, here: false },
+      mMentions: { user_ids: [ask.to] },
     } });
   }
   return result.flatMap(delivery => {
@@ -468,9 +429,19 @@ export class BotNode {
 
   senderName(id, room) { return speakerOf(id, this.participants, room).name; }
 
-  /** Where a delegation is sent: a room this Bot's contact book says both Bots are in, the node room first. */
-  collaborationRoomFor(event, to) {
-    return (to && this.contacts.roomFor(to, [this.roomId, event.room_id])) || this.roomId;
+  /**
+   * The room a request to another Bot goes to: one both are in, preferring the asked message's room,
+   * else a direct room this Bot opens and invites it to. Every request between Bots travels over Matrix.
+   */
+  async roomForAsk(event, to) {
+    const shared = this.contacts.roomFor(to, [event.room_id, this.roomId]);
+    if (shared) return shared;
+    const created = await this.matrix.createRoom({ preset: 'trusted_private_chat', is_direct: true, invite: [to],
+      name: `${this.participant.name || this.participant.id} · ${this.senderName(to) || to}` });
+    // Recorded at once, so a retried delivery reuses the room instead of opening another.
+    this.contacts.member(created.room_id, this.participant.id, 'join');
+    this.contacts.member(created.room_id, to, 'invite');
+    return created.room_id;
   }
 
   noteMembers(roomId, events) {
@@ -642,16 +613,15 @@ export class BotNode {
   }
 
   instructions() {
-    const peers = this.participants.filter(p => p.kind === 'bot' && p.id !== this.participant.id).map(p => `${p.name} (${p.id})`).join('、');
     const duties = this.participant.instructions || legacyBotRoles.get(this.participant.localpart)?.duties
       || '根据请求者的要求处理对话和工作，使用已有工具完成任务';
     return `你是 DS-Group 中独立的${this.participant.name}，身份 ${this.participant.id}。你的职责是${duties}。保留自己的经历并区分每个人的身份。\n`
-      + `消息源附有发送者、房间、原消息、任务和回复关系。按这些关系回答当前发送者。可协作的 Bot 为 ${peers}。\n`
-      + '当前身份以每轮 event.botIdentity 为准；能找到的 Bot 和找法以 event.contacts（你的通讯录）为准。\n'
+      + '消息源附有发送者、房间、原消息、任务和回复关系。按这些关系回答当前发送者。\n'
+      + '当前身份以每轮 event.botIdentity 为准。\n'
       + '你也是群聊中的正式成员，可以分享与自身身份、兴趣和经历相符的看法，参与生活和工作聊天。context.attention 表示本次是自然参与，沿当前话题自然接话，不必把每句话变成受理任务；旁听决策本身不构成新的工具或外部操作授权。\n'
-      + '每轮输出一个 JSON 对象，格式为 {"text":"给请求者的回答"}。确实需要其他 Bot 完成工作时，使用 {"text":"你的受理说明","delegate":{"to":"目标 Bot 的完整 ID","body":"具体工作要求及所需事实"}}。\n'
+      + '每轮输出一个 JSON 对象，格式为 {"text":"给请求者的回答"}。\n'
       + '使用宿主提供的文件与终端工具完成工作。附件已下载到任务工作目录，先实际读取内容，再计算或编辑，检查成果后交付。文件修改工作要生成可下载的新文件。最终回复使用 JSON，生成的文件列入 artifacts 数组，每项包含 path 和 name。\n'
-      + 'delegate 会真实投递到另一台节点，附带任务文件，由对方返回结果。收到 kind=task.result 后，结合结果向原请求者总结并交付文件。已经收到的结果不要再次委派同一任务。每轮最多一次委派，跨 Bot 协作使用 delegate 字段。';
+      + '收到 kind=task.result 后，结合结果向原请求者总结并交付文件。';
   }
 
   async collectRoomEvents(roomId, joined) {
@@ -940,7 +910,7 @@ export class BotNode {
     this.store.produced(item.event_id, receipt);
     const output = { text, failure: true };
     this.delivery.applyOutput(item, output);
-    const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants, this.collaborationRoomFor(item.event));
+    const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants);
     this.store.generated(item.event_id, receipt, deliveries);
   }
 
@@ -951,16 +921,7 @@ export class BotNode {
     this.taskUpdate(item, { status: 'running', stage: 'uploading', summary: '正在保存成果', toolCalls: response.toolCalls || 0 });
     await this.flushTaskUpdates();
     try {
-      // Only a turn answering a person hands off by naming a Bot; a reply to a Bot, or a worker's result, is not a request.
-      const fromBot = this.participants.some(person => person.id === item.event.sender && person.kind === 'bot');
-      // Bots are named as the Bot saw them: room labels and contacts, keyed by full ID. A remote roster
-      // loaded cold may only know a full ID as the name.
-      const room = this.roomContextFor(item.event.room_id);
-      const labels = [...new Set([...(room.members || []), ...this.contacts.reachableBots().map(contact => contact.id)])]
-        .map(id => ({ ...speakerOf(id, this.participants, room), kind: this.participants.find(person => person.id === id)?.kind || this.contacts.contact(id)?.kind }))
-        .filter(person => person.kind === 'bot');
-      const output = parseBotOutput(response.text, this.participant.id, [...this.participants, ...labels],
-        { ignoreDelivery: !this.delivery.acceptsProposal(item), handoff: !fromBot && !metadataOf(item.event).workerTask });
+      const output = parseBotOutput(response.text, this.participants, { ignoreDelivery: !this.delivery.acceptsProposal(item) });
       this.delivery.applyOutput(item, output);
       output.controlOnly = response.controlOnly === true;
       output.accepted = response.dispatched?.length > 0;
@@ -986,18 +947,25 @@ export class BotNode {
           && (!request.event.fileBatch?.id || previous.fileBatch?.id === request.event.fileBatch.id));
         output.resultAttachments = uniqueAttachments([...earlierParts.flatMap(previous => previous.attachments || []), ...(request.event.attachments || eventAttachments(item.event))]);
       }
-      const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants,
-        this.collaborationRoomFor(item.event, output.delegate?.to));
+      output.asks = [];
+      for (const ask of response.asks || []) {
+        try { output.asks.push({ ...ask, roomId: await this.roomForAsk(item.event, ask.to) }); }
+        catch (error) {
+          if (temporaryTransferError(error)) throw error;
+          // The requester hears plainly that this request did not go out; the rest of the reply still does.
+          output.text += `\n\n（没能联系上${this.senderName(ask.to) || ask.to}：${error.message}。这件事没有交出去。）`;
+        }
+      }
+      const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants);
       const deliveredArtifacts = uniqueAttachments(deliveries.filter(delivery => delivery.options.kind !== 'task.request')
         .flatMap(delivery => delivery.options.attachments || []));
-      const published = { ...response, publishedArtifacts: attachments, deliveredArtifacts, delegated: Boolean(output.delegate),
-        ...(output.delegate ? { delegate: output.delegate } : {}) };
+      const published = { ...response, publishedArtifacts: attachments, deliveredArtifacts, delegated: output.asks.length > 0 };
       this.store.generated(item.event_id, published, deliveries);
-      const handoff = deliveries.find(delivery => delivery.options.deliveryRole === 'delegate');
-      if (handoff) {
+      for (const handoff of deliveries.filter(delivery => delivery.options.deliveryRole === 'delegate')) {
         const { options } = handoff;
-        this.contacts.open({ id: `${options.taskId}>${output.delegate.to}`, direction: 'out', peer: output.delegate.to, via: 'matrix',
-          roomId: handoff.roomId, taskId: options.taskId, status: 'sending', detail: output.delegate.body,
+        const to = options.askTo;
+        this.contacts.open({ id: `${options.taskId}>${to}`, direction: 'out', peer: to, via: 'matrix',
+          roomId: handoff.roomId, taskId: options.taskId, status: 'sending', detail: handoff.body,
           origin: { roomId: options.originRoomId, eventId: options.originEventId, senderId: options.originSenderId } });
       }
       this.taskUpdate(item, { stage: 'delivering', summary: '正在发送成果', artifacts: deliveredArtifacts });
@@ -1020,8 +988,8 @@ export class BotNode {
 
   /** The requester was told the work went to another Bot; say plainly that it did not. */
   async retractDelegation(item, delivery, error) {
-    const to = delivery.options.to?.[0];
-    const name = this.participants.find(person => person.id === to)?.name || to;
+    const to = delivery.options.askTo;
+    const name = this.senderName(to) || to;
     const threadRootId = threadOf(item.event);
     const body = `刚才说已经交给${name}，但请求没有发出去（${error.message}），${name}不会处理这件事。`;
     try {
@@ -1115,7 +1083,7 @@ export class BotNode {
           return send();
         });
         this.store.sent(delivery.transaction_id, receipt.event_id, () => this.finishDeliveryState(delivery));
-        if (delivery.options.deliveryRole === 'delegate') this.contacts.settle(`${delivery.options.taskId}>${delivery.options.to?.[0]}`, { status: 'sent' });
+        if (delivery.options.deliveryRole === 'delegate') this.contacts.settle(`${delivery.options.taskId}>${delivery.options.askTo}`, { status: 'sent' });
         this.lastError = null;
         await this.flushTaskUpdates();
       } catch (error) {
@@ -1134,7 +1102,7 @@ export class BotNode {
           this.taskUpdate(item, { status: 'failed', stage: 'delivering', summary: error.message });
           await this.flushTaskUpdates();
           if (delivery.options.deliveryRole === 'delegate') {
-            this.contacts.settle(`${delivery.options.taskId}>${delivery.options.to?.[0]}`, { status: 'failed', detail: error.message });
+            this.contacts.settle(`${delivery.options.taskId}>${delivery.options.askTo}`, { status: 'failed', detail: error.message });
             await this.retractDelegation(item, delivery, error);
           }
           this.onError(this.lastError);

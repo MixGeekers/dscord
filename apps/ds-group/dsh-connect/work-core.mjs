@@ -13,25 +13,26 @@ import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-
  */
 
 // Tools the front keeps. Everything else is refused there and done by a worker.
+// Each thing a Bot does has one way to do it: asking another Bot is ask_bot, a group is a Matrix room.
 export const FRONT_TOOLS = new Set([
-  'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note',
-  'recall', 'contacts', 'memory_source', 'raw_source_query',
-  'read_group_chat', 'read_own_chat', 'list_bots', 'message_bot', 'post_to_group', 'group_relay',
-  'read_image', 'web_fetch',
-  // Quick Bot-level actions: memory, team and schedules belong to the Bot itself.
+  'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot',
+  'recall', 'contacts', 'memory_source', 'raw_source_query', 'read_image',
+  // Quick Bot-level actions: memory and schedules belong to the Bot itself.
   'remember', 'forget', 'review_memory', 'schedule_create', 'schedule_edit',
-  'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal',
 ]);
-// Workers do the work; they do not speak for the Bot or change the team.
+// Workers do the work; they do not speak for the Bot or change what it remembers.
 export const WORKER_DENY = new Set([
-  'message_bot', 'post_to_group', 'group_relay',
-  'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal',
   'schedule_create', 'schedule_edit', 'remember', 'forget', 'review_memory',
-  'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note',
+  'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot',
 ]);
 // Desktop cards: in DSCord nobody sees them, and a turn that ends on one has no reply to send (script 02 G16).
 export const CARD_TOOLS = new Set(['ask_user', 'ask_user_question', 'show_view']);
 export const CARD_REFUSAL = '这里是聊天，没有卡片界面。要问对方，就把问题直接写在这一轮的回复里；工作者用 work_ask。';
+// The native host's own team, groups and Bot-to-Bot channel: in DSCord each has one other way, so these are off for everyone.
+export const NATIVE_TEAM_TOOLS = new Set(['message_bot', 'list_bots', 'post_to_group', 'group_relay', 'read_group_chat', 'read_own_chat',
+  'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal']);
+export const NATIVE_TEAM_REFUSAL = 'DSCord 里不用这个工具：找别的 Bot 办事用 ask_bot（工作者用 work_ask 交给前台），有哪些 Bot 看 contacts，群就是 Matrix 房间，Bot 由管理后台创建和设置。';
+const ASKS_PER_TURN = 3;
 export const FRONT_REFUSAL = '前台不直接做这件事。用 dispatch_work 把它交给工作者，然后告诉对方已经开始。';
 
 const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] };
@@ -51,9 +52,7 @@ const compileTools = async defs => {
   return defs.map(def => defineTool(def));
 };
 // The program cores of the Bots in this DSH, by native Bot ID: the host's answer to
-// "is this contact in my DSH". A Bot asked by another Bot (message_bot) has no room
-// of its own for the work; its result goes back through the asking Bot, to the
-// message that started the request, as both Bots' contact books record.
+// "which Bots are in my DSH", so they are contacts before they ever meet in a room.
 const cores = new Map();
 // What a plain-language result must not carry: stack frames, exception types,
 // source locations and raw log lines. The core checks it; the worker rewrites.
@@ -69,7 +68,7 @@ const internalsIn = text => INTERNALS.filter(([, pattern]) => pattern.test(text)
 const OMISSION = /取舍|没有?写[入进]|未写[入进]|(?:删掉|删去|去掉|省略|筛掉|过滤掉|略去)了|不对外/;
 const TEXT_FILE = /\.(?:md|txt|log|csv|json|html?)$/i;
 const coreOf = matrixId => [...cores.values()].find(core => core.node.id === matrixId);
-/** A Bot in this DSH by its full identity ID, with the name message_bot calls it by. */
+/** A Bot in this DSH by its full identity ID, with its name. */
 export const localBot = matrixId => {
   const core = coreOf(matrixId);
   return core ? { name: core.botName || core.node.localpart || matrixId, nativeBotId: core.node.nativeBotId } : undefined;
@@ -129,7 +128,9 @@ export class WorkCore {
 
   guard(exec) {
     const id = exec.agent?.session?.id ?? exec.agent?.id;
-    if (CARD_TOOLS.has(exec.name) && (this.frontSessions.has(id) || this.workerTask(id))) return CARD_REFUSAL;
+    const served = this.frontSessions.has(id) || this.workerTask(id);
+    if (served && CARD_TOOLS.has(exec.name)) return CARD_REFUSAL;
+    if (served && NATIVE_TEAM_TOOLS.has(exec.name)) return NATIVE_TEAM_REFUSAL;
     if (this.frontSessions.has(id) && !FRONT_TOOLS.has(exec.name)) return FRONT_REFUSAL;
     if (this.workerTask(id) && WORKER_DENY.has(exec.name)) return '工作者只做事并用 work_report 汇报，不直接对外说话或改团队设置。';
     return undefined;
@@ -185,6 +186,15 @@ export class WorkCore {
         description: '给进行中的工作者补充信息或修改要求。',
         parameters: { id: { type: 'string', required: true, description: '任务编号' }, text: { type: 'string', required: true, description: '要转给工作者的内容' } },
         execute: args => this.note(args.id, args.text) },
+      { name: 'ask_bot', output,
+        description: '请通讯录里的另一个 Bot 做一件事，这是找别的 Bot 的唯一方式，不管这一轮是在替人还是替另一个 Bot 办事。这一轮结束后，核心把请求发到你们共同所在的房间（没有就开一个私聊房间），附上这条消息带的文件。对方的结果会作为新消息回到你这里，再由你回复请求者。',
+        parameters: {
+          to: { type: 'string', required: true, description: '对方的完整 ID，或通讯录里只对应一个 Bot 的名字' },
+          body: { type: 'string', required: true, description: '完整、自足的请求：对方看不到这里的对话，写清要什么、依据哪些原话或文件、为谁而问' },
+          audience: { type: 'string', description: '结果最终给谁、按什么口径，例如“玩家小满：通俗说明”' },
+          plain: { type: 'boolean', description: '最终读者不该看到技术内部信息（堆栈、日志原文、源码位置）时为 true' },
+        },
+        execute: args => this.askBot(args) },
     ];
   }
 
@@ -211,7 +221,7 @@ export class WorkCore {
     brief = String(brief || '').trim();
     if (!title || !brief) return '需要 title 和 brief。';
     const id = shortId();
-    const origin = this.origin || this.askedOrigin();
+    const origin = this.origin;
     // Work needs a message to answer. A turn the native host resumed on its own after a
     // restart has none, and must not quietly redo work the restart left unknown.
     if (!origin) return '现在没有要回复的消息，不能派工。宿主重启后结果不确定的任务不会自动重做；对方要重做时会再发消息。';
@@ -219,7 +229,6 @@ export class WorkCore {
       ...(audience ? { audience: String(audience).trim().slice(0, 500) } : {}), ...(plain === true ? { plain: true } : {}),
       origin, inputFiles: origin?.files || [], createdAt: new Date().toISOString(), notified: false, toolCalls: 0 };
     mark(task, 'queued', 'front');
-    if (origin?.exchangeId) this.contacts?.settle(origin.exchangeId, { status: 'dispatched', taskId: id });
     await this.save();
     await this.pump();
     if (task.status === 'running') return `已派工：${id}（${title}），工作者已开始，结果会由核心直接交付给对方。现在简短告诉对方已开始即可。`;
@@ -227,18 +236,44 @@ export class WorkCore {
     return `已派工：${id}（${title}），但 ${this.maxWorkers} 个工作者都在忙，它在排队${ahead ? `，前面还有 ${ahead} 个` : ''}。现在告诉对方已接下、正在排队，有空位会自动开始；不要说已经开始。`;
   }
 
+  /** A request to another Bot, sent by the node when this turn ends: the turn's reply says who was asked. */
+  askBot({ to, body, audience, plain }) {
+    const origin = this.origin;
+    if (!origin?.requestId) return '现在没有要回复的消息，不能找别的 Bot。';
+    body = String(body || '').trim();
+    if (!body) return '需要 body：写清请对方做什么。';
+    const contact = this.contacts?.resolve(to);
+    if (!contact?.id) return contact?.error || '对方不在你的通讯录里，联系不上；直接告诉请求者。';
+    if (contact.id === this.node.id) return '不能请自己；这件事用 dispatch_work 交给工作者。';
+    const asks = (this.asks ||= new Map()).get(origin.requestId) || [];
+    if (asks.some(ask => ask.to === contact.id)) return `这一轮已经请过 ${contact.name}；要补充就写进同一个请求，不要再发一次。`;
+    if (asks.length >= ASKS_PER_TURN) return `一轮最多请 ${ASKS_PER_TURN} 个 Bot。`;
+    const text = [body, audience ? `结果给谁、什么口径：${String(audience).trim()}` : '',
+      plain === true ? '最终读者不该看到技术内部信息：不贴堆栈、异常类型、源码位置和日志原文。' : ''].filter(Boolean).join('\n\n');
+    if (text.length > 16000) return '请求太长，压缩到 16000 字以内。';
+    asks.push({ to: contact.id, body: text });
+    this.asks.set(origin.requestId, asks);
+    return `已记下：这一轮结束后发给 ${contact.name}。它的结果会作为新消息回到你这里，那时再回复请求者。现在这一轮的回复简短告诉对方你去问了谁，不要编结果。`;
+  }
+
+  /** The requests to other Bots this turn made; a turn that did not finish sends none. */
+  takeAsks(requestId) {
+    const asks = this.asks?.get(requestId) || [];
+    this.asks?.delete(requestId);
+    return asks;
+  }
+
   /** Another message asking for what a task already does: it gets the same result. */
   async join(id, { audience, plain } = {}) {
     let task = this.state.tasks[String(id || '')];
     if (task?.joined) task = this.state.tasks[task.id.replace(/-\d+$/, '')];
     if (!task) return '没有这个任务。用 task_status 看最近的任务编号。';
-    const origin = this.origin || this.askedOrigin();
+    const origin = this.origin;
     if (!origin) return '现在没有要回复的消息，不能登记。';
     const origins = [task.origin, ...(task.followers || [])];
-    if (origins.some(other => other?.eventId === origin.eventId && other?.via === origin.via)) return `这条消息已经是 ${task.id} 的请求者。`;
+    if (origins.some(other => other?.eventId === origin.eventId)) return `这条消息已经是 ${task.id} 的请求者。`;
     task.followers = [...(task.followers || []), { ...origin, ...(audience ? { audience: String(audience).trim().slice(0, 500) } : {}),
       ...(plain === true ? { plain: true } : {}) }];
-    if (origin.exchangeId) this.contacts?.settle(origin.exchangeId, { status: 'dispatched', taskId: task.id });
     await this.save();
     if (ended(task) && task.notified) {
       await this.notify(task, { kind: 'result' });
@@ -408,35 +443,7 @@ export class WorkCore {
   }
 
   /** Worker Session events: a turn that ends without a report gets one reminder, then fails. */
-  /** The room message behind the Bot-to-Bot request this Bot has not acted on yet, from its contact book. */
-  askedOrigin() {
-    const asked = this.contacts?.awaiting({ via: 'message_bot' });
-    if (!asked?.origin) return null;
-    // A request whose work a restart left unknown is not asked again by resuming the turn.
-    if (this.tasks().some(task => task.status === 'unknown' && task.origin?.eventId === asked.origin.eventId)) return null;
-    return { ...asked.origin, via: asked.peerId, exchangeId: asked.id };
-  }
-
-  /** The room message this Bot is answering now, or the one it just finished answering. */
-  currentOrigin() {
-    if (this.origin) return this.origin;
-    const last = this.lastOrigin;
-    return last && Date.now() - last.at < 5 * 60_000 ? last.origin : null;
-  }
-
   async event(session, event) {
-    const source = event.data?.message?.source || event.data?.source;
-    // Both Bots write the exchange into their contact books when the request arrives,
-    // with the asking Bot's room message as it is now: by the time this Bot
-    // dispatches, the asking Bot may have finished its turn.
-    if (event.type === 'user/message' && this.frontSessions.has(session.id) && source?.kind === 'bot' && source.role === 'request'
-      && source.senderSessionId) {
-      const asker = cores.get(source.senderSessionId);
-      const origin = asker && asker !== this ? asker.currentOrigin() : null;
-      const exchange = { id: source.exchangeId || `${source.senderSessionId}@${Date.now()}`, via: 'message_bot', origin: origin && structuredClone(origin) };
-      this.contacts?.open({ ...exchange, direction: 'in', peer: asker?.node.id || source.senderSessionId, status: 'received' });
-      if (asker && asker !== this && this.node.id) asker.contacts?.open({ ...exchange, direction: 'out', peer: this.node.id, status: 'sent' });
-    }
     const task = this.workerTask(session.id);
     if (!task) return false;
     if (event.type === 'turn/start') task.busy = true;
@@ -499,29 +506,11 @@ export class WorkCore {
     }
   }
 
-  /** One result to one requester: back through the Bot that asked, or through this Bot's node. */
+  /** One result to one requester, through this Bot's node. */
   async deliverTo(task) {
-    const asker = task.origin?.via ? coreOf(task.origin.via) : undefined;
-    if (asker && asker !== this && asker.onResult) {
-      const bot = await this.native.bot(this.node.nativeBotId).catch(() => null);
-      await asker.adopt({ ...structuredClone(task), by: bot?.name || null });
-      const exchangeId = task.origin.exchangeId;
-      if (exchangeId) {
-        this.contacts?.settle(exchangeId, { status: task.status === 'done' ? 'delivered' : 'failed', taskId: task.id });
-        asker.contacts?.settle(exchangeId, { status: task.status === 'done' ? 'returned' : 'failed', taskId: task.id });
-      }
-      return true;
-    }
     if (!this.onResult) return false;
     await this.onResult(task, { kind: 'result' });
     return true;
-  }
-
-  /** Another Bot's finished task, done for a request this Bot made: delivered from here, where the request started. */
-  async adopt(task) {
-    this.state.tasks[task.id] = { ...task, notified: false, notifiedOrigins: 0 };
-    await this.save();
-    await this.notify(this.state.tasks[task.id], { kind: 'result' });
   }
 
   /** Results that finished while no Bot node was listening (or before a restart). */
@@ -545,7 +534,7 @@ export class WorkCore {
     if (message.kind === 'question') return `[task.question] 工作者 ${task.id}（${task.title}）提问：${message.question}\n请回答：可以直接问对方，或用 task_note 把答案转给工作者。`;
     if (task.status === 'unknown') return `「${task.title}」在宿主重启时还没有结束，结果不确定。我没有自动重做，需要的话告诉我。`;
     const joined = task.joined ? '你问的和另一位成员先前的请求是同一件事，下面是那份结果。\n\n' : '';
-    return `${task.by ? `${task.by}：` : ''}「${task.title}」${task.status === 'done' ? '完成了' : '没有完成'}。\n\n${joined}${task.reply || task.summary || ''}`.trim();
+    return `「${task.title}」${task.status === 'done' ? '完成了' : '没有完成'}。\n\n${joined}${task.reply || task.summary || ''}`.trim();
   }
 
   /** Record a delivered result for the front's next turn. */

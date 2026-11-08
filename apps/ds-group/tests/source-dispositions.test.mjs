@@ -81,7 +81,7 @@ function establishDelegation(f, { send = true } = {}) {
   const root = message('$root', { to: [self.id] });
   f.store.ingest([root]);
   f.store.begin('$root', { requestId: 'native-root' });
-  const deliveries = deliveriesFor(root, { text: '请协作核对。', delegate: { to: peer.id, body: '请核对当前时间。' } }, self.id, participants);
+  const deliveries = deliveriesFor(root, { text: '请协作核对。', asks: [{ to: peer.id, body: '请核对当前时间。', roomId: root.room_id }] }, self.id, participants);
   f.store.generated('$root', { text: '请协作核对。', delegated: true, toolCalls: 1 }, deliveries);
   if (send) {
     f.store.sent(deliveries[0].options.transactionId, '$ack');

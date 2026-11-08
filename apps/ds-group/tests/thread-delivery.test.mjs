@@ -30,16 +30,16 @@ test('a thread reply preserves its root separately from its quoted message', () 
 test('same-room delegation and its final result remain in the original human thread', () => {
   const input = event('$human-task', { root: '$human-thread' });
   const [ack, delegated] = deliveriesFor(input,
-    { text: '我们一起看下。', delegate: { to: two.id, body: '帮我核对时间。' } }, one.id, participants, group);
+    { text: '我们一起看下。', asks: [{ to: two.id, body: '帮我核对时间。', roomId: group }] }, one.id, participants);
   assert.equal(ack.options.threadRootId, '$human-thread');
   assert.equal(delegated.options.threadRootId, '$human-thread');
   assert.equal(delegated.options.originThreadRootId, '$human-thread');
   const peerInput = received(delegated, '$peer-request', one.id);
-  const [peerResult] = deliveriesFor(peerInput, { text: '时间核对完成。' }, two.id, participants, group);
+  const [peerResult] = deliveriesFor(peerInput, { text: '时间核对完成。' }, two.id, participants);
   assert.equal(peerResult.options.kind, 'task.result');
   assert.equal(peerResult.options.replyTo, '$peer-request');
   assert.equal(peerResult.options.threadRootId, '$human-thread');
-  const [final] = deliveriesFor(received(peerResult, '$peer-result', two.id), { text: '明天十点出发。' }, one.id, participants, group);
+  const [final] = deliveriesFor(received(peerResult, '$peer-result', two.id), { text: '明天十点出发。' }, one.id, participants);
   assert.equal(final.roomId, group);
   assert.equal(final.options.replyTo, '$human-task');
   assert.equal(final.options.threadRootId, '$human-thread');
@@ -49,18 +49,18 @@ test('same-room delegation and its final result remain in the original human thr
 test('cross-room delegation carries origin metadata without placing a foreign thread in the peer room', () => {
   const input = event('$private-task', { roomId: privateRoom, root: '$private-thread' });
   const [ack, delegated] = deliveriesFor(input,
-    { text: '请雨禾帮忙。', delegate: { to: two.id, body: '核对具体时间。' } }, one.id, participants, group);
+    { text: '请雨禾帮忙。', asks: [{ to: two.id, body: '核对具体时间。', roomId: group }] }, one.id, participants);
   assert.equal(ack.roomId, privateRoom);
   assert.equal(ack.options.threadRootId, '$private-thread');
   assert.equal(delegated.roomId, group);
   assert.equal(delegated.options.replyTo, undefined);
   assert.equal(delegated.options.threadRootId, undefined);
   assert.equal(delegated.options.originThreadRootId, '$private-thread');
-  const [peerResult] = deliveriesFor(received(delegated, '$cross-peer', one.id), { text: '十点。' }, two.id, participants, group);
+  const [peerResult] = deliveriesFor(received(delegated, '$cross-peer', one.id), { text: '十点。' }, two.id, participants);
   assert.equal(peerResult.roomId, group);
   assert.equal(peerResult.options.threadRootId, undefined);
   assert.equal(peerResult.options.originThreadRootId, '$private-thread');
-  const [final] = deliveriesFor(received(peerResult, '$cross-result', two.id), { text: '明天十点。' }, one.id, participants, group);
+  const [final] = deliveriesFor(received(peerResult, '$cross-result', two.id), { text: '明天十点。' }, one.id, participants);
   assert.equal(final.roomId, privateRoom);
   assert.equal(final.options.replyTo, '$private-task');
   assert.equal(final.options.threadRootId, '$private-thread');
@@ -82,7 +82,7 @@ test('every attachment part preserves current and origin threads through a full 
     size: 1, sha256: String(i).padStart(64, '0'), contentUri: `mxc://thread.test/file-${i}` }));
   const input = event('$many-files', { root: '$files-thread' });
   const deliveries = deliveriesFor(input, { text: '附件都在这里。', attachments,
-    delegate: { to: two.id, body: '请逐份核对。' } }, one.id, participants);
+    asks: [{ to: two.id, body: '请逐份核对。', roomId: input.room_id }] }, one.id, participants);
   assert.equal(deliveries.length, 6);
   for (const delivery of deliveries) {
     assert.equal(delivery.options.threadRootId, '$files-thread');

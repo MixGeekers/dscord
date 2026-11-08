@@ -167,7 +167,7 @@ test('node reconciles a completed interrupted request through GET and publishes 
 test('delegation carries stable file references and the final reply delivers returned files to the origin', () => {
   const file = attachment('file-one', 'amount\n300\n');
   const origin = event('$input', [file]);
-  const delegated = deliveriesFor(origin, { text: '请人事整理', delegate: { to: people[2].id, body: '整理附件' } }, finance.id, people)[1];
+  const delegated = deliveriesFor(origin, { text: '请人事整理', asks: [{ to: people[2].id, body: '整理附件', roomId: origin.room_id }] }, finance.id, people)[1];
   assert.equal(delegated.options.attachments[0].id, file.id);
   const returned = { ...event('$result', [file]), sender: people[2].id,
     content: { body: '已整理', 'org.ds_group': { ...delegated.options, kind: 'task.result', originRoomId: '!private:test', originEventId: '$private', originSenderId: people[0].id } } };
@@ -187,7 +187,8 @@ test('cancelling a waiting collaboration suppresses a late child result and pres
   const node = new BotNode({ participant: finance, participants: people, roomId, store, heartbeat: async () => {},
     tasks: { update: async payload => reports.push(payload), control: async () => ({ cancelRequested: cancelled }) },
     matrix: { send: async (room, body, options) => { sent.push({ room, body, options }); return { event_id: `$sent-${sent.length}` }; } },
-    bridge: { turn: async () => { generations++; return { status: 'completed', text: JSON.stringify({ text: '委派人事处理', delegate: { to: people[2].id, body: '整理附件' } }) }; } } });
+    bridge: { turn: async () => { generations++; return { status: 'completed', text: JSON.stringify({ text: '委派人事处理' }), asks: [{ to: people[2].id, body: '整理附件' }] }; } } });
+  node.contacts.seeRoom(roomId, people);
   store.ingest([event('$origin')], 'one');
   await node.processOne();
   await node.processOne();
@@ -231,7 +232,7 @@ test('cancellation after generation suppresses pending delivery without changing
 
 test('large file batches deliver every artifact and trigger a delegated Bot once', () => {
   const files = Array.from({ length: 16 }, (_, index) => attachment(`file-${index}`, String(index)));
-  const output = { text: '请人事处理这些文件', sourceAttachments: files, delegate: { to: people[2].id, body: '整理文件' } };
+  const output = { text: '请人事处理这些文件', sourceAttachments: files, asks: [{ to: people[2].id, body: '整理文件', roomId: '!room:test' }] };
   const messages = deliveriesFor(event('$many'), output, finance.id, people);
   const delegated = messages.filter(message => message.options.kind === 'task.request');
   assert.deepEqual(delegated.map(message => message.options.attachments.length), [10, 6]);
@@ -296,7 +297,8 @@ test('a delegated execution failure returns to the original conversation and fin
   } };
   let parentGenerations = 0;
   const parent = new BotNode({ participant: finance, participants: people, roomId, store: parentStore, matrix, heartbeat: async () => {},
-    bridge: { turn: async () => { parentGenerations++; return { status: 'completed', text: JSON.stringify({ text: '请人事处理', delegate: { to: people[2].id, body: '处理文件' } }) }; } } });
+    bridge: { turn: async () => { parentGenerations++; return { status: 'completed', text: JSON.stringify({ text: '请人事处理' }), asks: [{ to: people[2].id, body: '处理文件' }] }; } } });
+  parent.contacts.seeRoom(roomId, people);
   const child = new BotNode({ participant: people[2], participants: people, roomId, store: childStore, matrix, heartbeat: async () => {},
     bridge: { turn: async () => ({ status: 'failed', errorCode: 'TASK_TIMEOUT', toolCalls: 2 }) } });
   const original = { ...event('$original'), room_id: '!private:test' };
@@ -490,7 +492,7 @@ test('new explicit files exclude prior room files from downloads and delegation 
   assert.notEqual(prepared.files[0].path, prepared.files[1].path);
   assert.deepEqual(downloaded, [first.id]);
   const messages = deliveriesFor(event('$fresh', [first, second]), { text: '请处理本次附件', sourceAttachments: prepared.files,
-    delegate: { to: people[2].id, body: '整理本次费用' } }, finance.id, people);
+    asks: [{ to: people[2].id, body: '整理本次费用', roomId: event('$fresh', [first, second]).room_id }] }, finance.id, people);
   assert.deepEqual(messages.at(-1).options.attachments.map(file => file.id), [first.id, second.id]);
 });
 
@@ -566,7 +568,7 @@ test('delegation excludes unchanged derived copies while preserving every origin
   const changed = attachment('derived-changed', 'amount\n200\n', 'expenses.csv');
   const renamed = attachment('derived-renamed', 'amount\n100\n', 'reviewed-expenses.csv');
   const output = { text: '请人事继续处理', sourceAttachments: [first, second], attachments: [unchangedCopy, changed, renamed],
-    delegate: { to: people[2].id, body: '处理这两份输入和更新后的文件' } };
+    asks: [{ to: people[2].id, body: '处理这两份输入和更新后的文件', roomId: '!room:test' }] };
   const messages = deliveriesFor(event('$derived', [first, second]), output, finance.id, people);
   assert.deepEqual(messages[0].options.attachments.map(file => file.id), [changed.id, renamed.id]);
   assert.deepEqual(messages[1].options.attachments.map(file => file.id), [first.id, second.id, changed.id, renamed.id]);

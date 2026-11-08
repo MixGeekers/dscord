@@ -19,7 +19,7 @@ export class ContactBook {
    * @param {import('node:sqlite').DatabaseSync} options.db the Bot's own node database
    * @param {{id: string}} options.self this Bot
    * @param {() => object[]} [options.people] registered people and Bots, for names and kinds
-   * @param {(id: string) => ({name: string}|undefined)} [options.local] a Bot in this Bot's DSH, reachable with message_bot
+   * @param {(id: string) => ({name: string}|undefined)} [options.local] a Bot in this Bot's DSH, a contact before they meet in a room
    */
   constructor({ db, self, people = () => [], local = () => undefined, now = Date.now }) {
     Object.assign(this, { db, self, people, local, now });
@@ -87,7 +87,8 @@ export class ContactBook {
 
   /** One membership change seen in a room's timeline. */
   member(roomId, id, membership, name) {
-    if (membership === 'join') {
+    // An invited Bot joins on its own; a request sent there reaches it.
+    if (['join', 'invite'].includes(membership)) {
       this.db.prepare('INSERT OR REPLACE INTO contact_rooms(contact_id,room_id,seen_at) VALUES (?,?,?)').run(id, roomId, this.now());
       this.meet(id, { name, roomId });
     } else if (['leave', 'ban'].includes(membership)) {
@@ -109,11 +110,26 @@ export class ContactBook {
     return preferred.find(roomId => shared.includes(roomId)) || shared[0];
   }
 
-  /** How this Bot reaches a contact: message_bot inside its DSH, a shared room otherwise. */
+  /** How this Bot reaches a contact: always over Matrix, in a shared room, or in a direct room the core opens for them. */
   reach(id) {
-    const local = this.local(id);
-    if (local) return { via: 'message_bot', callAs: local.name };
-    return this.rooms(id).length ? { via: 'room' } : { via: null };
+    if (this.rooms(id).length) return { via: 'room' };
+    const row = this.db.prepare('SELECT kind FROM contacts WHERE id=?').get(id);
+    return this.local(id) || (this.person(id)?.kind || row?.kind) === 'bot' ? { via: 'direct' } : { via: null };
+  }
+
+  /**
+   * The Bot a request names: its full ID (a Matrix link to it counts), or a name that only one Bot in the book has.
+   * @returns {{id: string, name: string} | {error: string}}
+   */
+  resolve(to) {
+    const address = String(to ?? '').trim().replace(/^https:\/\/matrix\.to\/#\//i, '').replace(/^matrix:(u\/)?/i, (_, u) => u ? '@' : '');
+    const bots = this.list({ kind: 'bot' }).filter(contact => contact.reach);
+    const byId = bots.find(contact => contact.id === address);
+    if (byId) return byId;
+    const named = bots.filter(contact => contact.name === address.replace(/^@/, ''));
+    if (named.length === 1) return named[0];
+    if (named.length > 1) return { error: `通讯录里有 ${named.length} 个叫“${address.replace(/^@/, '')}”的 Bot：${named.map(contact => contact.id).join('、')}。用完整 ID。` };
+    return { error: `“${address}”不在你的通讯录里，联系不上；直接告诉请求者。` };
   }
 
   contact(id) {
@@ -124,7 +140,7 @@ export class ContactBook {
     const reach = this.reach(id);
     return { id, name: known?.name || row?.name || local?.name || id, kind: known?.kind || row?.kind || (local ? 'bot' : 'unknown'),
       ...(known?.ownerId ? { ownerId: known.ownerId } : {}), ...(known?.role ? { role: known.role } : {}),
-      rooms: this.rooms(id), reach: reach.via, ...(reach.callAs ? { callAs: reach.callAs } : {}),
+      rooms: this.rooms(id), reach: reach.via,
       sameDsh: Boolean(local), home: id.slice(id.indexOf(':') + 1),
       introducedBy: row?.introduced_by || null, firstSeenAt: row?.first_seen_at ?? null, firstRoomId: row?.first_room_id || null,
       lastExchangeAt: row?.last_exchange_at ?? null };
@@ -137,11 +153,10 @@ export class ContactBook {
     return [...ids].map(id => this.contact(id)).filter(contact => contact && (!kind || contact.kind === kind));
   }
 
-  /** The Bots this Bot can hand work to right now, and how. */
+  /** The Bots this Bot can ask with ask_bot, and the rooms they share. */
   reachableBots() {
     return this.list({ kind: 'bot' }).filter(contact => contact.reach)
-      .map(({ id, name, role, reach, callAs, rooms }) => ({ id, name, ...(role ? { role } : {}), reach,
-        ...(callAs ? { callAs } : { rooms }) }));
+      .map(({ id, name, role, reach, rooms }) => ({ id, name, ...(role ? { role } : {}), reach, rooms }));
   }
 
   open({ id, direction, peer, via, roomId, origin, status, taskId, detail }) {
@@ -172,13 +187,6 @@ export class ContactBook {
     return row && {
       id: row.id, at: row.at, updatedAt: row.updated_at, direction: row.direction, peerId: row.peer_id, via: row.via,
       roomId: row.room_id, origin: parse(row.origin_json), status: row.status, taskId: row.task_id, detail: row.detail };
-  }
-
-  /** The latest request another Bot sent this Bot that it has not acted on yet. */
-  awaiting({ via, maxAgeMs = 30 * 60_000 } = {}) {
-    const row = this.db.prepare(`SELECT id FROM contact_exchanges WHERE direction='in' AND status='received' AND at>=?
-      AND (? IS NULL OR via=?) ORDER BY at DESC, rowid DESC LIMIT 1`).get(this.now() - maxAgeMs, via ?? null, via ?? null);
-    return row && this.exchange(row.id);
   }
 
   /** Requests this Bot sent that have not come back yet, newest first: what it is already waiting on. */
