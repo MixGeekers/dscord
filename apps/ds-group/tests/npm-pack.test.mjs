@@ -5,7 +5,9 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { packNpm } from '../scripts/npm-pack.mjs';
+import { dshEngineRange, packNpm } from '../scripts/npm-pack.mjs';
+import { DSH_VERSION } from '../scripts/runtime-config.mjs';
+import { KERNEL_PROTOCOL } from '../src/node-protocol.mjs';
 
 async function fixture(t) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-npm-pack-'));
@@ -78,10 +80,18 @@ test('npm packs the exact source version, runtime and licenses without internal 
   assert.equal(manifest.version, '0.2.0');
   assert.equal(manifest.license, 'MIT');
   assert.equal(manifest.publishConfig.tag, 'latest');
+  assert.deepEqual(manifest.dscord.protocol, KERNEL_PROTOCOL, 'nodes choose a release by the protocol range it speaks');
+  assert.equal(manifest.engines.dsh, dshEngineRange(DSH_VERSION));
+  assert.equal(manifest.engines.node, '>=24.19.0 <25');
   const guide = (await promisify(execFile)('tar', ['-xOf', result.archive, 'package/README.md'])).stdout;
   assert.match(guide, /\[Package\]\(package\.json\)/);
   assert.match(guide, /blob\/ds-group-v0\.2\.0\/apps\/ds-group\/deploy\/README\.md/);
   assert.match(guide, /\[Models\]\(模型配置与迁移\.md\)/);
+});
+
+test('the DSH range runs from the pinned DSH up to its next breaking release', () => {
+  assert.equal(dshEngineRange('0.2.2-rc.1'), '>=0.2.2-rc.1 <0.3.0');
+  assert.equal(dshEngineRange('1.4.0'), '>=1.4.0 <2.0.0');
 });
 
 test('npm prereleases retain the source version and alpha channel; unlicensed packages cannot ship', async t => {

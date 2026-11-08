@@ -1,5 +1,6 @@
 import { requireNodeScope } from '../node-auth.mjs';
 import { publicKernelSummary } from '../kernel-control.mjs';
+import { HELLO_PATH, NODE_PROTOCOL, accepts, answerHello, parseHello } from '../node-protocol.mjs';
 
 export const NODE_OFFLINE_MS = 20000;
 const NODE_STATUSES = new Set(['idle', 'thinking', 'error', 'offline']);
@@ -15,9 +16,21 @@ export function nodeRoutes(router, app) {
     send(200, budget.claim(input));
   });
   router.post('/internal/model/complete', async ({ scope, body, send }) => send(200, budget.complete(await body(), scope || {})));
+  // The protocol handshake. Its request and answer only ever gain fields, so every
+  // kernel, however old, can learn which protocol this server speaks.
+  router.post(HELLO_PATH, async ({ scope, body, send }) => {
+    const input = parseHello(await body());
+    if (!input) return send(400, { error: 'Invalid node hello', code: 'HELLO_INVALID' });
+    requireNodeScope(scope, { botId: input.botId, nodeId: input.nodeId });
+    const answer = answerHello(input);
+    send(answer.status, answer.body);
+  });
   router.post('/internal/nodes/heartbeat', async ({ scope, body, send }) => {
     const input = await body();
     requireNodeScope(scope, { botId: input.botId, nodeId: input.id });
+    if (!accepts(NODE_PROTOCOL, input.protocol)) {
+      return send(426, { code: 'PROTOCOL_UPGRADE_REQUIRED', error: 'This kernel does not speak the server protocol', protocol: NODE_PROTOCOL });
+    }
     const participant = accounts.publicParticipants().find(p => p.id === input.botId && p.kind === 'bot');
     if (!participant || !shortId(input.id) || !shortId(input.runtimeId) || !NODE_STATUSES.has(input.status)) return send(400, { error: 'Invalid Bot node heartbeat' });
     const current = nodes.get(input.botId);
@@ -29,6 +42,8 @@ export function nodeRoutes(router, app) {
       sessionId: input.sessionId ?? null, lastError: input.lastError ?? null,
       model: typeof input.model === 'string' ? input.model.slice(0, 512) : null,
       engine: input.engine || 'DSCord node', heartbeatAt: Date.now(), kernel: publicKernelSummary(input.kernel),
+      protocol: typeof input.protocol === 'string' ? input.protocol : null,
+      kernelVersion: typeof input.kernelVersion === 'string' ? input.kernelVersion.slice(0, 64) : null,
       kernelControl: input.kernelControl?.version === 1 ? { version: 1 } : null });
     kernelControl.observeNode(input.botId);
     chatFeatures.touchPresence(input.botId, { status: input.status === 'offline' ? 'offline' : 'online' });

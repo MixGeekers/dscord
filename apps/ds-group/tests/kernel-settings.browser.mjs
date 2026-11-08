@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { packageRoot } from '../src/paths.mjs';
 import { ConnectController } from '../dsh-connect/controller.mjs';
 import { DecisionSettings } from '../dsh-connect/decision-settings.mjs';
+import { KernelUpdates } from '../dsh-connect/kernel-updates.mjs';
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'dscord-kernel-ui-'));
 const output = path.join(packageRoot, '.local/kernel-settings-browser');
@@ -80,6 +81,7 @@ const server = await createServer({
 let browser;
 let page;
 let controller;
+let updates;
 async function screenshot(name) { const filename = path.join(output, name); await page.screenshot({ path: filename }); report.screenshots.push(filename); }
 async function fits(selector) {
   const bounds = await page.locator(selector).evaluate(element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, scroll: element.scrollWidth, client: element.clientWidth, viewport: innerWidth, top: r.top, bottom: r.bottom, height: innerHeight }; });
@@ -188,7 +190,15 @@ try {
       throw new Error('Unexpected native fixture endpoint ' + endpoint);
     },
   };
-  controller = await new ConnectController({ directory: path.join(temporary, 'controller'), native, models: {}, processes: {
+  // A synthetic registry: the plugin runs 0.4.0 and a newer release speaks the same protocol.
+  const pluginManager = { listBundles: () => [{ name: 'dscord', source: '^0.4.0' }], registries: () => ({ registry: 'https://registry.test/' }),
+    installBundle: async () => ({ application: 'restart-required' }) };
+  const releases = { versions: Object.fromEntries(['0.4.0', '0.5.0'].map(version => [version, { dscord: { protocol: { min: '1.0', max: '1.0' } } }])) };
+  updates = await new KernelUpdates({ ctx: { get: name => ({ pluginManager })[name] }, directory: path.join(temporary, 'updates'), current: '0.4.0',
+    currentRange: { min: '1.0', max: '1.0' }, startTimers: false, fetchImpl: async () => new Response(JSON.stringify(releases)) }).initialize();
+  updates.observeProtocol('1.0');
+  await updates.check({ fresh: true });
+  controller = await new ConnectController({ directory: path.join(temporary, 'controller'), native, models: {}, updates, processes: {
     available: async () => nativeState.runtime,
     async kernelState(nativeBotId) { return { runtime: { id: 'dscord-kernel', available: true }, decisionProvider: decisionSettings.publicStatus(), ...(nativeBotId ? { attention: { mode: 'mention', activity: 'unknown', online: false, provider: decisionSettings.publicStatus() }, work: { activeTasks: 0, waiting: 0 }, memorySummary: { people: null, projects: null, pendingReview: null } } : {}) }; },
     saveDecisionProvider: settings => decisionSettings.save(settings),
@@ -246,6 +256,16 @@ try {
   await screenshot('local-decision-private-dark-en.png');
   await page.locator('.dscord-connect').evaluate(element => { element.scrollTop = 0; });
   await screenshot('local-kernel-dark-en.png');
+  const upgrades = page.getByRole('region', { name: 'Plugin version' });
+  await upgrades.getByText('0.5.0 is available', { exact: true }).waitFor();
+  await upgrades.getByText('Upgrade automatically', { exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('input[name="kernelUpdatePolicy"][value="auto"]')?.checked);
+  assert.equal(updates.view().policy, 'auto');
+  await upgrades.getByRole('button', { name: 'Install 0.5.0', exact: true }).click();
+  await upgrades.getByText('The new version is installed. Restart DSH to use it.', { exact: true }).waitFor();
+  checks.push('ownerSeesCompatiblePluginReleaseSetsUpgradePolicyAndInstallsThroughDshPluginManager');
+  await upgrades.scrollIntoViewIfNeeded();
+  await screenshot('plugin-version-dark-en.png');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => { window.fixture.locale('zh'); document.body.removeAttribute('data-ds-dark-theme'); });
   const nativeBounds = await page.locator('.dscord-connect').evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth }));
@@ -272,7 +292,7 @@ try {
   throw error;
 } finally {
   await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
-  await controller?.dispose();
+  await controller?.dispose(); updates?.dispose();
   await browser?.close(); await server.close(); await rm(temporary, { recursive: true, force: true });
   console.log(JSON.stringify(report));
 }

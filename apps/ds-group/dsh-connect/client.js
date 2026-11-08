@@ -51,6 +51,14 @@ window.__ModuleLoader__.load({
       requestHttp: 'DSH 请求失败（HTTP {status}）', requestFailed: '操作失败，请重试',
       invalidStatus: 'DSH 返回的连接状态不完整', requestTimeout: '请求超时，请刷新连接状态',
       connectionUnavailable: '无法连接 DSH，请检查宿主是否正在运行',
+      updateTitle: '插件版本', updateCurrent: '当前版本 {version}', updateProtocol: '服务器节点协议 {protocol}',
+      updateIncompatible: '当前插件不支持此服务器的节点协议，需要换到兼容的版本。', updateAvailable: '可以换到 {version}',
+      updateLatest: '已是兼容此服务器的最新版本。', updateUnchecked: '连上服务器后检查兼容版本。', updatePolicy: '升级方式',
+      policyAuto: '自动升级', policyNotify: '有新版本时提示', policyManual: '手动检查',
+      policyAutoHelp: 'Bot 空闲时自动安装兼容此服务器的最新版本。', policyNotifyHelp: '定期检查，由你决定何时安装。', policyManualHelp: '只在你点检查时查找新版本。',
+      updatePrerelease: '包含预发布版本', updateCheck: '检查更新', updateInstall: '安装 {version}', updateInstalling: '正在安装…',
+      updateInstalled: '新版本已安装。', updateRestart: '新版本已安装，重启 DSH 后生效。', updateFailed: '安装失败：{error}',
+      updateNotRegistry: '插件不是从 npm 安装的，请手动安装新版本。',
     };
     const en = {
       nativeBots: 'Bots on this node', nativeHelp: 'Bots use the DSCord kernel and keep their identity, context, memory and work on their own node. Create one here, then add it to a chat server.',
@@ -95,6 +103,14 @@ window.__ModuleLoader__.load({
       requestHttp: 'DSH request failed (HTTP {status})', requestFailed: 'The operation failed. Please try again.',
       invalidStatus: 'DSH returned incomplete connection status', requestTimeout: 'The request timed out. Refresh the connection status.',
       connectionUnavailable: 'Cannot reach DSH. Check that the host is running.',
+      updateTitle: 'Plugin version', updateCurrent: 'Current version {version}', updateProtocol: 'Server node protocol {protocol}',
+      updateIncompatible: 'This plugin does not speak the server’s node protocol. Switch to a compatible version.', updateAvailable: '{version} is available',
+      updateLatest: 'This is the newest version that works with this server.', updateUnchecked: 'Compatible versions are checked once a server is connected.', updatePolicy: 'Upgrades',
+      policyAuto: 'Upgrade automatically', policyNotify: 'Tell me about new versions', policyManual: 'Check by hand',
+      policyAutoHelp: 'Install the newest version that works with this server while Bots are idle.', policyNotifyHelp: 'Check regularly and let you decide when to install.', policyManualHelp: 'Look for new versions only when you check.',
+      updatePrerelease: 'Include prereleases', updateCheck: 'Check for updates', updateInstall: 'Install {version}', updateInstalling: 'Installing…',
+      updateInstalled: 'The new version is installed.', updateRestart: 'The new version is installed. Restart DSH to use it.', updateFailed: 'Install failed: {error}',
+      updateNotRegistry: 'This plugin was not installed from npm. Install the new version by hand.',
     };
 
     const styles = `
@@ -624,6 +640,52 @@ body[data-ds-dark-theme] .dscord-connect {
         h('p', { className: 'dc-muted dc-model-info' }, t('nativeLifecycle')));
     }
 
+    function KernelUpdatePanel({ connection, initial, t }) {
+      const [view, setView] = React.useState(initial);
+      const [busy, setBusy] = React.useState(false);
+      const [error, setError] = React.useState(null);
+      React.useEffect(() => setView(initial), [initial]);
+      async function run(action, payload = {}) {
+        setBusy(true); setError(null);
+        try { setView(await connection.kernel(action, payload)); }
+        catch (reason) { setError(reason.message); }
+        finally { setBusy(false); }
+      }
+      const installing = view.phase === 'installing';
+      // An install finishes in the background; follow it until it lands.
+      React.useEffect(() => {
+        if (!installing) return undefined;
+        const timer = setInterval(() => void connection.kernel('kernel-update-status').then(setView).catch(() => {}), 1000);
+        return () => clearInterval(timer);
+      }, [connection, installing]);
+      const state = view.phase === 'failed' ? t('updateFailed', { error: view.error || '' })
+        : view.phase === 'installed' ? t('updateInstalled') : view.phase === 'restart-required' ? t('updateRestart')
+        : !view.serverProtocol ? t('updateUnchecked') : !view.compatible && !view.available ? t('updateIncompatible')
+        : view.available ? t('updateAvailable', { version: view.available }) : t('updateLatest');
+      return h('section', { className: 'dc-panel', 'aria-label': t('updateTitle') },
+        h('h2', null, t('updateTitle')),
+        h('p', { className: 'dc-model-info' }, t('updateCurrent', { version: view.current }),
+          view.serverProtocol ? ` · ${t('updateProtocol', { protocol: view.serverProtocol })}` : ''),
+        h('p', { role: 'status', className: view.phase === 'failed' || view.compatible === false ? 'dc-error dc-model-info' : 'dc-muted dc-model-info' }, state),
+        view.source && view.source !== 'registry' && h('p', { className: 'dc-muted dc-model-info' }, t('updateNotRegistry')),
+        h('fieldset', { className: 'dc-mode-options', disabled: busy || installing }, h('legend', { className: 'dc-muted' }, t('updatePolicy')),
+          ...['auto', 'notify', 'manual'].map(policy => {
+            const key = `policy${policy[0].toUpperCase()}${policy.slice(1)}`;
+            return h('label', { className: 'dc-mode-option', key: policy },
+              h('input', { type: 'radio', name: 'kernelUpdatePolicy', value: policy, checked: view.policy === policy, onChange: () => void run('kernel-update-policy', { policy }) }),
+              h('span', null, h('strong', null, t(key)), h('small', null, t(`${key}Help`))));
+          }),
+          h('label', { className: 'dc-mode-option' },
+            h('input', { type: 'checkbox', checked: view.channel === 'prerelease', onChange: event => void run('kernel-update-policy', { channel: event.target.checked ? 'prerelease' : 'stable' }) }),
+            h('span', null, h('strong', null, t('updatePrerelease'))))),
+        h('div', { className: 'dc-toolbar' },
+          h(Button, { variant: 'outline', type: 'button', disabled: busy || installing, onClick: () => void run('kernel-update-check') }, t('updateCheck')),
+          view.available && view.source === 'registry' && !['installed', 'restart-required'].includes(view.phase)
+            && h(Button, { variant: 'primary', type: 'button', disabled: busy || installing, onClick: () => void run('kernel-update-install') },
+              installing ? t('updateInstalling') : t('updateInstall', { version: view.available }))),
+        error && h('p', { role: 'alert', className: 'dc-error dc-model-info' }, error));
+    }
+
     function BotRow({ bot, connection, state, t }) {
       const [nativeId, setNativeId] = React.useState('');
       const needsBinding = state.value?.nativeMode && !bot.nativeBotId;
@@ -694,6 +756,7 @@ body[data-ds-dark-theme] .dscord-connect {
               value.bots.length === 0
                 ? h('p', { className: 'dc-muted' }, t('emptyBots'))
                 : h('ul', { className: 'dc-bots' }, value.bots.map(bot => h(BotRow, { key: bot.id, bot, connection, state, t }))))),
+          value?.kernelUpdates && h(KernelUpdatePanel, { connection, initial: value.kernelUpdates, t }),
           value?.dataDirectory && h('details', { className: 'dc-directory' },
             h('summary', null, t('configDirectory')),
             h('code', null, value.dataDirectory))));

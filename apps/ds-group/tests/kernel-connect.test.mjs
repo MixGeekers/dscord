@@ -5,7 +5,7 @@ import path from 'node:path';
 import os from 'node:os';
 import { ConnectController } from '../dsh-connect/controller.mjs';
 
-async function fixture(t, { loseFirstCreate = false } = {}) {
+async function fixture(t, { loseFirstCreate = false, updates } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'dscord-kernel-connect-'));
   const bots = [];
   const receipts = new Map();
@@ -27,7 +27,7 @@ async function fixture(t, { loseFirstCreate = false } = {}) {
     },
   };
   const processes = { available: async () => ({ available: true }), stop: async () => {} };
-  const controller = await new ConnectController({ directory, native, processes, models: {} }).initialize();
+  const controller = await new ConnectController({ directory, native, processes, models: {}, updates }).initialize();
   await controller.restoring;
   t.after(async () => { await controller.dispose(); await rm(directory, { recursive: true, force: true }); });
   return { controller, bots, receipts };
@@ -78,4 +78,22 @@ test('roster synchronization retries a failed desired node and continues restori
   assert.deepEqual(attempts, ['one', 'two', 'one']);
   assert.equal(controller.running.get('one').status, 'online');
   assert.equal(controller.state.nodes.stopped.desired, false);
+});
+
+test('the owner sees and steers plugin upgrades through the connect page actions', async t => {
+  const calls = [];
+  const updates = {
+    view: () => ({ current: '0.4.0', available: '0.5.0', policy: 'notify' }),
+    check: async options => { calls.push(['check', options]); return { available: '0.5.0' }; },
+    setPolicy: async input => { calls.push(['policy', input]); return { policy: input.policy }; },
+    install: () => { calls.push(['install']); return { phase: 'installing' }; },
+  };
+  const { controller } = await fixture(t, { updates });
+  assert.deepEqual((await controller.status()).kernelUpdates, { current: '0.4.0', available: '0.5.0', policy: 'notify' });
+  assert.equal((await controller.handle({ action: 'kernel-update-status' })).available, '0.5.0');
+  await controller.handle({ action: 'kernel-update-check' });
+  await controller.handle({ action: 'kernel-update-policy', policy: 'auto', channel: 'stable' });
+  assert.equal((await controller.handle({ action: 'kernel-update-install' })).phase, 'installing');
+  assert.deepEqual(calls, [['check', { fresh: true }], ['policy', { policy: 'auto', channel: 'stable' }], ['install']]);
+  await assert.rejects(controller.handle({ action: 'kernel-update-everything' }), /未知连接操作/);
 });

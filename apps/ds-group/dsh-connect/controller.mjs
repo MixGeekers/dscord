@@ -15,7 +15,7 @@ function publicBot(bot) {
 }
 
 export class ConnectController {
-  constructor({ directory, sourceHome, sourceProfile, processes, models, native, request = fetch, selectPort = availablePort }) {
+  constructor({ directory, sourceHome, sourceProfile, processes, models, native, updates, request = fetch, selectPort = availablePort }) {
     this.directory = path.resolve(directory);
     this.filename = path.join(this.directory, 'connection.json');
     this.processes = processes || new NodeProcesses({ sourceHome, sourceProfile });
@@ -23,6 +23,7 @@ export class ConnectController {
     this.selectPort = selectPort;
     this.models = models;
     this.native = native;
+    this.updates = updates;
     this.state = { schemaVersion: 1, serverUrl: '', user: null, accessToken: null, bots: [], nodes: {} };
     this.running = new Map();
     this.queue = Promise.resolve();
@@ -116,6 +117,7 @@ export class ConnectController {
     return { serverUrl: this.state.serverUrl, user: this.state.user, bots, runtime: this.runtime,
       ...(this.native ? { nativeBots, hostId: this.state.hostId, nativeMode: true, nativeBundled: this.native.bundled === true } : {}),
       dataDirectory: this.directory, lastError, modelPolicy: this.modelPolicy,
+      ...(this.updates ? { kernelUpdates: this.updates.view() } : {}),
       models: this.native ? await this.native.models().catch(() => ({ available: false })) : this.models ? await this.models.view() : { available: false } };
   }
 
@@ -376,6 +378,16 @@ export class ConnectController {
       const desired = this.state.attentionModes[body.nativeBotId];
       return { ...value, ...(desired ? { desiredAttention: { mode: desired,
         status: value.attention?.mode === desired ? 'applied' : 'pending' } } : {}) };
+    }
+    if (body.action?.startsWith?.('kernel-update-')) {
+      if (!this.updates) throw new Error('当前运行方式不支持插件升级');
+      switch (body.action) {
+        case 'kernel-update-status': return this.updates.view();
+        case 'kernel-update-check': return this.updates.check({ fresh: true });
+        case 'kernel-update-policy': return this.updates.setPolicy({ policy: body.policy, channel: body.channel });
+        case 'kernel-update-install': return this.updates.install();
+        default: throw new Error('未知连接操作');
+      }
     }
     if (body.action === 'memory-profile') {
       await this.ownedNativeBot(body.nativeBotId);

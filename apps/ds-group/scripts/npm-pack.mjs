@@ -7,8 +7,16 @@ import { packageRoot } from '../src/paths.mjs';
 import { verifyRuntimeDependencyManifests } from './runtime-dependencies.mjs';
 import { excludedReleasePath, includedNpmFile, projectLicense } from './release-content.mjs';
 import { assertReleaseVersions, releaseVersion } from './release-version.mjs';
+import { DSH_VERSION } from './runtime-config.mjs';
+import { KERNEL_PROTOCOL } from '../src/node-protocol.mjs';
 
 const execute = promisify(execFile);
+
+/** The DSH releases this package runs on: the pinned one up to the next minor, where DSH may break plugins. */
+export function dshEngineRange(version = DSH_VERSION) {
+  const [major, minor] = version.split(/[.-]/).map(Number);
+  return `>=${version} <${major === 0 ? `0.${minor + 1}.0` : `${major + 1}.0.0`}`;
+}
 const runtimeFiles = [
   'bin/dscord.mjs', 'src', 'memory', 'service/ombre', 'web/mention-tokens.js', 'dist/web', 'dist/admin', 'deploy/synapse', 'dsh-plugin', 'dsh-connect', 'cordis.patch.yml', 'vendor/ds-bot',
   ...['service', 'matrix', 'runtime-config', 'runtime-dependencies', 'dsh-node', 'file-work', 'server-init', 'server-bootstrap', 'server-admin', 'central-init', 'admin', 'memory-setup']
@@ -82,7 +90,9 @@ export async function packNpm({ root = packageRoot, output = path.join(root, '.l
     name: 'dscord', version, type: 'module',
     license: source.license,
     description: 'DSCord collaboration server and independent Bot nodes, with a prebuilt chat PWA',
-    engines: source.engines,
+    engines: { ...source.engines, dsh: dshEngineRange() },
+    // The node protocol range this kernel speaks; a node picks the newest release that covers its server's protocol.
+    dscord: { protocol: { ...KERNEL_PROTOCOL } },
     main: './dsh-connect/index.mjs',
     exports: { '.': './dsh-connect/index.mjs', './client': './dsh-connect/client.js', './package.json': './package.json' },
     dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web', immediately: true } },
