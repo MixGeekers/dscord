@@ -85,6 +85,7 @@ export function nativeMessage({ input, bot, files }) {
     currentMessage: input.event, recentRoomHistory: input.history || [],
     historyWarnings: input.historyWarnings || [], attachmentWarnings: input.attachmentWarnings || [],
     attachmentsDirectory: files.workdir, files: files.files,
+    ...(input.workResults?.length ? { workResults: input.workResults } : {}),
     replyRoute: { requestId: input.requestId, eventId: input.event.eventId, roomId: input.event.roomId,
       delivery: input.event.delivery || { kind: 'origin' } },
   };
@@ -96,7 +97,7 @@ export function nativeMessage({ input, bot, files }) {
     + '\n若 context.attention.participationOnly 为 true，这是交流回合：自然回应、澄清或跟进已有承诺，不要把旁听到的请求自动接成新任务。'
     + '\n直接回答当前发送者，回合结束后你的最后一条回复会发到本次 replyRoute。'
     + '\n需要运行命令、读写文件、写代码、浏览网页或任何多步操作时，调用 dispatch_work 交给工作者（brief 要自足，带上原话和 files 里的输入文件路径），然后简短告诉对方已经开始；不要声称已经完成。'
-    + '\n[task.result] 消息是工作者的结果：按其中内容如实转告，文件会自动附上。[task.question] 是工作者的提问。查看或调整进行中的工作用 task_status、task_note、task_cancel。'
+    + '\n工作者的结果由核心直接回复到原消息并附上文件；workResults 列出自你上一轮以来已经交付的结果，供你了解，不要再转告，也不要自行重做。[task.question] 是工作者的提问。查看或调整进行中的工作用 task_status、task_note、task_cancel。'
     + '\n本机 Bot 协作使用 message_bot；跨 DSCord 节点可回复 {"text":"说明","delegate":{"to":"完整 Bot ID","body":"任务"}}，并在任务内容中带上相关来源。'
     + `\n${JSON.stringify(envelope)}`;
 }

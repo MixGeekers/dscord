@@ -275,7 +275,7 @@ test('local process ownership prevents concurrent writers for the same Bot', asy
   await rm(directory, { recursive: true, force: true });
 });
 
-test('a worker result becomes a turn for the front and its reply lands on the original message', async () => {
+test('a worker result is handed to the bridge and its reply lands on the original message', async () => {
   const turns = []; const sent = [];
   const { node, store } = fixture({
     bridge: { async turn(input) { turns.push(input); return { status: 'completed', text: '表格整理好了', sessionId: 'front' }; } },
@@ -286,7 +286,7 @@ test('a worker result becomes a turn for the front and its reply lands on the or
       { kind: 'result' }, '[task.result] 任务 T-1 已完成');
     await node.processOne(); await node.processOne();
     assert.equal(turns.length, 1);
-    assert.equal(turns[0].event.workerTask, 'T-1');
+    assert.equal(turns[0].event.workerTask, 'T-1'); assert.equal(turns[0].event.workerKind, 'result');
     assert.match(turns[0].event.body, /\[task\.result\]/);
     assert.equal(sent.length, 1);
     assert.equal(sent[0].room, roomId);

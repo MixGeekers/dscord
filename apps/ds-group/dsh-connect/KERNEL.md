@@ -35,7 +35,9 @@ DSH 内已认证、同源的 `POST /api/dscord/kernel` 接收 `{endpoint,payload
 
 连接到 DSCord 的每个 Bot 分成三部分。前台是 Bot 原有的原生 Session，只保留沟通、回忆和派活工具（`dispatch_work`、`task_status`、`task_cancel`、`task_note`），其他工具在前台被拒绝。程序核心是 `dsh-connect/work-core.mjs`，不调用模型：维护任务台账、并发槽位（默认 3 个）、超时（默认 60 分钟）、取消、补充说明和交付文件核对。工作者是每个任务新建的一个 Session 和目录（节点数据目录下 `workers/<任务 ID>/`），有完整工具，只能用 `work_report` 汇报、用 `work_ask` 提问。
 
-工作者汇报完成时，核心核对列出的文件或 `outputs/` 下的文件，再生成一条 `task.result` 消息交给前台；前台用自己的口吻回复到原消息，文件随回复附上。工作者一轮结束却没有汇报，会被提醒一次，再不汇报就记为失败。任务状态的每次迁移记录在任务的 `events` 里，当前工作者和队列出现在节点 kernel 状态的 `work.workers` 与 `work.queue`。宿主重启时未结束的任务记为 `unknown` 并通知前台。
+前台规则对 Bot 原生 Session 的每一轮都生效，包括其他 Bot 用 `message_bot` 发来的请求；连接建立时即生效，不等第一条房间消息。
+
+工作者汇报完成时，核心核对列出的文件或 `outputs/` 下的文件（同名同 SHA-256 的只交付一次），然后不经前台，直接把结果回复到原消息并附上文件：完成时是工作者的 `summary`，失败时说明没有完成，宿主重启后结果不确定时只说明不确定、不自动重做。这样结果不排在对话后面，也不会被前台改写或重做。已交付的结果记在台账的 `frontNotes` 里，前台下一轮在 `workResults` 中看到一次。工作者的提问（`work_ask`）仍交给前台，由前台问对方或用 `task_note` 转达。工作者一轮结束却没有汇报，会被提醒一次，再不汇报就记为失败。任务状态的每次迁移记录在任务的 `events` 里，当前工作者和队列出现在节点 kernel 状态的 `work.workers` 与 `work.queue`。宿主重启时未结束的任务记为 `unknown`。
 
 Core 的 owner 管理接口通过节点通道访问本内核；网页不接收节点模型凭据。[人物和来源视图](../memory/当前上下文与回顾.md)
 

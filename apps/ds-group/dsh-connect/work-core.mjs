@@ -61,8 +61,8 @@ export class WorkCore {
     this.served = new WeakSet();
     this.timers = new Map();
     this.origin = null;
-    // The task whose result the front is reporting in the current turn, if any.
-    this.resultTask = null;
+    // Results delivered since the front's last turn, so it knows what its workers handed over.
+    this.state.frontNotes ||= [];
     this.onResult = null;
     for (const task of Object.values(this.state.tasks)) {
       if (!ended(task)) mark(task, 'unknown', 'restart', { summary: '宿主重启时任务未结束，结果不确定。', finishedAt: new Date().toISOString(), notified: false, doing: undefined });
@@ -102,7 +102,7 @@ export class WorkCore {
   frontTools() {
     return [
       { name: 'dispatch_work', output,
-        description: '把需要工具或多步操作的工作交给一个新的工作者 Session。工作者有完整工具，但看不到这里的对话。立即返回任务编号，结果之后会以 task.result 消息回到你这里。',
+        description: '把需要工具或多步操作的工作交给一个新的工作者 Session。工作者有完整工具，但看不到这里的对话。立即返回任务编号；结果由核心直接回复到原消息并附上文件，你之后会在 workResults 里看到。',
         parameters: {
           title: { type: 'string', required: true, description: '一句话的任务名' },
           brief: { type: 'string', required: true, description: '完整、自足的任务说明：要做什么、依据哪些原话或文件、做到什么程度' },
@@ -127,10 +127,10 @@ export class WorkCore {
   workerTools(task) {
     return [
       { name: 'work_report', output,
-        description: '向前台汇报。做完时 status=done，做不了时 status=failed，中途需要同步进度时 status=progress。done 时把交付文件的路径写进 files；没写时取工作目录下 outputs/ 里的文件。',
+        description: '汇报结果。做完时 status=done，做不了时 status=failed，中途需要同步进度时 status=progress。done 时把交付文件的路径写进 files；没写时取工作目录下 outputs/ 里的文件。done 和 failed 的 summary 会原样发给提出请求的人。',
         parameters: {
           status: { type: 'string', required: true, enum: ['done', 'failed', 'progress'] },
-          summary: { type: 'string', required: true, description: '结果或进度，写清楚已核实的事实' },
+          summary: { type: 'string', required: true, description: '直接对提出请求的人说：结果、关键数字和结论，用对方的语言。只写已核实的事实，不写内部路径和过程' },
           files: { type: 'array', items: { type: 'string' }, description: '交付文件的路径（绝对路径或相对工作目录）' },
         },
         execute: args => this.report(task.id, args) },
@@ -145,11 +145,6 @@ export class WorkCore {
     title = String(title || '').trim().slice(0, 120);
     brief = String(brief || '').trim();
     if (!title || !brief) return '需要 title 和 brief。';
-    const reported = this.resultTask;
-    if (reported && ['unknown', 'failed'].includes(reported.status)) {
-      // Redoing is the person's call: an unknown result may already have had its effects.
-      return `不能在汇报 ${reported.id} 的结果时自行重做。如实告诉对方结果${reported.status === 'unknown' ? '不确定' : '失败'}，问是否需要重做，等对方回复后再派工。`;
-    }
     const id = shortId();
     const origin = this.origin;
     const task = this.state.tasks[id] = { id, title, brief, ...(deliverables ? { deliverables: String(deliverables) } : {}),
@@ -157,7 +152,7 @@ export class WorkCore {
     mark(task, 'queued', 'front');
     await this.save();
     await this.pump();
-    return `已派工：${id}（${title}）。工作者${task.status === 'running' ? '已开始' : '排队中'}，结果会以 task.result 消息回到你这里。现在简短告诉对方已开始即可。`;
+    return `已派工：${id}（${title}）。工作者${task.status === 'running' ? '已开始' : '排队中'}，结果会由核心直接交付给对方。现在简短告诉对方已开始即可。`;
   }
 
   async pump() {
@@ -203,8 +198,9 @@ export class WorkCore {
     const origin = task.origin;
     return [
       `你是一个工作者，负责任务 ${task.id}：${task.title}。`,
-      '你看不到原来的对话，以下是前台交给你的全部说明。完成后必须调用 work_report 汇报；缺信息时用 work_ask 提问。',
-      '交付文件放在当前目录的 outputs/ 下，或在 work_report 的 files 里列出路径。汇报里只写已核实的事实。',
+      '你看不到原来的对话，以下是前台交给你的全部说明。完成后必须调用 work_report 汇报，summary 会原样发给提出请求的人。',
+      '缺信息，或输入有几种说得通的解读且会改变结果（例如日期的日/月顺序），先用 work_ask 提问，不要自己挑一种；等答复时可以先做不受影响的部分。',
+      '交付文件放在当前目录的 outputs/ 下，或在 work_report 的 files 里列出路径。只写已核实的事实，不把输入里没有的推断写成结论。',
       '',
       '## 任务说明',
       task.brief,
@@ -329,16 +325,27 @@ export class WorkCore {
       queue: live.filter(task => task.status === 'queued').map(worker) };
   }
 
+  /** The text a result or question carries: a result is delivered to the person as it is, a question goes to the front. */
   resultText(task, message) {
     if (message.kind === 'question') return `[task.question] 工作者 ${task.id}（${task.title}）提问：${message.question}\n请回答：可以直接问对方，或用 task_note 把答案转给工作者。`;
-    const files = (task.artifacts || []).map(file => `- ${file.name}（${file.size} 字节，sha256 ${file.sha256.slice(0, 12)}）`);
-    return [
-      `[task.result] 任务 ${task.id}（${task.title}）${{ done: '已完成', failed: '失败', unknown: '结果不确定', cancelled: '已取消' }[task.status]}。`,
-      `工作者汇报：${task.summary || '（无）'}`,
-      ...(files.length ? ['已核对并会自动附上的文件：', ...files] : []),
-      '请用你自己的口吻把结果告诉对方；只转述上面的内容，不要补充没有核实的结论。',
-      ...(['failed', 'unknown'].includes(task.status) ? ['不要自行重做：如实说明情况，问对方是否需要重做，等对方回复后再派工。'] : []),
-    ].join('\n');
+    if (task.status === 'unknown') return `「${task.title}」在宿主重启时还没有结束，结果不确定。我没有自动重做，需要的话告诉我。`;
+    return `「${task.title}」${task.status === 'done' ? '完成了' : '没有完成'}。\n\n${task.summary || ''}`.trim();
+  }
+
+  /** Record a delivered result for the front's next turn. */
+  delivered(task) {
+    const files = (task.status === 'done' ? task.artifacts || [] : []).map(file => file.name);
+    this.state.frontNotes = [...this.state.frontNotes, { taskId: task.id, title: task.title, status: task.status,
+      requester: task.origin?.senderName || task.origin?.senderId || null, roomId: task.origin?.roomId || null,
+      summary: String(task.summary || '').slice(0, 1500), files }].slice(-10);
+    return this.save();
+  }
+
+  /** Delivered results the front has not seen yet; they are cleared once a turn carries them. */
+  takeNotes() {
+    const notes = this.state.frontNotes;
+    this.state.frontNotes = [];
+    return notes;
   }
 
   dispose() {

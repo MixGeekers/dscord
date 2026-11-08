@@ -242,10 +242,28 @@ export class NativeBridge {
     const record = { requestId: input.requestId, botId: input.botId, inputHash: hash, status: 'queued',
       stage: 'queued', summary: '等待原生 Bot', artifacts: [], calls: [], toolReceipts: [], mode: 'native' };
     this.state.requests[input.requestId] = record;
+    const task = input.event.workerKind === 'result' && this.state.tasks[input.event.workerTask];
+    if (task) return this.deliverResult(record, task);
     const pending = this.queue(record, input, options);
     this.pending.set(input.requestId, pending);
     try { return await pending; }
     finally { this.pending.delete(input.requestId); }
+  }
+
+  /** A worker result goes out as it is, without a front turn: it never waits behind conversation and is never retold. */
+  async deliverResult(record, task) {
+    Object.assign(record, { status: 'completed', stage: 'completed', summary: '工作者结果已交付', mode: 'worker-result',
+      text: this.core.resultText(task, { kind: 'result' }), artifacts: task.status === 'done' ? task.artifacts || [] : [],
+      startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() });
+    await this.core.delivered(task);
+    this.durable.add(record.requestId);
+    return structuredClone(record);
+  }
+
+  /** The Bot's own Session is the front for every turn, including Bot-to-Bot requests that never pass through a room. */
+  async serveFront() {
+    const bot = await this.native.bot(this.node.nativeBotId);
+    await this.core.serveFront(await this.native.agent(bot.sessionId));
   }
 
   async queue(record, input, options) {
@@ -306,7 +324,6 @@ export class NativeBridge {
       const files = await prepareWorkFiles({ dataDir: this.node.directory, requestId: input.requestId, workdir: input.workdir, files: input.files });
       check();
       const workerTask = input.event.workerTask && this.state.tasks[input.event.workerTask];
-      this.core.resultTask = workerTask || null;
       this.core.origin = workerTask?.origin || { requestId: input.requestId, roomId: input.event.roomId, eventId: input.event.eventId,
         ...(input.event.threadRootId ? { threadRootId: input.event.threadRootId } : {}),
         senderId: input.event.senderId, senderName: input.event.senderName, body: input.event.body,
@@ -329,11 +346,13 @@ export class NativeBridge {
           context: { roomId: input.event.roomId, authorId: input.event.senderId },
           eventIds: [input.event.eventId], query: input.event.body, budgetChars: 8000 } }), signal);
       check();
-      const text = nativeMessage({ input: { ...input, memoryView }, bot, files });
+      const workResults = this.core.takeNotes();
+      const text = nativeMessage({ input: { ...input, memoryView, workResults }, bot, files });
       await this.native.call('send', { sessionId: bot.id, requestId: input.requestId, text,
         source: input.context?.source || { sender: { id: input.event.senderId,
           name: input.event.senderName || input.event.senderId, kind: input.event.senderKind || 'human' },
-          roomId: input.event.roomId, eventId: input.event.eventId }, memoryContext: input });
+          roomId: input.event.roomId, eventId: input.event.eventId }, memoryContext: input })
+        .catch(cause => { this.state.frontNotes.unshift(...workResults); throw cause; });
       run.sent = true;
       if (record.cancelRequested) run.cancelling ??= this.cancelNative(run);
       await run.cancelling;
@@ -346,10 +365,8 @@ export class NativeBridge {
         throw error(isModelQuotaFailure(run.failure) ? 'MODEL_QUOTA_EXCEEDED' : 'NATIVE_TURN_FAILED');
       }
       record.text = run.text;
-      // The front writes no files. Only a worker result carries files, and the
-      // core verified them when the worker reported.
-      const artifacts = input.event.workerTask ? this.state.tasks?.[input.event.workerTask]?.artifacts || [] : [];
-      record.artifacts = artifacts;
+      // The front writes no files; worker results carry theirs without a front turn.
+      record.artifacts = [];
       record.status = 'completed'; record.stage = 'completed'; record.summary = '处理完成';
       record.usage = { accounting: 'native-ds-bot', complete: false, observedCalls: record.calls.length };
     } catch (cause) {
@@ -361,7 +378,6 @@ export class NativeBridge {
       this.run = null;
       this.waiting = null;
       this.core.origin = null;
-      this.core.resultTask = null;
       record.finishedAt = new Date().toISOString();
       await this.save();
       this.durable.add(record.requestId);

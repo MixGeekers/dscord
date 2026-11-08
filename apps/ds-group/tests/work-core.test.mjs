@@ -59,7 +59,7 @@ test('dispatch starts a worker with the brief and origin, and a verified report 
   await writeFile(path.join(task.dir, 'outputs', 'out.csv'), 'a,b\n');
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '转好了，2 列' }), /核对了 1 个文件/);
   assert.equal(task.status, 'done'); assert.equal(task.artifacts[0].name, 'out.csv'); assert.equal(task.notified, true);
-  assert.equal(f.results.length, 1); assert.match(f.results[0].text, /\[task\.result\].*已完成/s); assert.match(f.results[0].text, /out\.csv/);
+  assert.equal(f.results.length, 1); assert.equal(f.results[0].text, '「整理表格」完成了。\n\n转好了，2 列');
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'again' }), /已经结束/);
   assert.equal(f.results.length, 1);
 });
@@ -123,22 +123,6 @@ test('a worker question goes to the front without ending the task', async t => {
   await run(f, 'worker-1', 'work_ask', { question: '用哪个日期格式？' });
   assert.equal(f.results[0].message.kind, 'question'); assert.match(f.results[0].text, /\[task\.question\].*日期格式/s);
   assert.equal(Object.values(f.state.tasks)[0].status, 'running');
-});
-
-test('while reporting an unknown or failed result the front cannot redo the work on its own', async t => {
-  const f = await fixture(t, { timeoutMs: 20 });
-  await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: 'budget', brief: 'b' });
-  await new Promise(resolve => setTimeout(resolve, 60));
-  const failed = Object.values(f.state.tasks)[0];
-  assert.match(f.results[0].text, /不要自行重做/);
-  f.core.resultTask = failed;
-  assert.match(await run(f, 'front', 'dispatch_work', { title: '重跑 budget', brief: 'b' }), /不能在汇报.*自行重做/);
-  assert.equal(Object.keys(f.state.tasks).length, 1);
-  // Once the person asks again, the next turn reports no result and dispatch works.
-  f.core.resultTask = null;
-  assert.match(await run(f, 'front', 'dispatch_work', { title: '重跑 budget', brief: 'b' }), /T-/);
-  assert.equal(Object.keys(f.state.tasks).length, 2);
 });
 
 test('a file listed twice, or listed and staged under the same name and content, is delivered once', async t => {

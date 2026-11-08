@@ -261,11 +261,28 @@ test('the front never publishes files, even when its answer names or links one',
   assert.equal(result.status, 'completed'); assert.deepEqual(result.artifacts, []);
 });
 
-test('a worker-result turn delivers exactly the files the core verified for that task', async t => {
-  const f = await fixture(t);
+test('a worker result is delivered as it is without a front turn, and the front sees it on its next turn', async t => {
+  const f = await fixture(t, { idle: new Promise(() => {}) });
   const file = { path: path.join(f.node.directory, 'report.csv'), name: 'report.csv', size: 3, sha256: 'a'.repeat(64), mimeType: 'text/csv' };
-  f.bridge.state.tasks['T-1'] = { id: 'T-1', title: 'CSV', status: 'done', artifacts: [file], origin: { roomId: '!a:home.test', eventId: '$origin' } };
+  f.bridge.state.tasks['T-1'] = { id: 'T-1', title: 'CSV', status: 'done', summary: '华东最高。', artifacts: [file],
+    origin: { roomId: '!a:home.test', eventId: '$origin', senderName: 'Ann' } };
   const request = f.request('worker-result');
-  const result = await f.bridge.turn({ ...request, event: { ...request.event, kind: 'task.result', workerTask: 'T-1' } });
+  // The front is busy (never idle), and the result still goes out at once.
+  const result = await f.bridge.turn({ ...request, event: { ...request.event, kind: 'task.result', workerTask: 'T-1', workerKind: 'result' } });
   assert.equal(result.status, 'completed'); assert.deepEqual(result.artifacts, [file]);
+  assert.equal(result.text, '「CSV」完成了。\n\n华东最高。');
+  assert.equal(f.calls.length, 0);
+  assert.deepEqual(f.bridge.state.frontNotes.map(note => [note.taskId, note.files]), [['T-1', ['report.csv']]]);
+});
+
+test('an unknown result says so and is not redone; the next front turn carries it once', async t => {
+  const f = await fixture(t);
+  f.bridge.state.tasks['T-2'] = { id: 'T-2', title: 'budget.md', status: 'unknown', summary: '宿主重启时任务未结束，结果不确定。', origin: { roomId: '!a:home.test' } };
+  const request = f.request('worker-unknown');
+  const result = await f.bridge.turn({ ...request, event: { ...request.event, kind: 'task.result', workerTask: 'T-2', workerKind: 'result' } });
+  assert.match(result.text, /结果不确定。我没有自动重做/); assert.deepEqual(result.artifacts, []);
+  await f.bridge.turn(f.request('next'));
+  assert.deepEqual(f.calls[0].workResults.map(note => [note.taskId, note.status]), [['T-2', 'unknown']]);
+  await f.bridge.turn(f.request('after'));
+  assert.equal(f.calls[1].workResults, undefined);
 });

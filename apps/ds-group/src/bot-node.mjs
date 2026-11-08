@@ -471,12 +471,12 @@ export class BotNode {
     return reliableAttentionRoute(event, { botId: this.participant.id, store: this.store, participants: this.participants });
   }
 
-  /** The core hands a worker's result (or question) back to the front as a local task.result message. */
+  /** The core hands a worker's result (or question) to the node as a local task.result message: results are delivered as they are, questions go to the front. */
   acceptWorkerResult(task, message, text) {
     const origin = task.origin;
     const eventId = message.kind === 'result' ? `$dscord-${task.id}-result` : `$dscord-${task.id}-q-${Date.now()}`;
     const event = { type: 'm.room.message', event_id: eventId, room_id: origin.roomId, sender: this.participant.id,
-      origin_server_ts: Date.now(), content: { msgtype: 'm.notice', body: text, 'org.ds_group': { kind: 'task.result', workerTask: task.id,
+      origin_server_ts: Date.now(), content: { msgtype: 'm.notice', body: text, 'org.ds_group': { kind: 'task.result', workerTask: task.id, workerKind: message.kind,
         originSenderId: origin.senderId, originRoomId: origin.roomId, originEventId: origin.eventId,
         ...(origin.threadRootId ? { originThreadRootId: origin.threadRootId } : {}) } } };
     this.store.ingest([event], undefined, item => this.delivery.register(item), { route: candidate => this.routeOf(candidate),
@@ -650,7 +650,7 @@ export class BotNode {
         ...(replyTo ? { replyTo } : {}),
         ...(sourceThreadRootId ? { threadRootId: sourceThreadRootId } : {}),
         ...(meta.kind ? { kind: meta.kind } : {}), ...(meta.returnTo ? { returnTo: meta.returnTo } : {}),
-        ...(meta.workerTask ? { workerTask: meta.workerTask } : {}),
+        ...(meta.workerTask ? { workerTask: meta.workerTask, workerKind: meta.workerKind } : {}),
         ...(meta.fileBatch ? { fileBatch: meta.fileBatch } : {}),
         ...(meta.originSenderId ? { originSenderId: meta.originSenderId } : {}), ...(Number.isInteger(meta.hop) ? { hop: meta.hop } : {}),
         ...(meta.originRoomId ? { originRoomId: meta.originRoomId } : {}), ...(meta.originEventId ? { originEventId: meta.originEventId } : {}),
