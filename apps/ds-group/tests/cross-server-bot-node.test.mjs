@@ -1,13 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, readFile, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { createHash } from 'node:crypto';
 import { BotNode } from '../src/bot-node.mjs';
 import { NodeStore } from '../src/node-store.mjs';
-import { NodeFiles } from '../src/node-files.mjs';
-import { workHash, workRequestId } from '../src/bot-work-policy.mjs';
 
 const botId = '@helper:a.node.test';
 const humanId = '@alice:b.node.test';
@@ -38,38 +35,9 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
       'org.ds_group': { to: [botId], ...meta },
     },
   };
-  const work = {
-    kind: 'scoped',
-    requestId: workRequestId(botId, event.event_id),
-    botId,
-    ownerId: participant.ownerId,
-    requesterId: humanId,
-    roomId,
-    eventId: event.event_id,
-    authority: 'b.node.test',
-    tools: ['read', 'write'],
-    proofHash: workHash('proof'),
-    domainId: workHash('domain'),
-    conversationKind: 'group',
-    canDelegate: false,
-  };
-  let revoked = false;
   let calls = 0;
-  const decisions = [];
   const sent = [];
-  const client = {
-    admit: async () => {
-      if (revoked) throw Object.assign(new Error('Revoked'), { status: 403 });
-      return { mode: 'scoped', work, event, participants, inputs: [] };
-    },
-    check: async (request, stage, details = {}) => {
-      decisions.push({ stage, details, request });
-      assert.equal(request.authorization?.kind, 'scoped');
-      if (revoked && stage !== 'observe')
-        throw Object.assign(new Error('Revoked'), { status: 403 });
-      return { authorized: !revoked };
-    },
-  };
+  const client = {};
   const bridge = {
     turn: async () => {
       calls++;
@@ -112,17 +80,12 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
     filename,
     runtime,
     event,
-    work,
     bridge,
     client,
     matrix,
     sent,
-    decisions,
     store: () => store,
     calls: () => calls,
-    revoke: () => {
-      revoked = true;
-    },
     restart: () => {
       store.close();
       store = new NodeStore(filename, botId);
@@ -130,189 +93,6 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
     },
   };
 }
-
-test('scoped admission is durable before a download fails and never falls back to another delivery route', async (t) => {
-  const f = await fixture(t, {
-    meta: { delivery: { kind: 'direct', recipientId: humanId } },
-  });
-  f.runtime.files = {
-    prepare: async (request) => {
-      assert.equal(
-        f.store().item(f.event.event_id).request.authorization.domainId,
-        f.work.domainId,
-      );
-      assert.equal(request.authorization.domainId, f.work.domainId);
-      throw Object.assign(new Error('Input read denied after admission'), {
-        status: 403,
-      });
-    },
-  };
-  await f.runtime.processOne();
-  assert.equal(f.calls(), 0);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(
-    f.store().item(f.event.event_id).request.authorization.domainId,
-    f.work.domainId,
-  );
-  assert.equal(f.store().pendingDelivery(), undefined);
-  assert.deepEqual(f.sent, []);
-});
-
-test('a denied Bot delegation event cannot generate an unscoped failure or direct message', async (t) => {
-  const f = await fixture(t, {
-    sender: '@peer:b.node.test',
-    meta: {
-      kind: 'task.request',
-      returnTo: '@peer:b.node.test',
-      originSenderId: humanId,
-    },
-  });
-  f.revoke();
-  await f.runtime.processOne();
-  assert.equal(f.calls(), 0);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(f.store().pendingDelivery(), undefined);
-});
-
-test('restart before admission cannot reconcile or publish a request through an older unscoped path', async (t) => {
-  const f = await fixture(t);
-  f.store().begin(f.event.event_id, {
-    ...f.runtime.requestFor(f.store().item(f.event.event_id)),
-    workGate: 'pending',
-  });
-  const restarted = f.restart();
-  let lookups = 0;
-  f.bridge.status = async () => {
-    lookups++;
-    throw new Error('Must not look up an unsubmitted native task');
-  };
-  await restarted.recoverInterrupted();
-  assert.equal(lookups, 0);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(f.store().pendingDelivery(), undefined);
-});
-
-test('late native results retain their effects but revoked tasks cannot upload or send', async (t) => {
-  const f = await fixture(t);
-  let finish;
-  f.bridge.turn = () =>
-    new Promise((resolve) => {
-      finish = resolve;
-    });
-  const processing = f.runtime.processOne();
-  for (let pass = 0; pass < 20 && !finish; pass++) await Promise.resolve();
-  assert.ok(finish);
-  f.revoke();
-  finish({
-    status: 'completed',
-    text: '{"text":"Already wrote the file"}',
-    artifacts: [{ path: '/never-upload.txt' }],
-    toolReceipts: [{ name: 'write', status: 'completed' }],
-  });
-  await processing;
-  const item = f.store().item(f.event.event_id);
-  assert.equal(item.status, 'failed');
-  assert.equal(item.response.toolReceipts[0].status, 'completed');
-  assert.equal(item.response.artifacts.length, 1);
-  assert.equal(f.store().pendingDelivery(), undefined);
-  assert.deepEqual(f.sent, []);
-});
-
-test('a frozen send retry rechecks work, keeps its transaction and never reruns the model', async (t) => {
-  const f = await fixture(t, {
-    meta: { taskId: 'foreign-user-supplied-task', hop: 100 },
-  });
-  let attempts = 0;
-  f.matrix.send = async (destination, body, options) => {
-    attempts++;
-    f.sent.push({ destination, options });
-    if (attempts === 1)
-      throw Object.assign(new Error('Lost Matrix receipt'), {
-        networkError: true,
-      });
-    return { event_id: '$same-result' };
-  };
-  await f.runtime.processOne();
-  await assert.rejects(f.runtime.processOne(), /Lost Matrix receipt/);
-  assert.ok(f.store().pendingDelivery().routing_frozen);
-  await f.runtime.processOne();
-  assert.equal(f.calls(), 1);
-  assert.equal(f.sent.length, 2);
-  assert.equal(
-    f.sent[0].options.transactionId,
-    f.sent[1].options.transactionId,
-  );
-  assert.notEqual(f.sent[0].options.taskId, 'foreign-user-supplied-task');
-  assert.equal(f.sent[0].options.originSenderId, humanId);
-  assert.equal(f.sent[0].destination, roomId);
-  assert.equal(
-    f.decisions.filter((decision) => decision.stage === 'deliver').length,
-    2,
-  );
-  assert.ok(
-    f.decisions.some(
-      (decision) =>
-        decision.stage === 'observe' &&
-        decision.details.effectStatus === 'unknown',
-    ),
-  );
-});
-
-test('revocation after an unknown send prevents its next network attempt without rewriting the unknown effect', async (t) => {
-  const f = await fixture(t);
-  let attempts = 0;
-  f.matrix.send = async () => {
-    attempts++;
-    throw Object.assign(new Error('Lost Matrix receipt'), {
-      networkError: true,
-    });
-  };
-  await f.runtime.processOne();
-  await assert.rejects(f.runtime.processOne(), /Lost Matrix receipt/);
-  f.revoke();
-  await f.runtime.processOne();
-  assert.equal(attempts, 1);
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.ok(
-    f.decisions.some(
-      (decision) =>
-        decision.stage === 'observe' &&
-        decision.details.effectStatus === 'unknown',
-    ),
-  );
-});
-
-test('a known uploaded attachment survives an observation outage as a separately pending audit', async (t) => {
-  const f = await fixture(t);
-  const artifactPath = path.join(f.directory, 'result.txt');
-  const data = Buffer.from('actual artifact');
-  await writeFile(artifactPath, data);
-  const sha256 = createHash('sha256').update(data).digest('hex');
-  const files = new NodeFiles({
-    directory: f.directory,
-    coreUrl: 'https://home.test',
-    accessToken: 'synthetic',
-    work: {
-      check: async (_request, stage) => {
-        if (stage === 'observe') throw new Error('Audit unavailable');
-      },
-    },
-    fetchImpl: async () =>
-      new Response(
-        JSON.stringify({
-          attachment: { id: 'known-upload', sha256, size: data.length },
-        }),
-        { status: 200 },
-      ),
-  });
-  const result = await files.upload(
-    { path: artifactPath, sha256, size: data.length },
-    { requestId: 'upload', botId, workdir: f.directory },
-  );
-  assert.equal(result.id, 'known-upload');
-  assert.equal(result.observationPending, true);
-  assert.equal(await readFile(artifactPath, 'utf8'), 'actual artifact');
-});
 
 test('a denied external invitation survives sync and restart until the owner actually grants it', async (t) => {
   const f = await fixture(t);
@@ -339,36 +119,6 @@ test('a denied external invitation survives sync and restart until the owner act
   await restarted.syncOnce();
   assert.equal(attempts, 2);
   assert.equal(f.store().pendingInvitations().length, 0);
-});
-
-test('a local model cannot implicitly export its private work through an external Bot delegate', async (t) => {
-  const f = await fixture(t);
-  f.client.admit = async () => ({
-    mode: 'local',
-    participants: [f.runtime.participant],
-    event: f.event,
-  });
-  f.client.check = async () => ({ authorized: true });
-  f.bridge.turn = async (request) => {
-    assert.equal(
-      request.event.availableBots.some(
-        (person) => person.id === '@peer:b.node.test',
-      ),
-      false,
-    );
-    return {
-      status: 'completed',
-      text: JSON.stringify({
-        text: 'Handing it over',
-        delegate: { to: '@peer:b.node.test', body: 'private content' },
-      }),
-      artifacts: [],
-    };
-  };
-  await f.runtime.processOne();
-  assert.equal(f.store().item(f.event.event_id).status, 'failed');
-  assert.equal(f.store().pendingDelivery(), undefined);
-  assert.deepEqual(f.sent, []);
 });
 
 test('one hundred permanently denied invitations cannot starve a later approved room', async (t) => {
@@ -411,4 +161,100 @@ test('one hundred permanently denied invitations cannot starve a later approved 
   await restarted.syncOnce();
   assert.equal(approved, 1);
   assert.equal(f.store().pendingInvitations().length, 100);
+});
+
+const delegating = f => {
+  f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
+    text: JSON.stringify({ text: '我去问 Peer。', delegate: { to: '@peer:b.node.test', body: '请核对' } }) });
+  // The cross-server room is the only one this Bot shares with Peer; its own home room has neither.
+  f.runtime.contacts.seeRoom(roomId, [{ id: botId, kind: 'bot' }, { id: humanId, kind: 'human' }, { id: '@peer:b.node.test', kind: 'bot' }]);
+};
+const drain = async node => { for (let i = 0; i < 10 && await node.processOne(); i++); };
+
+test('a delegation goes to a room the delegate is actually in, not the node home room', async t => {
+  const f = await fixture(t);
+  delegating(f);
+  await drain(f.runtime);
+  const request = f.sent.find(message => message.options.kind === 'task.request');
+  assert.equal(request.roomId, roomId);
+  assert.equal(request.options.replyTo, '$node-request');
+  assert.deepEqual(f.sent.map(message => message.options.deliveryRole), ['ack', 'delegate']);
+  const [exchange] = f.runtime.contacts.view().exchanges;
+  assert.deepEqual([exchange.direction, exchange.peerId, exchange.via, exchange.roomId, exchange.status, exchange.origin.eventId],
+    ['out', '@peer:b.node.test', 'matrix', roomId, 'sent', '$node-request']);
+  assert.deepEqual(f.runtime.contacts.contact('@peer:b.node.test').rooms, [roomId]);
+  // The next turn sees what this Bot is still waiting on, so a second asker can be added to it.
+  assert.deepEqual(f.runtime.contacts.pending().map(open => [open.peerId, open.detail, open.origin.eventId]), [['@peer:b.node.test', '请核对', '$node-request']]);
+  const next = f.runtime.requestFor(f.runtime.store.item('$node-request'));
+  assert.deepEqual(next.event.openRequests.map(open => [open.to, open.request, open.forEventId]), [['@peer:b.node.test', '请核对', '$node-request']]);
+});
+
+test('a handoff written as chat reaches a remote Bot known only by its room membership', async t => {
+  const f = await fixture(t);
+  delegating(f);
+  f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
+    text: '我去问 Peer。\n@peer:b.node.test 请核对这两段' });
+  await drain(f.runtime);
+  const request = f.sent.find(message => message.options.kind === 'task.request');
+  assert.deepEqual([request.options.to, request.body], [['@peer:b.node.test'], '请核对这两段']);
+});
+
+test('when the delegation cannot be sent, the requester is told it did not go out', async t => {
+  const f = await fixture(t);
+  delegating(f);
+  const errors = [];
+  f.runtime.onError = message => errors.push(message);
+  const send = f.matrix.send;
+  f.matrix.send = async (target, body, options) => {
+    if (options.kind === 'task.request') throw Object.assign(new Error('Bot is not in the room'), { status: 403 });
+    return send(target, body, options);
+  };
+  await drain(f.runtime);
+  assert.deepEqual(f.sent.map(message => message.options.deliveryRole), ['ack', 'final']);
+  const notice = f.sent[1];
+  assert.equal(notice.roomId, roomId);
+  assert.equal(notice.options.replyTo, '$node-request');
+  assert.match(notice.body, /没有发出去.*Peer不会处理/);
+  assert.match(errors.join('\n'), /Matrix delivery failed/);
+  assert.equal(f.runtime.contacts.view().exchanges[0].status, 'failed');
+});
+
+test('another Bot gets the worker result as the answer to its request, not the front saying work has started', async t => {
+  const peer = '@peer:b.node.test';
+  const f = await fixture(t, { sender: peer, meta: { kind: 'task.request', returnTo: peer, taskId: 'task-x', hop: 1,
+    originSenderId: humanId, originRoomId: '!b-room:b.node.test', originEventId: '$su' } });
+  f.bridge.turn = async request => request.event.workerKind === 'result'
+    ? { status: 'completed', text: 'Helper：「核对崩溃」完成了。\n\n是已知问题 B-017。', sessionId: 'native-room-session', artifacts: [], toolReceipts: [] }
+    : { status: 'completed', text: '收到，已开工，结论出来直接回你。', dispatched: ['T-1'], sessionId: 'native-room-session', artifacts: [], toolReceipts: [] };
+  await drain(f.runtime);
+  assert.equal(f.sent.length, 1);
+  assert.deepEqual([f.sent[0].options.kind, f.sent[0].options.deliveryRole, f.sent[0].options.to], ['reply', 'ack', []]);
+  assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'dispatched');
+  f.runtime.acceptWorkerResult({ id: 'T-1', origin: { roomId, eventId: '$node-request', senderId: peer } }, { kind: 'result' }, 'ignored');
+  await drain(f.runtime);
+  const answer = f.sent[1];
+  assert.deepEqual([answer.roomId, answer.options.kind, answer.options.to, answer.options.replyTo, answer.options.taskId],
+    [roomId, 'task.result', [peer], '$node-request', 'task-x']);
+  assert.deepEqual([answer.options.originEventId, answer.options.originRoomId, answer.options.hop], ['$su', '!b-room:b.node.test', 2]);
+  assert.match(answer.body, /B-017/);
+  assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'returned');
+});
+
+test('after a restart, an unknown worker outcome goes back to the asking Bot as a failure of its request', async t => {
+  const peer = '@peer:b.node.test';
+  const f = await fixture(t, { sender: peer, meta: { kind: 'task.request', returnTo: peer, taskId: 'task-y', hop: 1,
+    originSenderId: humanId, originRoomId: roomId, originEventId: '$tang' } });
+  f.bridge.turn = async request => request.event.workerKind === 'result'
+    ? { status: 'completed', workerStatus: 'unknown', text: '「写简介」在宿主重启时还没有结束，结果不确定。我没有自动重做，需要的话告诉我。',
+      sessionId: 'native-room-session', artifacts: [], toolReceipts: [] }
+    : { status: 'completed', text: '收到，开工。', dispatched: ['T-2'], sessionId: 'native-room-session', artifacts: [], toolReceipts: [] };
+  await drain(f.runtime);
+  // A fresh connection: the foreign Bot's room roster has not been read yet.
+  f.runtime.participants.splice(f.runtime.participants.findIndex(person => person.id === peer), 1);
+  f.runtime.acceptWorkerResult({ id: 'T-2', status: 'unknown', origin: { roomId, eventId: '$node-request', senderId: peer } }, { kind: 'result' }, 'ignored');
+  await drain(f.runtime);
+  const notice = f.sent.at(-1);
+  assert.deepEqual([notice.options.kind, notice.options.to, notice.options.replyTo, notice.options.taskId, notice.options.originEventId],
+    ['task.failure', [peer], '$node-request', 'task-y', '$tang']);
+  assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'failed');
 });

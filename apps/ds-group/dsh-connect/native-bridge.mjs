@@ -1,13 +1,16 @@
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { mkdir } from 'node:fs/promises';
 import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
-import { prepareWorkFiles, collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-plugin/work-files.mjs';
+import { prepareWorkFiles } from '../dsh-plugin/work-files.mjs';
+import { WorkCore } from './work-core.mjs';
 import { nativeMessage, observedMemoryInput } from '../src/message-context.mjs';
 import { HANDOFF_ACK } from '../vendor/ds-bot/src/host/constants.js';
 import { isModelQuotaFailure } from '../src/model-failure.mjs';
 
+// Front tools that only read: an answer that used nothing else can be restarted.
+const READ_ONLY_FRONT_TOOLS = new Set(['recall', 'contacts', 'memory_source', 'raw_source_query', 'read_group_chat', 'read_own_chat',
+  'list_bots', 'read_image', 'web_fetch', 'task_status', 'review_memory']);
 const textOf = message => (message?.content || []).filter(block => block.type === 'text').map(block => block.text).join('');
 const terminal = record => ['completed', 'failed', 'cancelled', 'unknown'].includes(record?.status);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -24,59 +27,6 @@ async function interruptible(operation, signal) {
 }
 
 
-// Native answers may introduce their explicit delivery JSON with a sentence or
-// a Markdown fence. Only a complete trailing text/artifacts envelope opts in.
-function nativeArtifactOutput(text) {
-  const candidate = text.trim().replace(/```\s*$/, '').trim();
-  for (let start = candidate.lastIndexOf('{'); start >= 0; start = candidate.lastIndexOf('{', start - 1)) {
-    try {
-      const output = JSON.parse(candidate.slice(start));
-      if (typeof output?.text === 'string' && Array.isArray(output.artifacts)) {
-        // The prose can contain the answer (a table, instructions, findings),
-        // followed by a delivery receipt saying only "see above". Keep both.
-        const prefix = candidate.slice(0, start).replace(/```(?:json)?\s*$/i, '').trim();
-        if (prefix && prefix !== output.text.trim()) output.text = [prefix, output.text.trim()].filter(Boolean).join('\n\n');
-        return { text: JSON.stringify(output), explicitArtifacts: true };
-      }
-    } catch { /* This brace is nested or belongs to ordinary prose. */ }
-    if (start === 0) break;
-  }
-  return { text, explicitArtifacts: false };
-}
-
-function nativeLinkedArtifacts(text, cwd) {
-  const prose=text.replace(/```[\s\S]*?```/g,'').replace(/`[^`\n]*`/g,'');
-  const files=[];
-  for(const match of prose.matchAll(/\[[^\]\n]*\]\((<[^>\n]+>|[^)\n]+)\)/g)) {
-    let target=match[1].replace(/^<|>$/g,'').trim();
-    if(/^file:/i.test(target)) { try { target=fileURLToPath(target); } catch { continue; } }
-    else if(/^[a-z][a-z\d+.-]*:/i.test(target)||target.startsWith('#')||target.startsWith('//'))continue;
-    if(!path.extname(target)||!path.isAbsolute(target)&&!cwd)continue;
-    files.push({path:path.isAbsolute(target)?target:path.resolve(cwd,target)});
-  }
-  return [...new Map(files.map(file=>[file.path,file])).values()];
-}
-
-// A shell can create or verify a deliverable without using the file tools.
-// Accept only ordinary SHA-256 receipts, then verify the bytes independently.
-// No shell parsing, workspace crawl, or stale delivery history is involved.
-function nativeHashedArtifacts(text, cwd) {
-  const files=[];
-  for(const match of text.matchAll(/^\s*([a-f\d]{64})[ \t]+\*?([^\r\n]+)$/gmi)) {
-    const filename=match[2].trim();
-    if(!path.extname(filename)||filename.includes('\0')||/^[a-z][a-z\d+.-]*:\/\//i.test(filename))continue;
-    if(!path.isAbsolute(filename)&&!cwd)continue;
-    files.push({path:path.resolve(cwd||'',filename),sha256:match[1].toLowerCase()});
-  }
-  return files;
-}
-
-function namesFile(text,name) {
-  const escaped=name.replace(/[.*+?^${}()|[\]\\]/g,'\\$&');
-  return new RegExp(`(^|[^\\p{L}\\p{N}_.-])${escaped}(?![\\p{L}\\p{N}_-]|\\.[\\p{L}\\p{N}_-])`,'u')
-    .test(text.replace(/```[\s\S]*?```/g,''));
-}
-
 /** The Matrix binding and its native kernel Bot share one durable identity. */
 export class NativeBridge {
   constructor({ ctx, native, node, timeoutMs = 0 }) {
@@ -90,16 +40,28 @@ export class NativeBridge {
 
   async initialize() {
     await mkdir(this.node.directory, { recursive: true, mode: 0o700 });
-    this.state = await readOptionalJson(this.filename) || { version: 1, nativeBotId: this.node.nativeBotId, requests: {} };
+    this.state = await readOptionalJson(this.filename) || { version: 1, nativeBotId: this.node.nativeBotId, requests: {}, tasks: {} };
     if (this.state.nativeBotId !== this.node.nativeBotId) throw error('NATIVE_BINDING_CONFLICT');
     for (const record of Object.values(this.state.requests)) if (!terminal(record)) {
       record.status = 'unknown'; record.errorCode = 'HOST_RESTARTED';
     }
+    this.core = new WorkCore({ ctx: this.ctx, native: this.native, node: this.node, state: this.state, save: () => this.save() });
     await this.save();
     this.durable = new Set(Object.values(this.state.requests).filter(terminal).map(record => record.requestId));
     this.disposeEvents = this.ctx.on('session/event', (session, event) => this.event(session, event));
     this.disposeUsage = this.ctx.on('llm/stream', (options, next) => this.observeUsage(options, next));
     return this;
+  }
+
+  /** Worker results and questions go back to the front: through the Matrix node when the task came from a room. */
+  async onWorkerResult(handler) {
+    this.core.onResult = async (task, message) => {
+      const text = this.core.resultText(task, message);
+      if (task.origin?.roomId) return handler(task, message, text);
+      const bot = await this.native.bot(this.node.nativeBotId);
+      await this.core.prompt(bot.sessionId, text);
+    };
+    await this.core.flush();
   }
 
   save() {
@@ -167,7 +129,7 @@ export class NativeBridge {
         tasks: requests.map(record => ({ requestId: record.requestId, status: record.status,
           stage: record.stage || null, summary: record.summary || '', roomId: record.source?.roomId || null })),
         activity: activity || null, waiting: waiting ? Array.isArray(waiting) ? waiting.length : 1 : 0,
-        waitDetails: waiting },
+        waitDetails: waiting, ...this.core?.view() },
       memorySummary: { people: null, projects: null, pendingReview: null },
     };
   }
@@ -197,6 +159,7 @@ export class NativeBridge {
   }
 
   async event(session, event) {
+    if (await this.core.event(session, event)) return;
     const run = this.run;
     if (!run) return;
     const message = event.data?.message || event.data;
@@ -213,6 +176,7 @@ export class NativeBridge {
       if (session.id !== bot.sessionId) return;
       run.partContinuation = run.seen && run.currentTurn === run.turn;
       run.record.sessionId = session.id;
+      this.native.agent(session.id).then(agent => this.core.serveFront(agent)).catch(() => {});
     }
     if (event.type === 'turn/start') run.currentTurn = event.data.turn;
     if (event.type === 'user/message') {
@@ -222,39 +186,26 @@ export class NativeBridge {
         run.seen = true;
         run.turn = run.currentTurn;
         run.partContinuation = false;
-        if (source?.replyTo) run.exchanges.delete(source.replyTo);
+        if (source?.replyTo && run.exchanges.has(source.replyTo)) {
+          run.exchanges.delete(source.replyTo);
+          // The answer to a Bot this front asked comes back as its own message; the turn
+          // it starts still ends in the reply to the person who asked in the room.
+          // The steer ends this turn and starts the next one with the note; the request marker
+          // makes that turn this request's, so its answer and completion are the ones kept.
+          const note = `${run.marker}\nDSCord：上面是你为${run.sender}去问来的答复。这一轮的最后一条回复会发给${run.sender}，直接对${run.sender}说，不要回复那个 Bot。`;
+          Promise.resolve().then(() => this.core.prompt(session.id, note, 'steer')).catch(() => {});
+        }
       }
     }
     if (!run.seen) return;
     if (event.data?.turn !== undefined && event.data.turn !== run.turn) return;
     if (event.type === 'assistant/message') {
-      run.cwd = this.ctx.get?.('workingDirectory')?.get?.(session) || session.header?.cwd || run.cwd;
       const text = textOf(event.data?.message);
       if (text.trim() === HANDOFF_ACK || /^\[(?:PASS|HANDOFF[^\]]*)\]$/.test(text.trim())) run.text = '';
       else if (text) run.text = text;
     }
     if (event.type === 'tool/call') {
       run.record.toolReceipts.push({ callId: event.data.callId, name: event.data.name, status: 'running' });
-      if(event.data.name==='bash')run.shellCalls.set(event.data.callId,
-        event.data.meta?.cwd||this.ctx.get?.('workingDirectory')?.get?.(session)||session.header?.cwd);
-      if (['write','write_file','edit','edit_file'].includes(event.data.name)) {
-        try {
-          const args=typeof event.data.arguments==='string'?JSON.parse(event.data.arguments):event.data.arguments;
-          const filename=args?.file_path||args?.path||args?.filename;
-          const cwd=event.data.meta?.cwd||this.ctx.get?.('workingDirectory')?.get?.(session)||session.header?.cwd;
-          if(typeof filename==='string'&&(path.isAbsolute(filename)||typeof cwd==='string'))run.writeCalls.set(event.data.callId,{path:path.resolve(cwd||'',filename)});
-        } catch { /* Only an actual successful file-tool result can publish it. */ }
-      }
-      if (event.data.name === 'present') {
-        try {
-          const args = typeof event.data.arguments === 'string' ? JSON.parse(event.data.arguments) : event.data.arguments;
-          const cwd = event.data.meta?.cwd || this.ctx.get?.('workingDirectory')?.get?.(session) || session.header?.cwd;
-          const files = (args?.files || []).filter(file => typeof file.path === 'string')
-            .filter(file => path.isAbsolute(file.path) || typeof cwd === 'string')
-            .map(file => ({ path: path.isAbsolute(file.path) ? file.path : path.resolve(cwd, file.path) }));
-          run.presentCalls.set(event.data.callId, files);
-        } catch { /* Invalid arguments cannot produce a successful file receipt. */ }
-      }
       run.record.toolCalls = run.record.toolReceipts.length;
       run.record.summary = `正在使用 ${event.data.name}`;
     }
@@ -262,16 +213,6 @@ export class NativeBridge {
       const message = event.data?.message;
       const receipt = run.record.toolReceipts.find(tool => tool.callId === message?.toolCallId);
       if (receipt) receipt.status = message.isError ? 'failed' : 'completed';
-      if (!message.isError && run.writeCalls.has(message.toolCallId)) {
-        const descriptor=run.writeCalls.get(message.toolCallId);run.written.set(descriptor.path,descriptor);
-      }
-      if(!message.isError&&run.shellCalls.has(message.toolCallId)) {
-        for(const descriptor of nativeHashedArtifacts(textOf(message),run.shellCalls.get(message.toolCallId)))
-          run.hashed.set(descriptor.path,{...descriptor,callId:message.toolCallId});
-      }
-      if (receipt?.name === 'present' && !message.isError) {
-        for (const file of run.presentCalls.get(message.toolCallId) || []) run.presented.set(file.path, file);
-      }
     }
     if (event.type === 'turn/end') {
       run.reason = event.data?.reason?.kind;
@@ -279,6 +220,20 @@ export class NativeBridge {
       // An acknowledgement is not completion while a teammate still owes a
       // reply to this Bot. Native direct-to-user work has a different destination.
       if (run.reason === 'completed' && run.text && run.exchanges.size === 0 || run.reason === 'error' || run.reason === 'cancelled') run.resolve();
+      // A turn can end on a tool with no reply (script 02 G16). Nothing will finish the request, and the node's
+      // queue waits behind it: ask once for the reply, and a second empty ending finishes it without one.
+      else if (run.reason === 'completed' && !run.text && run.exchanges.size === 0) {
+        if (run.nudged) run.resolve();
+        else {
+          run.nudged = true;
+          const ended = run.turn;
+          setTimeout(() => {
+            if (this.run !== run || terminal(run.record) || run.currentTurn !== ended || run.text) return;
+            const note = `${run.marker}\nDSCord：这一轮结束时没有回复文字，${run.sender}什么也没收到。现在写出要发给${run.sender}的回复；要问对方，就把问题直接写在回复里。`;
+            this.core.prompt(run.record.sessionId, note).catch(() => run.resolve());
+          }, 1000).unref?.();
+        }
+      }
     }
   }
 
@@ -312,10 +267,28 @@ export class NativeBridge {
     const record = { requestId: input.requestId, botId: input.botId, inputHash: hash, status: 'queued',
       stage: 'queued', summary: '等待原生 Bot', artifacts: [], calls: [], toolReceipts: [], mode: 'native' };
     this.state.requests[input.requestId] = record;
+    const task = input.event.workerKind === 'result' && this.state.tasks[input.event.workerTask];
+    if (task) return this.deliverResult(record, task);
     const pending = this.queue(record, input, options);
     this.pending.set(input.requestId, pending);
     try { return await pending; }
     finally { this.pending.delete(input.requestId); }
+  }
+
+  /** A worker result goes out as it is, without a front turn: it never waits behind conversation and is never retold. */
+  async deliverResult(record, task) {
+    Object.assign(record, { status: 'completed', stage: 'completed', summary: '工作者结果已交付', mode: 'worker-result', workerStatus: task.status,
+      text: this.core.resultText(task, { kind: 'result' }), artifacts: task.status === 'done' ? task.artifacts || [] : [],
+      startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() });
+    await this.core.delivered(task);
+    this.durable.add(record.requestId);
+    return structuredClone(record);
+  }
+
+  /** The Bot's own Session is the front for every turn, including Bot-to-Bot requests that never pass through a room. */
+  async serveFront() {
+    const bot = await this.native.bot(this.node.nativeBotId);
+    await this.core.serveFront(await this.native.agent(bot.sessionId));
   }
 
   async queue(record, input, options) {
@@ -369,15 +342,31 @@ export class NativeBridge {
       await report(); check();
       const bot = await interruptible(() => this.native.bot(this.node.nativeBotId), signal);
       const agent = await interruptible(() => this.native.agent(bot.sessionId), signal);
+      await this.core.serveFront(agent);
       await interruptible(() => Promise.race([agent.whenIdle(), new Promise((_, reject) => { this.waiting = { record, reject }; })]), signal);
       this.waiting = null;
       check();
       const files = await prepareWorkFiles({ dataDir: this.node.directory, requestId: input.requestId, workdir: input.workdir, files: input.files });
       check();
+      const workerTask = input.event.workerTask && this.state.tasks[input.event.workerTask];
+      // Another Bot's result to this Bot's own request belongs to the message that started the request:
+      // work dispatched from it answers that message, not the peer's result.
+      const event = input.event;
+      const answer = ['task.result', 'task.failure'].includes(event.kind) && event.senderKind === 'bot' && event.originEventId;
+      this.core.origin = workerTask?.origin || { requestId: input.requestId,
+        ...(answer
+          ? { roomId: event.originRoomId || event.roomId, eventId: event.originEventId, senderId: event.originSenderId,
+            ...(event.originThreadRootId ? { threadRootId: event.originThreadRootId } : {}),
+            body: `（${event.senderName || event.senderId} 交回的结果）${event.body}` }
+          : { roomId: event.roomId, eventId: event.eventId, ...(event.threadRootId ? { threadRootId: event.threadRootId } : {}),
+            senderId: event.senderId, senderName: event.senderName,
+            body: [...(event.mergedMessages || []).map(message => message.body), event.body].join('\n') }),
+        files: files.files.map(file => file.path) };
       let resolve;
       const done = new Promise(done => { resolve = done; });
       const marker = `DSCORD_REQUEST=${input.requestId}`;
-      const run = this.run = { marker, resolve, record, text: '', exchanges: new Set(), presentCalls: new Map(), presented: new Map(), writeCalls: new Map(), written: new Map(), shellCalls: new Map(), hashed: new Map() };
+      const run = this.run = { marker, resolve, record, text: '', exchanges: new Set(),
+        sender: input.event.senderName || input.event.senderId };
       Object.assign(record, { status: 'running', stage: 'working', sessionId: bot.sessionId, model: bot.model,
         contextKey: input.context?.key, source: input.context?.source,
         summary: '原生 Bot 正在处理', startedAt: new Date().toISOString() });
@@ -386,17 +375,19 @@ export class NativeBridge {
       if (this.timeoutMs > 0) timer = setTimeout(() => { run.error = 'NATIVE_TASK_TIMEOUT'; resolve(); }, this.timeoutMs);
       abort = () => { run.error = interruption(signal).code; resolve(); };
       signal?.addEventListener('abort', abort, { once: true });
-      await interruptible(() => this.native.call('observe', { botId: bot.id, inputs: [input] }), signal);
+      if (!workerTask) await interruptible(() => this.native.call('observe', { botId: bot.id, inputs: [input] }), signal);
       const memoryView = await interruptible(() => this.native.call('attention-view', { botId: bot.id,
         options: { sessionId: bot.sessionId, roomId: input.event.roomId,
           context: { roomId: input.event.roomId, authorId: input.event.senderId },
           eventIds: [input.event.eventId], query: input.event.body, budgetChars: 8000 } }), signal);
       check();
-      const text = nativeMessage({ input: { ...input, memoryView }, bot, files });
+      const workResults = this.core.takeNotes();
+      const text = nativeMessage({ input: { ...input, memoryView, workResults }, bot, files });
       await this.native.call('send', { sessionId: bot.id, requestId: input.requestId, text,
         source: input.context?.source || { sender: { id: input.event.senderId,
           name: input.event.senderName || input.event.senderId, kind: input.event.senderKind || 'human' },
-          roomId: input.event.roomId, eventId: input.event.eventId }, memoryContext: input });
+          roomId: input.event.roomId, eventId: input.event.eventId }, memoryContext: input })
+        .catch(cause => { this.state.frontNotes.unshift(...workResults); throw cause; });
       run.sent = true;
       if (record.cancelRequested) run.cancelling ??= this.cancelNative(run);
       await run.cancelling;
@@ -408,55 +399,13 @@ export class NativeBridge {
         if (run.failure) record.nativeFailure = { code: run.failure.code, message: String(run.failure.message||'').slice(0,4096) };
         throw error(isModelQuotaFailure(run.failure) ? 'MODEL_QUOTA_EXCEEDED' : 'NATIVE_TURN_FAILED');
       }
-      const delivery = nativeArtifactOutput(run.text), deliveryOutput = delivery.text;
-      record.text = deliveryOutput;
-      const artifacts = await collectArtifacts(deliveryOutput, files.workdir, { allowExternalPaths: true });
-      const paths = new Set(artifacts.map(file => file.path));
-      // Native present is the Bot's ordinary file delivery tool. Successful
-      // receipts are deliveries even when the final answer is plain Markdown.
-      for (const descriptor of run.presented.values()) {
-        const [file] = await collectArtifacts(JSON.stringify({ text: 'Native file delivery', artifacts: [descriptor] }), files.workdir, { allowExternalPaths: true });
-        if (paths.has(file.path)) continue;
-        if (artifacts.length >= MAX_ARTIFACTS) throw error('TOO_MANY_ARTIFACTS');
-        paths.add(file.path); artifacts.push(file);
-      }
-      if (!delivery.explicitArtifacts) for (const descriptor of nativeLinkedArtifacts(run.text,run.cwd||files.workdir)) {
-        const [file]=await collectArtifacts(JSON.stringify({text:'Linked native file',artifacts:[descriptor]}),files.workdir,{allowExternalPaths:true});
-        if(paths.has(file.path))continue;
-        if(artifacts.length>=MAX_ARTIFACTS)throw error('TOO_MANY_ARTIFACTS');
-        paths.add(file.path);artifacts.push(file);record.artifactDelivery='native-file-link';
-      }
-      if (!artifacts.length && !delivery.explicitArtifacts) {
-        const staged = await collectStagedArtifacts(files.workdir);
-        if (staged.length) { artifacts.push(...staged); record.artifactDelivery = 'staged-output'; }
-      }
-      if (!artifacts.length && !delivery.explicitArtifacts) {
-        const mentioned=[...run.written.values()].filter(file=>run.text.includes(path.basename(file.path)));
-        if(mentioned.length){artifacts.push(...await collectArtifacts(JSON.stringify({text:'Mentioned file-tool outputs',artifacts:mentioned}),files.workdir,{allowExternalPaths:true}));record.artifactDelivery='mentioned-tool-output';}
-      }
-      if(!delivery.explicitArtifacts) {
-        const candidates=new Map();
-        for(const descriptor of run.hashed.values()) {
-          const name=path.basename(descriptor.path);
-          if(!namesFile(input.event.body||'',name)||!namesFile(run.text,name)||artifacts.some(file=>file.name===name))continue;
-          let file;
-          try { [file]=await collectArtifacts(JSON.stringify({text:'Verified shell output',artifacts:[{path:descriptor.path}]}),files.workdir,{allowExternalPaths:true}); }
-          catch(cause) { if(['WORK_FILE_NOT_FOUND','WORK_FILE_NOT_REGULAR'].includes(cause.code))continue;throw cause; }
-          if(file.sha256!==descriptor.sha256)continue;
-          const group=candidates.get(name)||[];group.push({file,callId:descriptor.callId});candidates.set(name,group);
-        }
-        for(const group of candidates.values()) {
-          // Two different byte versions with the same requested name are
-          // ambiguous. Identical copies need only one actual attachment.
-          if(new Set(group.map(({file})=>file.sha256)).size!==1)continue;
-          const {file,callId}=group.at(-1);
-          if(artifacts.some(existing=>existing.path===file.path))continue;
-          if(artifacts.length>=MAX_ARTIFACTS)throw error('TOO_MANY_ARTIFACTS');
-          artifacts.push(file);record.artifactDelivery='verified-tool-output';
-          (record.verifiedArtifactReceipts||=[]).push({name:file.name,sha256:file.sha256,callId});
-        }
-      }
-      record.artifacts = artifacts;
+      record.text = run.text;
+      // Work this turn handed to workers: the reply only acknowledges it, the result follows later.
+      // Work started or joined for this message: its result comes later, so this turn's reply is an acknowledgement.
+      record.dispatched = Object.values(this.state.tasks).filter(task => !task.joined && [task.origin, ...(task.followers || [])]
+        .some(origin => origin?.requestId === input.requestId)).map(task => task.id);
+      // The front writes no files; worker results carry theirs without a front turn.
+      record.artifacts = [];
       record.status = 'completed'; record.stage = 'completed'; record.summary = '处理完成';
       record.usage = { accounting: 'native-ds-bot', complete: false, observedCalls: record.calls.length };
     } catch (cause) {
@@ -467,11 +416,26 @@ export class NativeBridge {
       signal?.removeEventListener('abort', abort);
       this.run = null;
       this.waiting = null;
+      if (this.core.origin) this.core.lastOrigin = { origin: this.core.origin, at: Date.now() };
+      this.core.origin = null;
       record.finishedAt = new Date().toISOString();
       await this.save();
       this.durable.add(record.requestId);
     }
     return structuredClone(record);
+  }
+
+  /** A front answer that has used only reading tools can be stopped and given again with a follow-up. */
+  joinable(requestId) {
+    const record = this.state.requests[requestId];
+    return Boolean(record && !terminal(record) && !record.cancelRequested
+      && (record.toolReceipts || []).every(receipt => READ_ONLY_FRONT_TOOLS.has(receipt.name)));
+  }
+
+  async interrupt(requestId) {
+    if (!this.joinable(requestId)) return false;
+    await this.cancel(requestId);
+    return true;
   }
 
   async cancel(requestId) {
@@ -511,7 +475,7 @@ export class NativeBridge {
     this.waiting?.reject(error('CONNECTION_DETACHED'));
     // Disconnect never cancels or stops the underlying native Bot.
     if (this.run) { this.run.error = 'CONNECTION_DETACHED'; this.run.resolve(); }
-    this.disposeEvents?.(); this.disposeUsage?.();
+    this.disposeEvents?.(); this.disposeUsage?.(); this.core?.dispose();
     await Promise.allSettled([...this.pending.values()]);
     await this.writes;
   }

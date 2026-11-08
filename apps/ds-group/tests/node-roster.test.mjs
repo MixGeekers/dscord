@@ -56,7 +56,10 @@ test('new humans and Bots are known before sync persists their delivery identity
   assert.equal(f.calls[0].event.senderKind, 'human');
   assert.equal(f.calls[0].event.senderName, newcomer.name);
   assert.equal(f.calls[0].event.botIdentity.role, '通用助手');
-  assert.deepEqual(f.calls[0].event.availableBots, [{ id: peer.id, name: peer.name, role: '通用助手' }]);
+  // Registered on the server is not the same as known: a Bot this one never shared a room with is not in its book.
+  assert.deepEqual(f.calls[0].event.contacts, []);
+  f.node.contacts.seeRoom(roomId, [alice, bot, peer]);
+  assert.deepEqual(f.node.contacts.reachableBots(), [{ id: peer.id, name: peer.name, reach: 'room', rooms: [roomId] }]);
 });
 
 test('a failed or incomplete roster leaves unknown messages and the sync cursor unconsumed', async t => {

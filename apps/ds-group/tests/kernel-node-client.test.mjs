@@ -87,7 +87,7 @@ test('a stalled native memory read stops with its management lease and ignores i
   finish({ kind: 'person', items: [], more: false });
   await Promise.resolve();
   assert.equal(client.pendingResults.size, 0);
-  assert.deepEqual(await client.applyAttention({ mode: 'natural', revision: 1 }), { mode: 'natural', revision: 1 });
+  assert.deepEqual(await client.applyAttention({ mode: 'natural', revision: 1 }), { mode: 'natural', rooms: {}, revision: 1 });
 });
 
 test('disconnect does not wait for a stalled native memory operation or publish its late response', async t => {

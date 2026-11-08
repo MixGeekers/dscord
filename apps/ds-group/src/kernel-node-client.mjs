@@ -1,4 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
+import { ATTENTION_MODES, normalizeRoomModes, sameAttention } from './attention.mjs';
 
 /** The node initiates management requests so it can run behind a private network. */
 export class KernelNodeClient {
@@ -32,8 +33,7 @@ export class KernelNodeClient {
 
   async applyAttention(desired) {
     if (!desired) return null;
-    if (!['mention', 'shadow', 'natural'].includes(desired.mode)
-      || !Number.isInteger(desired.revision) || desired.revision < 1) {
+    if (!ATTENTION_MODES.includes(desired.mode) || !Number.isInteger(desired.revision) || desired.revision < 1) {
       throw Object.assign(new Error('Invalid participation setting'), { code: 'INVALID_ATTENTION_SETTING' });
     }
     const previous = this.appliedAttention;
@@ -41,7 +41,7 @@ export class KernelNodeClient {
       throw Object.assign(new Error('The participation setting was superseded'), { code: 'ATTENTION_REVISION_CONFLICT' });
     }
     if (previous?.revision === desired.revision) {
-      if (previous.mode !== desired.mode) {
+      if (!sameAttention(previous, desired)) {
         throw Object.assign(new Error('The participation revision contains different settings'), { code: 'ATTENTION_REVISION_CONFLICT' });
       }
       return previous;
@@ -49,11 +49,12 @@ export class KernelNodeClient {
     if (!this.operations.configureAttention) {
       throw Object.assign(new Error('This node cannot configure participation'), { code: 'KERNEL_CONTROL_UNAVAILABLE' });
     }
-    const state = await this.operations.configureAttention({ mode: desired.mode, revision: desired.revision });
-    if (state?.mode !== desired.mode || state?.revision !== desired.revision) {
+    const rooms = normalizeRoomModes(desired.rooms);
+    const state = await this.operations.configureAttention({ mode: desired.mode, rooms, revision: desired.revision });
+    if (!sameAttention(state, { mode: desired.mode, rooms }) || state?.revision !== desired.revision) {
       throw Object.assign(new Error('The participation setting has not been applied'), { code: 'ATTENTION_NOT_APPLIED' });
     }
-    this.appliedAttention = { mode: desired.mode, revision: desired.revision };
+    this.appliedAttention = { mode: desired.mode, rooms, revision: desired.revision };
     return this.appliedAttention;
   }
 
@@ -73,6 +74,7 @@ export class KernelNodeClient {
         const operation = {
           'memory-profiles': this.operations.memoryProfiles,
           'memory-profile': this.operations.memoryProfile,
+          contacts: this.operations.contacts,
         }[command.operation];
         if (!operation) throw Object.assign(new Error('Unsupported kernel operation'), { code: 'KERNEL_CONTROL_UNAVAILABLE' });
         result = await this.readOperation(operation, command.args || {}, command.expiresAt);

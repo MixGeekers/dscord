@@ -344,7 +344,8 @@ export class NodeStore {
           .run(event.event_id, event.room_id, Number(result.lastInsertRowid), JSON.stringify(event));
         accepted++;
         const targets = event.content['org.ds_group']?.to;
-        const evidence = event.sender === this.botId ? undefined : route?.(event)
+        const own = event.sender === this.botId && !event.content['org.ds_group']?.workerTask;
+        const evidence = own ? undefined : route?.(event)
           || (Array.isArray(targets) && targets.includes(this.botId) ? { kind: 'reliable', reason: 'targeted' } : undefined);
         const relation = event.content['m.relates_to'];
         const thread = relation?.rel_type === 'm.thread' && typeof relation.event_id === 'string' ? relation.event_id : '';
@@ -352,7 +353,7 @@ export class NodeStore {
         this.db.prepare("UPDATE attention_events SET available_at=?,reason='new_message' WHERE status='waiting' AND thread_key=? AND event_id IN (SELECT event_id FROM messages WHERE room_id=?)")
           .run(now, thread, event.room_id);
         this.db.prepare('INSERT INTO attention_events(event_id,thread_key,status,received_at,available_at) VALUES (?,?,?,?,?)')
-          .run(event.event_id, thread, event.sender === this.botId ? 'self' : evidence ? 'routed' : 'queued', now, now);
+          .run(event.event_id, thread, own ? 'self' : evidence ? 'routed' : 'queued', now, now);
         if (evidence) {
           this.db.prepare("INSERT INTO inbox(event_id,status,attention_json) VALUES (?, 'queued', ?)")
             .run(event.event_id, JSON.stringify(evidence));
@@ -373,6 +374,35 @@ export class NodeStore {
       AND COALESCE(json_extract(attention_json,'$.notBefore'),0)<=?
       ORDER BY CASE WHEN json_extract(attention_json,'$.kind')='natural' THEN 1 ELSE 0 END,messages.sequence LIMIT 1`).get(Date.now());
     return row ? { ...row, event: JSON.parse(row.event_json), attention: row.attention_json ? JSON.parse(row.attention_json) : null } : undefined;
+  }
+
+  /** Queued messages that directly follow this one in its room from the same sender, before anyone else speaks. */
+  burstAfter(eventId, limit = 8) {
+    const first = this.db.prepare('SELECT sequence,room_id,sender_id FROM messages WHERE event_id=?').get(eventId);
+    if (!first) return [];
+    const rows = this.db.prepare(`SELECT messages.event_id,messages.sender_id,messages.event_json,inbox.status,inbox.attention_json
+      FROM messages LEFT JOIN inbox USING(event_id) WHERE messages.room_id=? AND messages.sequence>? ORDER BY messages.sequence LIMIT ?`)
+      .all(first.room_id, first.sequence, limit);
+    const burst = [];
+    for (const row of rows) {
+      if (row.sender_id !== first.sender_id || row.status !== 'queued' || JSON.parse(row.attention_json || '{}').kind === 'natural') break;
+      burst.push({ event_id: row.event_id, event: JSON.parse(row.event_json), attention: row.attention_json ? JSON.parse(row.attention_json) : null });
+    }
+    return burst;
+  }
+
+  /** Earlier messages of a burst are answered by the turn of its last message. */
+  merge(eventIds, intoEventId) {
+    const update = this.db.prepare("UPDATE inbox SET status='merged',error=? WHERE event_id=? AND status='queued'");
+    this.transaction(() => { for (const eventId of eventIds) update.run(`Merged into ${intoEventId}`, eventId); });
+  }
+
+  /** An interrupted answer and the messages merged into it wait again, to be answered with the follow-up. */
+  requeue(eventId) {
+    this.transaction(() => {
+      this.db.prepare("UPDATE inbox SET status='queued',request_json=NULL,response_json=NULL,error=NULL,session_id=NULL WHERE event_id=? AND status='running'").run(eventId);
+      this.db.prepare("UPDATE inbox SET status='queued',error=NULL WHERE status='merged' AND error=?").run(`Merged into ${eventId}`);
+    });
   }
 
   item(eventId) {
@@ -936,5 +966,5 @@ export class NodeStore {
       lastError: failure?.error ?? null, counts, cursor: this.cursor() ?? null };
   }
 
-  close() { this.db.close(); }
+  close() { if (this.db.isOpen) this.db.close(); }
 }

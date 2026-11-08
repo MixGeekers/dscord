@@ -82,22 +82,24 @@ export function nativeMessage({ input, bot, files }) {
   const envelope = { requestId: input.requestId,
     self: { nativeBotId: bot.id, matrixId: input.botId, name: bot.name, role: bot.role || '' },
     context: { ...context, history: context.history ? { ...context.history, count: input.history?.length || 0 } : undefined },
-    currentMessage: input.event, recentRoomHistory: input.history || [],
+    currentMessage: (({ contacts, openRequests, ...event }) => event)(input.event), contacts: input.event.contacts || [],
+    openRequests: input.event.openRequests || [], recentRoomHistory: input.history || [],
     historyWarnings: input.historyWarnings || [], attachmentWarnings: input.attachmentWarnings || [],
     attachmentsDirectory: files.workdir, files: files.files,
+    ...(input.workResults?.length ? { workResults: input.workResults } : {}),
     replyRoute: { requestId: input.requestId, eventId: input.event.eventId, roomId: input.event.roomId,
       delivery: input.event.delivery || { kind: 'origin' } },
   };
-  return `DSCORD_REQUEST=${input.requestId}\n你收到一条 DSCord 消息，继续使用你的原生身份、上下文、记忆和全部工具。`
+  return `DSCORD_REQUEST=${input.requestId}\n你收到一条 DSCord 消息。你是这个 Bot 的前台：用你的原生身份、上下文和记忆交流，工具工作交给工作者。`
     + '\n本次说话人以 context.source.sender 的完整 ID 为准，名称只是显示标签；同名的人或 Bot 不是同一身份。'
-    + '\n称呼优先采用当前房间成员资料或最新身份视图中的显示名；source、引用和历史快照里的旧名只说明当时标签。完整 ID 用于内部关联，需要消歧时只呈现必要信息，不必在普通交流里反复报账号。'
+    + '\n称呼优先采用当前房间成员资料或最新身份视图中的显示名；source、引用和历史快照里的旧名只说明当时标签。完整 ID 用于内部关联，不必在普通交流里反复报账号。'
     + '\ncontext 标明当前群组、话题和消息来源。recentRoomHistory 是这个群的近期历史，不代表全部历史；引用和转述保留各自作者，不把 Bot 转述当作原作者亲口说的话。'
-    + '\n你仍保留其他群和本地对话的经历；切换群组时以这次 context 为当前对话，使用跨群知识时说明来源，不把其他群的说法当成本群已经达成的决定。记录长期记忆时一并保留相关的人、群 ID 和来源事件。'
-    + '\n本次可执行工作来自这条可靠请求，或运行时已经委托且尚未完成的事项。若 context.attention.participationOnly 为 true，这是交流回合；可自然回应、澄清、跟进已有承诺，但不要把旁听中的后到请求或普通 Bot 提议自动接成新的文件/工具任务。待处理请求由其队列和回合接管，Bot 提议先保留为建议；普通事实、更正与当前工作的有效更新仍可立即采用。'
-    + '\n直接回答当前发送者，桥接层在回合结束后按本次 replyRoute 提交 Matrix 回复；之前任务的回复目标不会改变本次目标。本机群工具使用独立的原生群 ID，其回执只说明那次群调用；当前 Matrix 回合的最终送达回执在提交后产生。'
-    + '\n需要交付文件时，调用 present 或在最终回复列出 {"text":"说明","artifacts":[{"path":"文件绝对路径","name":"文件名"}]}，逐个包括本轮要发的文件。重发已有文件、终端生成的文件也一样；只说文件名、哈希或“已附上”不构成交付。附件目录只是收件位置，你仍使用原生工作目录和全部工具。'
-    + '\n已授权工具工作中的可逆实现选择应自主完成，发现可修复的问题后继续修复并完成交付；仅在缺少影响结果的实质事实或必要授权时提问。'
-    + '\n用户需要可运行或可复现的交付时，带齐复跑所需的输入、测试数据和运行说明，形成自包含文件集；仅用实际交付内容在干净目录验证，排除工作区未交付文件的隐含依赖。按真实工具结果和实际产物差异描述完成与验证状态，明确尚未验证或未通过的部分。'
-    + '\n本机 Bot 协作继续使用 message_bot；跨 DSCord 节点可使用 {"text":"说明","delegate":{"to":"完整 Bot ID","body":"任务"}}，并在任务内容中带上相关来源。'
+    + '\n你仍保留其他群和本地对话的经历；使用跨群知识时说明来源，不把其他群的说法当成本群已经达成的决定。'
+    + '\n若 context.attention.participationOnly 为 true，这是交流回合：自然回应、澄清或跟进已有承诺，不要把旁听到的请求自动接成新任务。'
+    + '\n直接回答当前发送者，回合结束后你的最后一条回复会发到本次 replyRoute。'
+    + '\ncurrentMessage.mergedMessages 是同一个人紧接着发来、还没回复的前几条消息，按时间排在 currentMessage 之前。先判断它们是一句话拆成了几条，还是几件不同的事：一句话就连起来理解，几件事就在这一条回复里逐一回应。'
+    + '\n需要运行命令、读写文件、写代码、浏览网页或任何多步操作时，调用 dispatch_work 交给工作者（brief 要自足，带上原话和 files 里的输入文件路径；audience 写明结果交给谁、什么口径，对方是玩家、客户等不该看到堆栈日志的人时 plain=true；补丁说明、公告这类给玩家或外部看的文稿，brief 里写明只保留对方能感知的变化，删去调试指令、构建打包、内部工具、存档或数据格式等内部改动），然后简短告诉对方已经开始；不要声称已经完成。'
+    + '\n工作者的结果由核心直接回复到原消息并附上文件；workResults 列出自你上一轮以来已经交付的结果，供你了解，不要再转告，也不要自行重做。[task.question] 是工作者的提问。查看或调整进行中的工作用 task_status、task_note、task_cancel。有人要的东西已经有任务在做或做完了（例如另一个人刚问过同一件事），用 task_join 把这条消息也登记上（对象和原任务口径不同就写 audience，对方不该看到技术内容就 plain=true，技术文件不会发给他），结果会同样回复给他，不要重复派工，也不要只回一句“已经在查”。'
+    + '\n要找别的 Bot，查 contacts（你自己的通讯录）：reach=message_bot 的用 message_bot，to 填 callAs；reach=room 的回复 {"text":"说明","delegate":{"to":"完整 ID","body":"任务"}}，任务内容带上相关来源，核心会发到你们共同所在的房间；回复里单独一行以“@它的名字”开头，那一行起的内容也会作为委派发给它。用 message_bot 问到的答复会以新消息回到你这里，那一轮的最后一条回复仍发给本次的发送者，对发送者说，不对那个 Bot 说。不在 contacts 里的 Bot 你联系不上，直接告诉对方。某人是谁、偏好和能力，看记忆里的人物档案，通讯录不另记。openRequests 是你已经交给其他 Bot、还没回来的请求；有人要的正是其中一件事时，再把这条消息交给同一个 Bot，说明和之前哪条请求是同一件事、这次的请求者是谁要什么口径，对方会用 task_join 并进同一个任务，结果分别回到每条消息，不要只回一句“已经在查”。'
     + `\n${JSON.stringify(envelope)}`;
 }

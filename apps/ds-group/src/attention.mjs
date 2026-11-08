@@ -3,7 +3,8 @@ import { messageSource, threadOf } from './message-context.mjs';
 import { parseDeliveryDirective } from './delivery-policy.mjs';
 import { eventAttachments } from './node-files.mjs';
 
-export const ATTENTION_DEFAULTS = Object.freeze({ mode: 'mention', batchMs: 350, maxAgeMs: 30_000,
+export const ATTENTION_MODES = ['mention', 'shadow', 'natural'];
+export const ATTENTION_DEFAULTS = Object.freeze({ mode: 'mention', rooms: Object.freeze({}), batchMs: 350, maxAgeMs: 30_000,
   waitMs: 4000, waitTtlMs: 30_000, cooldownMs: 1500, coordinationMs: 600,
   maxBotTurns: 2, historyLimit: 40, providerTimeoutMs: 5000 });
 const ranges = { batchMs: [0, 5000], maxAgeMs: [1000, 300_000], waitMs: [100, 60_000],
@@ -12,13 +13,26 @@ const ranges = { batchMs: [0, 5000], maxAgeMs: [1000, 300_000], waitMs: [100, 60
 export function normalizeAttentionConfig(patch = {}, current = ATTENTION_DEFAULTS) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)
     || Object.keys(patch).some(key => !Object.hasOwn(ATTENTION_DEFAULTS, key))) throw new TypeError('Invalid attention configuration');
-  const result = { ...current, ...patch };
-  if (!['mention', 'shadow', 'natural'].includes(result.mode)) throw new RangeError('Invalid attention mode');
+  const result = { ...current, ...patch, rooms: normalizeRoomModes(patch.rooms ?? current.rooms) };
+  if (!ATTENTION_MODES.includes(result.mode)) throw new RangeError('Invalid attention mode');
   for (const [key, [min, max]] of Object.entries(ranges)) {
     if (!Number.isSafeInteger(result[key]) || result[key] < min || result[key] > max) throw new RangeError(`${key} must be between ${min} and ${max}`);
   }
   return result;
 }
+
+/** Per-room participation overrides: { roomId: mode }. A room without one follows the Bot's mode. */
+export function normalizeRoomModes(rooms = {}) {
+  if (!rooms || typeof rooms !== 'object' || Array.isArray(rooms)) throw new TypeError('Invalid room participation');
+  const entries = Object.entries(rooms);
+  if (entries.length > 200 || entries.some(([roomId, mode]) => !roomId || roomId.length > 255 || !ATTENTION_MODES.includes(mode))) {
+    throw new RangeError('Invalid room participation');
+  }
+  return Object.fromEntries(entries.sort(([a], [b]) => a.localeCompare(b)));
+}
+export const attentionModeFor = (config, roomId) => config.rooms?.[roomId] || config.mode;
+export const attentionListens = config => config.mode !== 'mention' || Object.values(config.rooms || {}).some(mode => mode !== 'mention');
+export const sameAttention = (a, b) => a?.mode === b?.mode && JSON.stringify(normalizeRoomModes(a?.rooms)) === JSON.stringify(normalizeRoomModes(b?.rooms));
 
 export const attentionThread = event => threadOf(event) || '';
 const metadata = event => event.content?.['org.ds_group'] || {};
@@ -44,8 +58,10 @@ export function reliableAttentionRoute(event, { botId, store, participants = [] 
   const isHuman = participants.some(person => person.id === event.sender && person.kind === 'human');
   const isBot = participants.some(person => person.id === event.sender && person.kind === 'bot');
   const targeted = Array.isArray(meta.to) && meta.to.includes(botId);
-  const replyNotification = isBot && meta.kind === 'reply' && meta.mentions?.replyUserId === botId
-    && !meta.mentions.users?.includes(botId);
+  // Quoting this Bot's message notifies it, but does not address it when the reply came
+  // from a Bot or named someone else.
+  const replyNotification = meta.mentions?.replyUserId === botId && !meta.mentions.users?.includes(botId)
+    && (isBot && meta.kind === 'reply' || Boolean(meta.mentions.users?.length || meta.mentions.roles?.length || meta.to?.length));
   const mentioned = !replyNotification && event.content?.['m.mentions']?.user_ids?.includes(botId);
   // An explicit recipient for another member wins over an incidental reply quote.
   if (!targeted && !mentioned && (meta.to?.length || event.content?.['m.mentions']?.user_ids?.length)) return undefined;

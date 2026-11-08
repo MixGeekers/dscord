@@ -161,7 +161,10 @@ export class ChatFeatures {
       ...mentions.hereUsers, ...(replyUserId ? [replyUserId] : [])]).filter(id => id !== userId);
     const legacyTargets = input.to || [];
     if (!Array.isArray(legacyTargets) || legacyTargets.some(id => !joined.includes(id) || !this.person(id))) throw failure(400, 'Unknown recipient');
-    const explicitBots = [...mentions.users, ...(replyUserId ? [replyUserId] : [])].filter(id => this.person(id)?.kind === 'bot');
+    // A reply addresses the replied sender only when nobody is named, in the body or in `to`:
+    // "@宣发 …" replying to the planner's message is for 宣发, and the planner is only quoted.
+    const named = mentions.users.length || mentions.roles.length || legacyTargets.length;
+    const explicitBots = [...mentions.users, ...(replyUserId && !named ? [replyUserId] : [])].filter(id => this.person(id)?.kind === 'bot');
     const directBots = directIds.includes(userId) ? directIds.filter(id => id !== userId && this.person(id)?.kind === 'bot' && joined.includes(id)) : [];
     return { body, to: unique([...legacyTargets, ...explicitBots, ...directBots]).filter(id => id !== userId), mentions,
       mMentions: { user_ids: notificationUsers, ...(parsed.everyone ? { room: true } : {}) }, replyMention: input.replyMention !== false };

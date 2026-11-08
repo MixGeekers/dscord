@@ -9,6 +9,7 @@ import { MatrixClient } from '../src/matrix-client.mjs';
 import { readOptionalJson } from '../scripts/server-init.mjs';
 import { savePrivateJson } from '../scripts/server-init.mjs';
 import { NativeBridge } from './native-bridge.mjs';
+import { localBot } from './work-core.mjs';
 import { DecisionSettings } from './decision-settings.mjs';
 import { KernelNodeClient } from '../src/kernel-node-client.mjs';
 
@@ -69,11 +70,11 @@ export class NativeConnections {
       store = new NodeStore(path.join(directory, 'node.sqlite'), node.id);
       const savedAttention = await readOptionalJson(path.join(node.directory, 'attention.json'));
       const botNode = new BotNode({ participant, participants: setup.participants, roomId: setup.roomId, matrix, store, bridge, work,
-        executionMode: 'native', attention: savedAttention || node.attention || { mode: 'mention' },
+        executionMode: 'native', localBots: localBot, attention: savedAttention || node.attention || { mode: 'mention' },
         decisionProvider: this.decisionSettings?.provider,
         observe: input => this.observe(entry, input),
         readAttentionView: input => bridge.readAttentionView(input),
-        files: new NodeFiles({ coreUrl: node.serverUrl, accessToken: participant.accessToken, directory: path.join(directory, 'tasks'), work, matrix }),
+        files: new NodeFiles({ coreUrl: node.serverUrl, accessToken: participant.accessToken, directory: path.join(directory, 'tasks') }),
         tasks: createTaskClient(node.serverUrl, config.nodeSecret),
         delivery: createDeliveryClient(node.serverUrl, participant.accessToken),
         roster: createRosterClient(node.serverUrl, participant.accessToken),
@@ -90,7 +91,10 @@ export class NativeConnections {
         },
       });
       Object.assign(entry, { bridge, botNode });
+      bridge.core.contacts = botNode.contacts;
       await botNode.start();
+      await bridge.serveFront();
+      await bridge.onWorkerResult((task, message, text) => botNode.acceptWorkerResult(task, message, text));
       if (this.enableKernelControl) {
         entry.control = new KernelNodeClient({ coreUrl: node.serverUrl, nodeSecret: config.nodeSecret,
           botId: node.id, nodeId: participant.localpart, runtimeId: botNode.runtimeId,
@@ -98,16 +102,16 @@ export class NativeConnections {
             configureAttention: setting => this.applyAttention(entry, setting),
             memoryProfiles: options => bridge.memoryProfiles(options),
             memoryProfile: options => bridge.memoryProfile(options),
+            contacts: options => botNode.contacts.view(options),
           }, onError: code => { entry.controlError = code; } });
         entry.control.start();
       }
       this.connections.set(node.id, entry);
     } catch (error) {
-      await entry.control?.stop();
-      await entry.botNode?.stop();
-      await bridge?.detach();
-      store?.close();
-      await release();
+      // Each cleanup step runs, and none of them replaces the original failure.
+      for (const cleanup of [() => entry.control?.stop(), () => entry.botNode?.stop(), () => bridge?.detach(), () => store?.close(), release]) {
+        await Promise.resolve().then(cleanup).catch(() => {});
+      }
       throw error;
     }
   }
@@ -132,7 +136,7 @@ export class NativeConnections {
 
   async applyAttention(entry, setting) {
     const state = entry.botNode.configureAttention(setting);
-    await savePrivateJson(path.join(entry.node.directory, 'attention.json'), { mode: state.mode, revision: state.revision });
+    await savePrivateJson(path.join(entry.node.directory, 'attention.json'), { mode: state.mode, rooms: state.rooms, revision: state.revision });
     return state;
   }
 

@@ -53,6 +53,24 @@ test('all accepted room messages are observed durably without sending them to th
   assert.equal(f.store.cursor(), 'matrix-replay');
 });
 
+test('a decided natural reply waiting behind this Bot\'s own work is not dropped when the decision window passes', async t => {
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  for (const [delay, spoken] of [[60_000, true], [11 * 60_000, false]]) {
+    const f = fixture(t);
+    await f.node.ingestEvents([message(`$g12-${delay}`, '新日期是哪天？')]);
+    await f.node.processAttentionOnce();
+    // Script 02 G12: SPEAK was decided, then the Bot spent two minutes on another task first.
+    const start = realNow();
+    Date.now = () => start + delay;
+    await f.node.processOne();
+    await f.node.processOne();
+    Date.now = realNow;
+    assert.equal(f.turns.length, spoken ? 1 : 0, `after ${delay} ms`);
+    if (!spoken) assert.equal(f.store.item(`$g12-${delay}`).status, 'cancelled');
+  }
+});
+
 test('observation failure keeps a separate replay watermark and never rolls back accepted Matrix events', async t => {
   let fail = true;
   const calls = [];
@@ -240,6 +258,17 @@ test('reply relationships and native Matrix mentions are reliable but an explici
   assert.equal(f.store.item('$matrix').attention.reason, 'matrix_mention');
   assert.equal(f.store.item('$reply').attention.reason, 'reply_to_conversation');
   assert.equal(f.store.item('$other-target'), undefined);
+  // "@雨禾 …" quoting this Bot's line: Matrix notifies the quoted sender, but the message is for 雨禾.
+  const named = message('$named-other', '帮忙核对一下公告。', { replyTo: '$own', to: [peer.id] });
+  named.content['org.ds_group'].mentions = { users: [peer.id], replyUserId: self.id };
+  named.content['m.mentions'] = { user_ids: [peer.id, self.id] };
+  await f.node.ingestEvents([named]);
+  assert.equal(f.store.item('$named-other'), undefined);
+  const listed = message('$listed-other', '帮忙核对一下公告。', { replyTo: '$own', to: [peer.id] });
+  listed.content['org.ds_group'].mentions = { users: [], replyUserId: self.id };
+  listed.content['m.mentions'] = { user_ids: [self.id] };
+  await f.node.ingestEvents([listed]);
+  assert.equal(f.store.item('$listed-other'), undefined);
 });
 
 test('consecutive Bot chatter is bounded without suppressing real directed delegation and result chains', async t => {
@@ -500,4 +529,18 @@ test('Bot turn limits in another thread do not silence the current human convers
   await f.node.processAttentionOnce();
   assert.equal(f.decisions[0].threadRootId, '$thread-a');
   assert.equal(f.store.next().event_id, '$thread-question');
+});
+
+test('a room can override the Bot participation mode: natural in one room, mention elsewhere', async t => {
+  const other = '!internal:test';
+  const f = fixture(t, { attention: { mode: 'mention', rooms: { [roomId]: 'natural' } } });
+  await f.node.ingestEvents([{ ...message('$internal', '内部讨论一下排期'), room_id: other }, message('$players', '试玩什么时候出？')]);
+  await f.node.flushObservations();
+  while (await f.node.processAttentionOnce()) { /* drain both rooms */ }
+  assert.deepEqual(f.decisions.map(input => input.roomId), [roomId]);
+  assert.equal(f.node.attentionStatus().rooms[roomId], 'natural');
+  // Removing the override returns the room to the Bot mode and drops its pending proposals.
+  f.node.configureAttention({ mode: 'mention', rooms: {} });
+  assert.deepEqual(f.node.attentionStatus().rooms, {});
+  assert.throws(() => f.node.configureAttention({ rooms: { [roomId]: 'loud' } }), /Invalid room participation/);
 });
