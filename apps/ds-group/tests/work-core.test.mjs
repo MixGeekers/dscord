@@ -174,10 +174,11 @@ test('work a Bot does for another Bot goes back through the asking Bot to the ro
   dev.core.origin = { roomId: '!r1', eventId: '$g5', senderId: '@lin', body: '请策划写 known-issues.md' };
   await planner.core.event({ id: 'front' }, { type: 'user/message', data: { message: { content: [{ type: 'text', text: '写 known-issues.md' }],
     source: { kind: 'bot', role: 'request', senderSessionId: 'dev', exchangeId: 'x1' } } } });
+  // 开发助理 finishes its turn before 策划 gets round to dispatching.
+  dev.core.origin = null;
   await run(planner, 'front', 'dispatch_work', { title: '写 known-issues.md', brief: '整理已知问题' });
   const task = Object.values(planner.state.tasks)[0];
   assert.deepEqual([task.origin.roomId, task.origin.eventId, task.origin.via], ['!r1', '$g5', 'dev']);
-  dev.core.origin = null;
   await writeFile(path.join(task.dir, 'outputs', 'known-issues.md'), '# 已知问题\n');
   await run(planner, 'worker-1', 'work_report', { status: 'done', summary: '整理了 3 个已知问题' });
   assert.equal(planner.results.length, 0);
@@ -186,4 +187,33 @@ test('work a Bot does for another Bot goes back through the asking Bot to the ro
   assert.deepEqual(dev.results[0].task.artifacts.map(file => file.name), ['known-issues.md']);
   assert.match(dev.results[0].text, /^Lin：「写 known-issues\.md」完成了/);
   assert.equal(task.notified, true);
+});
+
+test('each Bot-to-Bot request keeps its own room message, even when the asking Bot is already done', async t => {
+  const dev = await fixture(t, { nativeBotId: 'dev' });
+  const ops = await fixture(t, { nativeBotId: 'ops' });
+  const planner = await fixture(t, { nativeBotId: 'planner' });
+  await planner.core.serveFront(planner.agentFor('front'));
+  const ask = (from, exchangeId) => planner.core.event({ id: 'front' }, { type: 'user/message', data: { message: {
+    content: [{ type: 'text', text: '帮忙' }], source: { kind: 'bot', role: 'request', senderSessionId: from, exchangeId } } } });
+  // 开发助理 asked while answering R1; its turn ended right after (the core keeps the last room message briefly).
+  dev.core.lastOrigin = { origin: { roomId: '!r1', eventId: '$a' }, at: Date.now() };
+  await ask('dev', 'x1');
+  // 运维 asks next, about R2, and is done before 策划 dispatches either.
+  ops.core.origin = { roomId: '!r2', eventId: '$b' };
+  await ask('ops', 'x2');
+  ops.core.origin = null;
+  await run(planner, 'front', 'dispatch_work', { title: '运维的活', brief: 'b' });
+  // A later room turn of 策划's own goes back to its own room.
+  planner.core.origin = { roomId: '!r3', eventId: '$c' };
+  await run(planner, 'front', 'dispatch_work', { title: '自己的活', brief: 'c' });
+  planner.core.origin = null;
+  const [forOps, own] = Object.values(planner.state.tasks);
+  assert.deepEqual([forOps.origin.roomId, forOps.origin.via], ['!r2', 'ops']);
+  assert.deepEqual([own.origin.roomId, own.origin.via], ['!r3', undefined]);
+  // The first request still had 开发助理's room message on record when it arrived.
+  await ask('dev', 'x3');
+  await run(planner, 'front', 'dispatch_work', { title: '开发的活', brief: 'a' });
+  const forDev = Object.values(planner.state.tasks)[2];
+  assert.deepEqual([forDev.origin.roomId, forDev.origin.via], ['!r1', 'dev']);
 });

@@ -381,6 +381,7 @@ export class NativeBridge {
       signal?.removeEventListener('abort', abort);
       this.run = null;
       this.waiting = null;
+      if (this.core.origin) this.core.lastOrigin = { origin: this.core.origin, at: Date.now() };
       this.core.origin = null;
       record.finishedAt = new Date().toISOString();
       await this.save();

@@ -294,17 +294,28 @@ export class WorkCore {
   }
 
   /** Worker Session events: a turn that ends without a report gets one reminder, then fails. */
-  /** The room message behind the current Bot-to-Bot request, while the asking Bot is still answering it. */
+  /** The room message behind the current Bot-to-Bot request, captured when the request arrived. */
   askedOrigin() {
     const asked = this.asked;
-    const asker = asked && Date.now() - asked.at < 30 * 60_000 ? cores.get(asked.from) : undefined;
-    return asker && asker !== this && asker.origin ? { ...asker.origin, via: asked.from } : null;
+    return asked?.origin && Date.now() - asked.at < 30 * 60_000 ? { ...asked.origin, via: asked.from } : null;
+  }
+
+  /** The room message this Bot is answering now, or the one it just finished answering. */
+  currentOrigin() {
+    if (this.origin) return this.origin;
+    const last = this.lastOrigin;
+    return last && Date.now() - last.at < 5 * 60_000 ? last.origin : null;
   }
 
   async event(session, event) {
     const source = event.data?.message?.source || event.data?.source;
+    // Snapshot the asking Bot's room message now: by the time this Bot dispatches, the
+    // asking Bot may have finished its turn. A newer request replaces it; a room turn of
+    // this Bot's own sets this.origin, which dispatch prefers.
     if (event.type === 'user/message' && this.frontSessions.has(session.id) && source?.kind === 'bot' && source.role === 'request' && source.senderSessionId) {
-      this.asked = { from: source.senderSessionId, at: Date.now() };
+      const asker = cores.get(source.senderSessionId);
+      const origin = asker && asker !== this ? asker.currentOrigin() : null;
+      this.asked = { from: source.senderSessionId, exchangeId: source.exchangeId || null, at: Date.now(), origin: origin ? structuredClone(origin) : null };
     }
     const task = this.workerTask(session.id);
     if (!task) return false;
