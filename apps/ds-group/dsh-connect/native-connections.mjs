@@ -74,7 +74,9 @@ export class NativeConnections {
       Object.assign(entry, { protocol: session.protocol, capabilities: session.capabilities });
       const work = createNodeWorkClient(node.serverUrl, config.nodeSecret, node.id);
       const matrix = new MatrixClient({ baseUrl: setup.homeserverUrl, accessToken: participant.accessToken });
-      bridge = await new NativeBridge({ ctx: this.ctx, native: this.native, node }).initialize();
+      // One program core per native Bot, however many chat servers it is connected to.
+      bridge = await new NativeBridge({ ctx: this.ctx, native: this.native, node,
+        botDirectory: path.join(this.directory, 'bots', node.nativeBotId) }).initialize();
       store = new NodeStore(path.join(directory, 'node.sqlite'), node.id);
       const savedAttention = await readOptionalJson(path.join(node.directory, 'attention.json'));
       const botNode = new BotNode({ participant, participants: setup.participants, roomId: setup.roomId, matrix, store, bridge, work,
@@ -105,7 +107,7 @@ export class NativeConnections {
         },
       });
       Object.assign(entry, { bridge, botNode });
-      bridge.core.contacts = botNode.contacts;
+      bridge.core.seat(node.id).contacts = botNode.contacts;
       await botNode.start();
       await bridge.serveFront();
       await bridge.onWorkerResult((task, message, text) => botNode.acceptWorkerResult(task, message, text));

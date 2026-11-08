@@ -2,6 +2,7 @@ import path from 'node:path';
 import { mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { MAX_ASK_DEPTH } from '../src/contact-book.mjs';
+import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
 import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-plugin/work-files.mjs';
 
 /*
@@ -56,6 +57,7 @@ const compileTools = async defs => {
 // The program cores of the Bots in this DSH, by native Bot ID: the host's answer to
 // "which Bots are in my DSH", so they are contacts before they ever meet in a room.
 const cores = new Map();
+const starting = new Map();
 // What a plain-language result must not carry: stack frames, exception types,
 // source locations and raw log lines. The core checks it; the worker rewrites.
 const INTERNALS = [
@@ -69,11 +71,11 @@ const internalsIn = text => INTERNALS.filter(([, pattern]) => pattern.test(text)
 // A plain-language reply that explains what it left out discloses it again.
 const OMISSION = /取舍|没有?写[入进]|未写[入进]|(?:删掉|删去|去掉|省略|筛掉|过滤掉|略去)了|不对外/;
 const TEXT_FILE = /\.(?:md|txt|log|csv|json|html?)$/i;
-const coreOf = matrixId => [...cores.values()].find(core => core.node.id === matrixId);
-/** A Bot in this DSH by its full identity ID, with its name. */
+const coreOf = matrixId => [...cores.values()].find(core => core.seats.has(matrixId));
+/** A Bot in this DSH by any of its chat-server accounts, with its name. */
 export const localBot = matrixId => {
   const core = coreOf(matrixId);
-  return core ? { name: core.botName || core.node.localpart || matrixId, nativeBotId: core.node.nativeBotId } : undefined;
+  return core ? { name: core.botName || matrixId.slice(1).split(':')[0], nativeBotId: core.nativeBotId } : undefined;
 };
 // Every status change is kept on the task as its timeline.
 const mark = (task, to, by, extra = {}) => {
@@ -105,28 +107,75 @@ async function looseFiles(dir, prefix = '', depth = 0, found = []) {
   return found;
 }
 
+/**
+ * One native Bot's program core: its workers, task ledger and front tools. A Bot that is on several chat
+ * servers has one core; each server connection takes a seat in it, and a task's result goes back through
+ * the seat (the Bot's account on that server) its request came in on.
+ */
 export class WorkCore {
-  constructor({ ctx, native, node, state, save, maxWorkers = 3, timeoutMs = 60 * 60_000 }) {
-    Object.assign(this, { ctx, native, node, state, save, maxWorkers, timeoutMs });
-    this.state.tasks ||= {};
+  /** The core of this native Bot, started on first use and shared by every connection that seats in it. */
+  static async acquire(options) {
+    const ready = cores.get(options.nativeBotId) || await starting.get(options.nativeBotId);
+    if (ready) return ready;
+    const work = new WorkCore(options).initialize();
+    starting.set(options.nativeBotId, work);
+    try { return await work; } finally { starting.delete(options.nativeBotId); }
+  }
+
+  constructor({ ctx, native, nativeBotId, directory, maxWorkers = 3, timeoutMs = 60 * 60_000 }) {
+    Object.assign(this, { ctx, native, nativeBotId, directory, maxWorkers, timeoutMs });
+    this.filename = path.join(directory, 'work.json');
     this.frontSessions = new Set();
     this.served = new WeakSet();
     this.timers = new Map();
     this.origin = null;
-    // The Bot's own contact book, attached once its node is connected.
-    this.contacts = null;
-    // Results delivered since the front's last turn, so it knows what its workers handed over.
-    this.state.frontNotes ||= [];
-    this.onResult = null;
+    // The Bot's accounts on its chat servers, each with that server's contact book and result delivery.
+    this.seats = new Map();
+    this.writes = Promise.resolve();
+  }
+
+  async initialize() {
+    await mkdir(this.directory, { recursive: true, mode: 0o700 });
+    // Results delivered since the front's last turn are frontNotes, so it knows what its workers handed over.
+    this.state = await readOptionalJson(this.filename) || { version: 1, nativeBotId: this.nativeBotId, tasks: {}, frontNotes: [] };
     for (const task of Object.values(this.state.tasks)) {
       if (!ended(task)) mark(task, 'unknown', 'restart', { summary: '宿主重启时任务未结束，结果不确定。', finishedAt: new Date().toISOString(), notified: false, doing: undefined });
     }
-    this.disposeGuard = ctx.tools?.guard?.(exec => this.guard(exec));
-    if (node.nativeBotId) cores.set(node.nativeBotId, this);
+    await this.save();
+    this.disposeGuard = this.ctx.tools?.guard?.(exec => this.guard(exec));
+    this.disposeEvents = this.ctx.on?.('session/event', (session, event) => this.event(session, event));
+    cores.set(this.nativeBotId, this);
+    return this;
+  }
+
+  save() {
+    this.writes = this.writes.catch(() => {}).then(() => savePrivateJson(this.filename, this.state));
+    return this.writes;
+  }
+
+  /** A connection's place in this core: its Bot account, contact book and result delivery. */
+  seat(botId) {
+    if (!this.seats.has(botId)) this.seats.set(botId, { contacts: null, onResult: null });
+    return this.seats.get(botId);
+  }
+
+  /** The contact book of the server the current turn came from. */
+  get contacts() {
+    return this.seats.get(this.origin?.botId)?.contacts || null;
+  }
+
+  /** A connection left; the core stops with the last one. */
+  async release(botId) {
+    this.seats.delete(botId);
+    if (this.seats.size) return;
+    this.dispose();
+    await this.writes;
   }
 
   tasks() { return Object.values(this.state.tasks); }
   workerTask(sessionId) { return this.tasks().find(task => task.sessionId === sessionId && !ended(task)); }
+  /** Whether a session is one of this Bot's running workers, whose events the core handles. */
+  ownsSession(sessionId) { return Boolean(this.workerTask(sessionId)); }
 
   guard(exec) {
     const id = exec.agent?.session?.id ?? exec.agent?.id;
@@ -142,7 +191,7 @@ export class WorkCore {
   async serveFront(agent) {
     const id = agent?.session?.id;
     if (!id) return;
-    this.botName = (await this.native.bot(this.node.nativeBotId).catch(() => null))?.name || this.botName;
+    this.botName = (await this.native.bot(this.nativeBotId).catch(() => null))?.name || this.botName;
     this.frontSessions.add(id);
     const tools = agent.ctx?.tools;
     if (!tools || this.served.has(agent)) return;
@@ -250,7 +299,7 @@ export class WorkCore {
     if (!body) return '需要 body：写清请对方做什么。';
     const contact = this.contacts?.resolve(to);
     if (!contact?.id) return contact?.error || '对方不在你的通讯录里，联系不上；直接告诉请求者。';
-    if (contact.id === this.node.id) return '不能请自己；这件事用 dispatch_work 交给工作者。';
+    if (this.seats.has(contact.id)) return '不能请自己；这件事用 dispatch_work 交给工作者。';
     // One request gets one result: work a worker delivers on its own does not also wait for another Bot.
     const handed = this.handedOff(origin.requestId);
     if (handed.length) return `这一轮已经把这件事交给了工作者 ${handed.join('、')}，它的结果会直接交给请求者，同一件事不要再找别的 Bot。确实需要别的 Bot 的材料，就先用 task_cancel 取消，再用 ask_bot，等结果回来后连同材料一起派工。`;
@@ -326,8 +375,8 @@ export class WorkCore {
   }
 
   async start(task) {
-    const bot = await this.native.bot(this.node.nativeBotId);
-    const dir = path.join(this.node.directory, 'workers', task.id);
+    const bot = await this.native.bot(this.nativeBotId);
+    const dir = path.join(this.directory, 'workers', task.id);
     await mkdir(path.join(dir, 'outputs'), { recursive: true });
     const presets = this.ctx.get?.('agentPresets');
     const preset = presets && (await presets.list()).some(item => item.id === 'standard' && !item.broken) ? { agentPreset: 'standard' } : {};
@@ -517,7 +566,7 @@ export class WorkCore {
   }
 
   async notify(task, message) {
-    if (message.kind !== 'result') { await this.onResult?.(task, message); return; }
+    if (message.kind !== 'result') { await this.deliverTo(task, message); return; }
     // Every message that asked for this task gets the result, each as a reply to itself.
     const origins = [task.origin, ...(task.followers || [])];
     for (let index = task.notifiedOrigins ?? (task.notified ? 1 : 0); index < origins.length; index++) {
@@ -540,10 +589,20 @@ export class WorkCore {
     }
   }
 
-  /** One result to one requester, through this Bot's node. */
-  async deliverTo(task) {
-    if (!this.onResult) return false;
-    await this.onResult(task, { kind: 'result' });
+  /**
+   * One result or question to one requester: through the Bot's account on the server the request came from,
+   * or into the front when it came from no room. False while that server is not connected.
+   */
+  async deliverTo(task, message = { kind: 'result' }) {
+    const text = this.resultText(task, message);
+    if (!task.origin?.roomId) {
+      const bot = await this.native.bot(this.nativeBotId);
+      await this.prompt(bot.sessionId, text);
+      return true;
+    }
+    const seat = this.seats.get(task.origin.botId);
+    if (!seat?.onResult) return false;
+    await seat.onResult(task, message, text);
     return true;
   }
 
@@ -591,6 +650,7 @@ export class WorkCore {
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     this.disposeGuard?.();
-    if (cores.get(this.node.nativeBotId) === this) cores.delete(this.node.nativeBotId);
+    this.disposeEvents?.();
+    if (cores.get(this.nativeBotId) === this) cores.delete(this.nativeBotId);
   }
 }

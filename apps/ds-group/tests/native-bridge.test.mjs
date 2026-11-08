@@ -12,12 +12,12 @@ import { DatabaseSync } from 'node:sqlite';
 async function fixture(t, { idle = Promise.resolve(), send, cwd, beforeObserve, beforeView } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'native-bridge-'));
   const handlers = new Map(); let cancelled = 0; let turn = 0;
-  const ctx = { get(name) { return name === 'workingDirectory' && cwd ? { get: () => cwd } : undefined; }, on(name, handler) { handlers.set(name, handler); return () => handlers.delete(name); } };
+  const ctx = { get(name) { return name === 'workingDirectory' && cwd ? { get: () => cwd } : undefined; }, on(name, handler) { if (!handlers.has(name)) handlers.set(name, new Set()); handlers.get(name).add(handler); return () => handlers.get(name).delete(handler); } };
   const native = new NativeBots(ctx);
   native.bot = async () => ({ id: 'native-one', name: 'Original', role: 'Research', sessionId: 'native-one', model: 'dsh/model' });
   native.agent = async () => ({ whenIdle: () => idle, cancel: () => cancelled++, ctx: { tools: { schemas: () => ['create_bot','remember','bash'].map(name => ({ name })) } } });
   const calls = [];
-  const event = async (type, data, sessionId = 'native-one') => handlers.get('session/event')?.({ id: sessionId }, { type, data });
+  const event = async (type, data, sessionId = 'native-one') => { for (const handler of handlers.get('session/event') || []) await handler({ id: sessionId }, { type, data }); };
   native.call = async (endpoint, payload) => {
     if (endpoint === 'observe') { await beforeObserve?.(); return { accepted: payload.inputs.length }; }
     if (endpoint === 'attention-view') { await beforeView?.(); return { schema: 2, currentClaims: [], recentSources: [], historyGaps: [] }; }
@@ -207,7 +207,7 @@ test('the front never publishes files, even when its answer names or links one',
 test('a worker result is delivered as it is without a front turn, and the front sees it on its next turn', async t => {
   const f = await fixture(t, { idle: new Promise(() => {}) });
   const file = { path: path.join(f.node.directory, 'report.csv'), name: 'report.csv', size: 3, sha256: 'a'.repeat(64), mimeType: 'text/csv' };
-  f.bridge.state.tasks['T-1'] = { id: 'T-1', title: 'CSV', status: 'done', summary: '华东最高。', artifacts: [file],
+  f.bridge.core.state.tasks['T-1'] = { id: 'T-1', title: 'CSV', status: 'done', summary: '华东最高。', artifacts: [file],
     origin: { roomId: '!a:home.test', eventId: '$origin', senderName: 'Ann' } };
   const request = f.request('worker-result');
   // The front is busy (never idle), and the result still goes out at once.
@@ -215,12 +215,12 @@ test('a worker result is delivered as it is without a front turn, and the front 
   assert.equal(result.status, 'completed'); assert.deepEqual(result.artifacts, [file]);
   assert.equal(result.text, '「CSV」完成了。\n\n华东最高。');
   assert.equal(f.calls.length, 0);
-  assert.deepEqual(f.bridge.state.frontNotes.map(note => [note.taskId, note.files]), [['T-1', ['report.csv']]]);
+  assert.deepEqual(f.bridge.core.state.frontNotes.map(note => [note.taskId, note.files]), [['T-1', ['report.csv']]]);
 });
 
 test('an unknown result says so and is not redone; the next front turn carries it once', async t => {
   const f = await fixture(t);
-  f.bridge.state.tasks['T-2'] = { id: 'T-2', title: 'budget.md', status: 'unknown', summary: '宿主重启时任务未结束，结果不确定。', origin: { roomId: '!a:home.test' } };
+  f.bridge.core.state.tasks['T-2'] = { id: 'T-2', title: 'budget.md', status: 'unknown', summary: '宿主重启时任务未结束，结果不确定。', origin: { roomId: '!a:home.test' } };
   const request = f.request('worker-unknown');
   const result = await f.bridge.turn({ ...request, event: { ...request.event, kind: 'task.result', workerTask: 'T-2', workerKind: 'result' } });
   assert.match(result.text, /结果不确定。我没有自动重做/); assert.deepEqual(result.artifacts, []);
@@ -249,11 +249,11 @@ test('work started from another Bot\'s result answers the message that started t
 test('a turn that joins a running task is an acknowledgement, so a Bot request is not answered by it', async t => {
   const f = await fixture(t, { send: async ({ event, turn }) => {
     // The front calls task_join: the current message becomes another requester of T-9.
-    f.bridge.state.tasks['T-9'].followers = [structuredClone(f.bridge.core.origin)];
+    f.bridge.core.state.tasks['T-9'].followers = [structuredClone(f.bridge.core.origin)];
     await event('assistant/message', { turn, message: { content: [{ type: 'text', text: '这件事已经在查，结果会一起回给你。' }] } });
     await event('turn/end', { turn, reason: { kind: 'completed' } });
   } });
-  f.bridge.state.tasks['T-9'] = { id: 'T-9', title: '查崩溃', status: 'running', origin: { roomId: '!r4:home.test', eventId: '$g13', requestId: 'other' } };
+  f.bridge.core.state.tasks['T-9'] = { id: 'T-9', title: '查崩溃', status: 'running', origin: { roomId: '!r4:home.test', eventId: '$g13', requestId: 'other' } };
   const result = await f.bridge.turn(f.request('g14-request', '!r2:home.test'));
   assert.deepEqual(result.dispatched, ['T-9']);
 });
@@ -296,8 +296,8 @@ test('requests made with ask_bot go out with the reply of the turn that made the
     await event('assistant/message', { turn, message: { content: [{ type: 'text', text: '我去请 QA 看日志。' }] } });
     await event('turn/end', { turn, reason: { kind: 'completed' } });
   } });
-  f.bridge.core.contacts = new ContactBook({ db, self: { id: f.node.id } });
-  f.bridge.core.contacts.seeRoom('!a:home.test', [{ id: f.node.id, kind: 'bot' }, { id: '@qa:other.test', name: 'QA', kind: 'bot' }]);
+  f.bridge.core.seat(f.node.id).contacts = new ContactBook({ db, self: { id: f.node.id } });
+  f.bridge.core.seat(f.node.id).contacts.seeRoom('!a:home.test', [{ id: f.node.id, kind: 'bot' }, { id: '@qa:other.test', name: 'QA', kind: 'bot' }]);
   const result = await f.bridge.turn(f.request('asks'));
   assert.match(asked, /发给 QA/);
   assert.equal(result.text, '我去请 QA 看日志。');
