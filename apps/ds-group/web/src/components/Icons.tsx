@@ -18,6 +18,7 @@ import {
   Inbox,
   Info,
   Menu,
+  Pencil,
   MessageCircle,
   Plus,
   Reply,
@@ -29,6 +30,7 @@ import {
   UserRound,
   Users,
   Brain,
+  Trash,
   X,
 } from "lucide-react";
 
@@ -42,6 +44,8 @@ const iconComponents = {
   check: Check,
   chevronDown: ChevronDown,
   close: X,
+  edit: Pencil,
+  trash: Trash,
   copy: Copy,
   eye: Eye,
   eyeOff: EyeOff,

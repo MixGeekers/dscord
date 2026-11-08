@@ -104,7 +104,7 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   const tasks = new TaskService({ setup, dataRoot, authorizeNode, readJsonBody, participants: publicParticipants });
   const botWork = new BotWorkService({ setup, accounts, governance, dataRoot, authorizeNode, readJsonBody, tasks,
     nativeBot: id => nativeBots.isNative(id), maxBytes: () => media.maxBytes });
-  const app = { setup, config, accounts, nativeBots, identity, governance, nodeCredentials, budget, media, attachmentAccess, chat, chatFeatures,
+  const app = { setup, config, accounts, nativeBots, identity, governance, nodeCredentials, budget, media, attachmentAccess, chat, chatFeatures, tasks,
     push, nodes, kernelControl, demoLogin, trustProxy, webMode, startedAt, publicParticipants,
     nodeSnapshot: () => accounts.publicParticipants().filter(p => p.kind === 'bot').map(participant => {
       const active = nodes.get(participant.id);

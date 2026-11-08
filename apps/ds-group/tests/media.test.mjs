@@ -93,11 +93,21 @@ async function fixture(t, { maxUploadBytes = 1024, uploadDelay = 0, upstreamRang
           return json(200, { membership: 'join' });
         }
         if (request.method === 'GET' && room[2] === 'messages') {
-          return json(200, { chunk: [...events.values()].reverse() });
+          // One page of history: the cursor it hands out leads to the start of the room.
+          if (url.searchParams.get('from') === 'fixture-older') return json(200, { chunk: [], end: 'fixture-start' });
+          return json(200, { chunk: [...events.values()].reverse(), end: 'fixture-older' });
         }
         if (request.method === 'GET' && room[2].startsWith('event/')) {
           const event = events.get(room[2].slice('event/'.length));
           return event ? json(200, event) : json(404, { errcode: 'M_NOT_FOUND', error: 'Unknown fixture event' });
+        }
+        const redact = room[2].match(/^redact\/([^/]+)\/[^/]+$/);
+        if (request.method === 'PUT' && redact) {
+          const target = events.get(redact[1]);
+          if (!target) return json(404, { errcode: 'M_NOT_FOUND', error: 'Unknown fixture event' });
+          const redactionId = `$redaction-${events.size + 1}`;
+          events.set(target.event_id, { ...target, content: {}, unsigned: { redacted_because: { event_id: redactionId, type: 'm.room.redaction', sender: actor.id } } });
+          return json(200, { event_id: redactionId });
         }
         if (request.method === 'PUT' && room[2].startsWith('send/m.room.message/')) {
           if (state.failNextSend) { state.failNextSend = false; return json(503, { errcode: 'M_UNKNOWN', error: 'Synthetic failed send before publication' }); }
@@ -471,7 +481,11 @@ test('opening an actual old conversation recovers its shared local file index bu
   app.core.media.db.prepare('DELETE FROM attachment_sources').run();
   app.events.set('$forged-old', { event_id: '$forged-old', room_id: roomId, sender: participants[1].id, type: 'm.room.message',
     content: { body: '伪造字段不应阻断时间线', 'org.ds_group': { attachments: [{ ...privateFile, name: 'another-file.txt' }, null] } } });
-  assert.equal((await app.request('bob', 'GET', `/api/rooms/${encodeURIComponent(roomId)}/messages`)).status, 200);
+  const latest = await app.request('bob', 'GET', `/api/rooms/${encodeURIComponent(roomId)}/messages`);
+  assert.equal(latest.status, 200);
+  assert.equal((await latest.json()).before, 'fixture-older');
+  const older = await app.request('bob', 'GET', `/api/rooms/${encodeURIComponent(roomId)}/messages?before=fixture-older`);
+  assert.deepEqual(await older.json(), { events: [], before: null });
   assert.equal(app.core.media.sources(shared.id)[0].eventId, posted.body.event_id);
   assert.equal(app.core.media.sources(privateFile.id).length, 0);
   assert.equal((await app.request('bob', 'GET', `/api/attachments/${shared.id}/metadata`)).status, 200);
@@ -540,4 +554,40 @@ test('actual Bot normalization and file preparation prove local incoming, quoted
     } finally { store.close(); }
   }
   assert.equal(app.core.media.sources(attachment.id).length, 2, 'Only the original and delegated events actually contain this attachment');
+});
+
+test('senders edit and withdraw their own messages; withdrawing stops the work it started', async t => {
+  const app = await fixture(t);
+  const route = id => `/api/rooms/${encodeURIComponent(roomId)}/messages/${encodeURIComponent(id)}`;
+  const posted = await app.send('alice', { body: '请整理报表', to: [], transactionId: 'edit-source' });
+  assert.equal(posted.status, 200);
+  const original = posted.body.event_id;
+
+  const edited = await app.request('alice', 'PUT', route(original), { body: '请整理 <@@bob:fixture.test> 的报表', transactionId: 'edit-one' });
+  assert.equal(edited.status, 200);
+  const replacement = app.events.get((await edited.json()).event_id);
+  assert.deepEqual(replacement.content['m.relates_to'], { rel_type: 'm.replace', event_id: original });
+  assert.equal(replacement.content.body, '* 请整理 <@@bob:fixture.test> 的报表');
+  assert.deepEqual(replacement.content['m.mentions'], {}, 'the fallback does not notify again');
+  assert.equal(replacement.content['m.new_content'].body, '请整理 <@@bob:fixture.test> 的报表');
+  assert.deepEqual(replacement.content['m.new_content']['org.ds_group'].mentions.users, ['@bob:fixture.test']);
+
+  assert.equal((await app.request('bob', 'PUT', route(original), { body: '冒充', transactionId: 'edit-bob' })).status, 403);
+  assert.equal((await app.request('alice', 'PUT', route(replacement.event_id), { body: '套娃', transactionId: 'edit-edit' })).status, 400);
+  assert.equal((await app.request('alice', 'PUT', route(original), { body: '  ', transactionId: 'edit-empty' })).status, 400);
+  assert.equal((await app.request('alice', 'PUT', route('$missing'), { body: '无', transactionId: 'edit-missing' })).status, 404);
+  assert.equal((await app.request('bob', 'DELETE', route(original))).status, 403);
+
+  const now = Date.now();
+  const insert = app.core.tasks.db.prepare(`INSERT INTO file_tasks (request_id,bot_id,room_id,event_id,status,stage,summary,artifacts_json,tool_calls,created_at,updated_at)
+    VALUES (?,?,?,?,?,'work','正在处理任务','[]',0,?,?)`);
+  insert.run('task-running', '@finance:fixture.test', roomId, original, 'running', now, now);
+  insert.run('task-done', '@hr:fixture.test', roomId, original, 'completed', now, now);
+  const withdrawn = await app.request('alice', 'DELETE', route(original));
+  assert.equal(withdrawn.status, 200);
+  assert.equal((await withdrawn.json()).cancelledTasks, 1);
+  assert.equal(app.core.tasks.get('task-running').cancelRequested, true);
+  assert.equal(app.core.tasks.get('task-done').cancelRequested, false);
+  assert.deepEqual(app.events.get(original).content, {});
+  assert.equal((await app.request('alice', 'PUT', route(original), { body: '复活', transactionId: 'edit-after' })).status, 409);
 });

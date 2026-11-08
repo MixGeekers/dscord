@@ -170,7 +170,13 @@ export class ChatFeatures {
   recordEvents(userId, events) {
     const insert = this.db.prepare(`INSERT OR IGNORE INTO chat_events
       (user_id,event_id,room_id,sender_id,event_ts,event_json,mention_kinds_json) VALUES (?,?,?,?,?,?,?)`);
+    const forget = this.db.prepare('DELETE FROM chat_events WHERE user_id=? AND event_id=?');
     for (const event of events) {
+      // A withdrawn message leaves unreads and the inbox; an edit is not a new message.
+      const withdrawn = event.type === 'm.room.redaction' ? event.redacts || event.content?.redacts
+        : event.unsigned?.redacted_because ? event.event_id : undefined;
+      if (typeof withdrawn === 'string') { forget.run(userId, withdrawn); continue; }
+      if (event.content?.['m.relates_to']?.rel_type === 'm.replace') continue;
       if (event.type !== 'm.room.message' || !event.event_id || !event.room_id || !event.sender || typeof event.content?.body !== 'string') continue;
       insert.run(userId, event.event_id, event.room_id, event.sender,
         Number.isFinite(event.origin_server_ts) ? event.origin_server_ts : this.now(), JSON.stringify(event), JSON.stringify(mentionKindsFor(event, userId)));
@@ -185,7 +191,12 @@ export class ChatFeatures {
       AND (event_ts>? OR (event_ts=? AND sequence>?))`).get(userId, roomId, userId,
       read?.event_ts || 0, read?.event_ts || 0, read?.sequence || 0);
     const last = this.db.prepare('SELECT event_id FROM chat_events WHERE user_id=? AND room_id=? ORDER BY event_ts DESC,sequence DESC LIMIT 1').get(userId, roomId);
-    return { unreadCount: counts.unread_count, mentionCount: counts.mention_count, lastEventId: last?.event_id || null };
+    // Only messages Core has observed count; the client places its "new messages" divider before this one.
+    const firstUnread = counts.unread_count ? this.db.prepare(`SELECT event_id FROM chat_events WHERE user_id=? AND room_id=? AND sender_id<>?
+      AND (event_ts>? OR (event_ts=? AND sequence>?)) ORDER BY event_ts,sequence LIMIT 1`).get(userId, roomId, userId,
+      read?.event_ts || 0, read?.event_ts || 0, read?.sequence || 0) : undefined;
+    return { unreadCount: counts.unread_count, mentionCount: counts.mention_count, lastEventId: last?.event_id || null,
+      firstUnreadEventId: firstUnread?.event_id || null };
   }
 
   markRead(userId, roomId, eventId) {

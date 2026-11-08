@@ -7,6 +7,8 @@ export const appMessages = {
     joinPending: "群已创建，部分成员待加入",
     cancelled: "已发送取消请求",
     notificationSaved: "通知设置已保存",
+    withdrawn: "消息已撤回",
+    withdrawnTasks: "消息已撤回，相关的 {count} 个任务已请求停止",
   },
   en: {
     retry: "Reconnect",
@@ -16,5 +18,7 @@ export const appMessages = {
     joinPending: "Group created. Some members are still joining.",
     cancelled: "Cancellation requested",
     notificationSaved: "Notification settings saved",
+    withdrawn: "Message withdrawn",
+    withdrawnTasks: "Message withdrawn. Asked {count} related tasks to stop.",
   },
 };

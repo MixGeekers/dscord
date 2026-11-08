@@ -36,11 +36,19 @@ import { NotificationDialog } from "./components/NotificationDialog";
 import {
   emptyMentions,
   isOwnedBotRoom,
-  mergeEvents,
   ownedBotCacheKey,
   restoredOwnedBots,
 } from "./app/workspace";
+import {
+  lastVisible,
+  mergeEvents,
+  visibleEvents,
+  withdrawnEvent,
+} from "./app/timeline-events";
 import { useWorkspaceSync } from "./app/useWorkspaceSync";
+import { useTimelineHistory } from "./app/useTimelineHistory";
+import { newRequestId } from "./identifiers";
+import type { MentionValue } from "../mention-editor.js";
 import type {
   Bootstrap,
   ChatEvent,
@@ -104,6 +112,7 @@ export default function App({
   const ownedBotsKnown = ownedBotsState !== null;
   const [currentUser, setCurrentUser] = useState<Participant | null>(null);
   const [events, setEvents] = useState<ChatEvent[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [mentionables, setMentionables] = useState<Mentionables>(emptyMentions);
@@ -245,6 +254,7 @@ export default function App({
 
   const resetConversation = useCallback(() => {
     setEvents([]);
+    setEditingId(null);
     setTasks([]);
     setRoles([]);
     setMentionables(emptyMentions);
@@ -425,6 +435,14 @@ export default function App({
     [config, navigate, ownedBots],
   );
 
+  const timelineHistory = useTimelineHistory({
+    api,
+    roomId,
+    room,
+    setEvents,
+    onError: notify,
+  });
+
   useWorkspaceSync({
     api,
     authApi,
@@ -461,6 +479,7 @@ export default function App({
       tasks: setTasks,
       mentionables: setMentionables,
       roles: setRoles,
+      historyCursor: timelineHistory.seed,
     },
   });
 
@@ -692,6 +711,94 @@ export default function App({
       }
     },
     [api, keyFor, notify, refresh, t],
+  );
+
+  const editMessage = useCallback(
+    async (eventId: string, value: MentionValue): Promise<boolean> => {
+      const account = sessionRef.current;
+      const targetRoom = roomRef.current;
+      if (!account || !targetRoom) return false;
+      try {
+        const receipt = await api<{ event_id: string }>(
+          `/api/rooms/${encodeURIComponent(targetRoom)}/messages/${encodeURIComponent(eventId)}`,
+          {
+            method: "PUT",
+            body: {
+              body: value.body,
+              mentions: value.mentions,
+              transactionId: newRequestId(),
+            },
+            timeout: 30000,
+          },
+        );
+        if (sessionRef.current !== account || roomRef.current !== targetRoom)
+          return true;
+        // Show the edit at once; the next poll brings the same event from Matrix.
+        setEvents((previous) =>
+          mergeEvents(
+            previous,
+            [
+              {
+                event_id: receipt.event_id,
+                room_id: targetRoom,
+                sender: account.user_id,
+                type: "m.room.message",
+                origin_server_ts: Date.now(),
+                content: {
+                  body: `* ${value.body}`,
+                  "m.new_content": {
+                    body: value.body,
+                    "org.ds_group": { mentions: value.mentions },
+                  },
+                  "m.relates_to": { rel_type: "m.replace", event_id: eventId },
+                },
+              },
+            ],
+            targetRoom,
+          ),
+        );
+        refresh();
+        return true;
+      } catch (reason) {
+        if (sessionRef.current === account) notify(messageOf(reason));
+        return false;
+      }
+    },
+    [api, notify, refresh],
+  );
+
+  const withdrawMessage = useCallback(
+    async (eventId: string): Promise<boolean> => {
+      const account = sessionRef.current;
+      const targetRoom = roomRef.current;
+      if (!account || !targetRoom) return false;
+      try {
+        const receipt = await api<{ event_id: string; cancelledTasks: number }>(
+          `/api/rooms/${encodeURIComponent(targetRoom)}/messages/${encodeURIComponent(eventId)}`,
+          { method: "DELETE", timeout: 30000 },
+        );
+        if (sessionRef.current !== account || roomRef.current !== targetRoom)
+          return true;
+        setEvents((previous) =>
+          previous.map((event) =>
+            event.event_id === eventId
+              ? withdrawnEvent(event, { event_id: receipt.event_id })
+              : event,
+          ),
+        );
+        notify(
+          receipt.cancelledTasks
+            ? t("withdrawnTasks", { count: receipt.cancelledTasks })
+            : t("withdrawn"),
+        );
+        refresh();
+        return true;
+      } catch (reason) {
+        if (sessionRef.current === account) notify(messageOf(reason));
+        return false;
+      }
+    },
+    [api, notify, refresh, t],
   );
 
   const markRead = useCallback(
@@ -1000,6 +1107,11 @@ export default function App({
           }}
           onRead={(id) => void markRead(id)}
           onRole={homeSelected ? () => setRolesOpen(true) : undefined}
+          history={timelineHistory}
+          editingId={editingId}
+          onEditing={setEditingId}
+          onEdit={session ? editMessage : undefined}
+          onWithdraw={session ? withdrawMessage : undefined}
         />
         <Composer
           ref={composer}
@@ -1035,6 +1147,14 @@ export default function App({
           )}
           pending={pending}
           onSend={sendMessage}
+          onEditLast={() => {
+            const own = lastVisible(
+              visibleEvents(events),
+              (event) => event.sender === session?.user_id,
+            );
+            if (own) setEditingId(own.event_id);
+            return Boolean(own);
+          }}
           limits={bootstrap?.attachments}
           onError={notify}
         />

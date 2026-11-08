@@ -217,5 +217,11 @@ export class TaskService {
     return send(405, { error: 'Unsupported task operation' });
   }
 
+  /** Ask the Bots working on this message to stop, e.g. because the sender withdrew it. */
+  cancelForEvent(roomId, eventId) {
+    return this.db.prepare(`UPDATE file_tasks SET cancel_requested=1,updated_at=? WHERE room_id=? AND event_id=?
+      AND status NOT IN ('completed','failed','cancelled')`).run(Date.now(), roomId, eventId).changes;
+  }
+
   close() { this.db.close(); }
 }
