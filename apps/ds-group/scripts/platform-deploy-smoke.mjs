@@ -93,7 +93,7 @@ try {
     return { central: discovery.central, home: discovery.home };
   });
   await check('central sign-in and room business work while management credentials remain separate', async () => {
-    const account = await request(centralUrl, '/api/register', { body: { username: 'alice', password: `${project}-password`, displayName: 'Alice' } });
+    const account = await request(centralUrl, '/api/register', { body: { username: 'alice', password: `${project}-password`, displayName: 'Alice' }, status: 201 });
     sensitive.add(account.token);
     const { token: identityToken } = await request(centralUrl, '/api/identity-tokens', { token: account.token, body: { audience: coreUrl, allowNew: true } });
     sensitive.add(identityToken);

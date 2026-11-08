@@ -48,17 +48,17 @@ async function endpoint(service = 'core', port = 18100) {
 /** Sign in to the chat server the one way there is: a central account and an identity token naming it. */
 async function signIn(coreUrl, username) {
   const central = await endpoint('central', 18200);
-  const account = await request(central, '/api/register', { body: { username, password: `${name}-password`, displayName: username } });
+  const account = await request(central, '/api/register', { body: { username, password: `${name}-password`, displayName: username }, status: 201 });
   const { token: identityToken } = await request(central, '/api/identity-tokens', { token: account.token,
     body: { audience: env.DS_GROUP_PUBLIC_URL, allowNew: true } });
   return request(coreUrl, '/api/session', { body: { identityToken } });
 }
 
-async function request(baseUrl, route, { token, body } = {}) {
+async function request(baseUrl, route, { token, body, status = 200 } = {}) {
   const response = await fetch(`${baseUrl}${route}`, { method: body === undefined ? 'GET' : 'POST',
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(20_000) });
-  assert.equal(response.status, 200, `${route} returned HTTP ${response.status}`);
+  assert.equal(response.status, status, `${route} returned HTTP ${response.status}`);
   return response.json();
 }
 
