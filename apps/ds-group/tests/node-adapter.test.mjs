@@ -72,8 +72,19 @@ test('synthetic response protocol accepts text/JSON and validates explicit deleg
   assert.deepEqual(parseBotOutput('普通回复', finance.id, participants), { text: '普通回复' });
   assert.deepEqual(parseBotOutput('```json\n{"text":"收到","delegate":{"to":"@hr:ds-group.local","body":"整理名单"}}\n```', finance.id, participants),
     { text: '收到', delegate: { to: hr.id, body: '整理名单' } });
-  assert.throws(() => parseBotOutput('{"text":"x","delegate":{"to":"@finance:ds-group.local","body":"x"}}', finance.id, participants), /delegation/);
-  assert.throws(() => parseBotOutput('{"text":"x","delegate":{"to":"@alice:ds-group.local","body":"x"}}', finance.id, participants), /delegation/);
+  // A handoff that cannot go out is said in the reply instead of failing it (nothing reached the asker before).
+  for (const to of ['@finance:ds-group.local', '@alice:ds-group.local', '@nobody:ds-group.local']) {
+    assert.deepEqual(parseBotOutput(`{"text":"x","delegate":{"to":"${to}","body":"x"}}`, finance.id, participants),
+      { text: 'x\n\n（这次没能转交出去：对方不在我能联系的 Bot 里。）' });
+  }
+  // Script 02 G14 retest: extra fields such as audience go into the request; a display name resolves to the full ID.
+  assert.deepEqual(parseBotOutput('{"text":"收到","delegate":{"to":"人事","body":"看日志","audience":"玩家小满：通俗说明"}}', finance.id, participants),
+    { text: '收到', delegate: { to: hr.id, body: '看日志\n\naudience：玩家小满：通俗说明' } });
+  // Script 02 G18 retest: a remote Bot whose roster name is its full ID is still found by its room label.
+  const cold = [...participants.filter(person => person.id !== hr.id), { id: hr.id, name: hr.id, kind: 'bot' }];
+  assert.equal(parseBotOutput(`好的。\n@${hr.name} 写两段`, finance.id, cold).delegate, undefined);
+  assert.deepEqual(parseBotOutput(`好的。\n@${hr.name} 写两段`, finance.id, [...cold, { id: hr.id, name: hr.name, kind: 'bot' }]).delegate,
+    { to: hr.id, body: '写两段' });
   assert.throws(() => parseBotOutput('{"delegate":{"to":"@hr:ds-group.local","body":"x"}}', finance.id, participants), /non-empty text/);
   // Script 02 G18: an unescaped quote inside the delegation body must not drop the
   // delegation and post the raw JSON to the room.

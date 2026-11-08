@@ -64,13 +64,16 @@ const STRUCTURED = /^\{\s*"(?:text|delegate|delivery|artifacts)"\s*:/;
  * left as text it reaches nobody as a request. The lines from there on become the delegation.
  */
 function addressedHandoff(text, botId, participants) {
-  const bots = participants.filter(person => person.kind === 'bot' && person.id !== botId && person.name)
-    .sort((a, b) => b.name.length - a.name.length);
+  // Each Bot is addressed by "@label" or by its full ID; the longest match wins.
+  const handles = participants.filter(person => person.kind === 'bot' && person.id !== botId)
+    .flatMap(person => [...(person.name && person.name !== person.id ? [`@${person.name}`] : []), person.id].map(handle => ({ handle, bot: person })))
+    .sort((a, b) => b.handle.length - a.handle.length);
   const lines = text.split('\n');
   for (const [index, line] of lines.entries()) {
-    const bot = bots.find(person => line.trimStart().startsWith(`@${person.name}`));
-    if (!bot) continue;
-    const body = [line.trimStart().slice(bot.name.length + 1).replace(/^[\s,，:：]+/, ''), ...lines.slice(index + 1)].join('\n').trim();
+    const found = handles.find(({ handle }) => line.trimStart().startsWith(handle));
+    if (!found) continue;
+    const bot = { ...found.bot, name: found.bot.name && found.bot.name !== found.bot.id ? found.bot.name : found.bot.id };
+    const body = [line.trimStart().slice(found.handle.length).replace(/^[\s,，:：]+/, ''), ...lines.slice(index + 1)].join('\n').trim();
     if (!body) return undefined;
     const said = lines.slice(0, index).join('\n').trim() || `我去请${bot.name}处理。`;
     return { text: said.slice(0, 16000), delegate: { to: bot.id, body: body.slice(0, 16000) } };
@@ -125,13 +128,20 @@ export function parseBotOutput(raw, botId, participants, { ignoreDelivery = fals
   const output = { text: parsed.text.trim(), ...(ignoreDelivery || parsed.delivery === undefined ? {} : { delivery: normalizeDelivery(parsed.delivery, participants) }) };
   if (parsed.delegate === undefined) return output;
   const delegate = parsed.delegate;
-  if (!delegate || typeof delegate !== 'object' || Array.isArray(delegate)
-    || Object.keys(delegate).some(key => !['to', 'body'].includes(key))
-    || !participants.some(p => p.kind === 'bot' && p.id === delegate.to)
-    || delegate.to === botId || typeof delegate.body !== 'string' || !delegate.body.trim() || delegate.body.length > 16000) {
-    throw new Error('Bot delegation must name one other registered Bot and a non-empty request');
+  const bots = participants.filter(person => person.kind === 'bot' && person.id !== botId);
+  // The full ID is the address; a display name the Bot saw in the room resolves when it names exactly one Bot.
+  const byName = name => [...new Set(bots.filter(person => person.name === String(name).replace(/^@/, '')).map(person => person.id))];
+  const to = delegate && typeof delegate === 'object' && (bots.some(person => person.id === delegate.to) ? delegate.to
+    : byName(delegate.to).length === 1 ? byName(delegate.to)[0] : undefined);
+  // Fields beyond to/body (an audience, a deadline) are part of the request, not a reason to drop it.
+  const extra = delegate && typeof delegate === 'object' ? Object.entries(delegate).filter(([key, value]) => !['to', 'body'].includes(key)
+    && ['string', 'number', 'boolean'].includes(typeof value) && String(value).trim()).map(([key, value]) => `${key}：${String(value).trim()}`) : [];
+  const body = typeof delegate?.body === 'string' ? [delegate.body.trim(), ...extra].filter(Boolean).join('\n\n') : '';
+  // A handoff that cannot go out is said plainly instead of failing the whole reply.
+  if (!to || !body || body.length > 16000) {
+    return { ...output, text: `${output.text}\n\n（这次没能转交出去：${!to ? '对方不在我能联系的 Bot 里' : '请求内容为空或太长'}。）` };
   }
-  return { ...output, delegate: { to: delegate.to, body: delegate.body.trim() } };
+  return { ...output, delegate: { to, body } };
 }
 
 export function deliveriesFor(event, output, botId, participants, collaborationRoomId = event.room_id, seed = event.event_id) {
@@ -938,7 +948,13 @@ export class BotNode {
     try {
       // Only a turn answering a person hands off by naming a Bot; a reply to a Bot, or a worker's result, is not a request.
       const fromBot = this.participants.some(person => person.id === item.event.sender && person.kind === 'bot');
-      const output = parseBotOutput(response.text, this.participant.id, this.participants,
+      // Bots are named as the Bot saw them: room labels and contacts, keyed by full ID. A remote roster
+      // loaded cold may only know a full ID as the name.
+      const room = this.roomContextFor(item.event.room_id);
+      const labels = [...new Set([...(room.members || []), ...this.contacts.reachableBots().map(contact => contact.id)])]
+        .map(id => ({ ...speakerOf(id, this.participants, room), kind: this.participants.find(person => person.id === id)?.kind || this.contacts.contact(id)?.kind }))
+        .filter(person => person.kind === 'bot');
+      const output = parseBotOutput(response.text, this.participant.id, [...this.participants, ...labels],
         { ignoreDelivery: !this.delivery.acceptsProposal(item), handoff: !fromBot && !metadataOf(item.event).workerTask });
       this.delivery.applyOutput(item, output);
       output.controlOnly = response.controlOnly === true;

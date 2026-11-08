@@ -189,6 +189,16 @@ test('a delegation goes to a room the delegate is actually in, not the node home
   assert.deepEqual(next.event.openRequests.map(open => [open.to, open.request, open.forEventId]), [['@peer:b.node.test', '请核对', '$node-request']]);
 });
 
+test('a handoff written as chat reaches a remote Bot known only by its room membership', async t => {
+  const f = await fixture(t);
+  delegating(f);
+  f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
+    text: '我去问 Peer。\n@peer:b.node.test 请核对这两段' });
+  await drain(f.runtime);
+  const request = f.sent.find(message => message.options.kind === 'task.request');
+  assert.deepEqual([request.options.to, request.body], [['@peer:b.node.test'], '请核对这两段']);
+});
+
 test('when the delegation cannot be sent, the requester is told it did not go out', async t => {
   const f = await fixture(t);
   delegating(f);

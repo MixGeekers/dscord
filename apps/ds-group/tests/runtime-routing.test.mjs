@@ -24,7 +24,7 @@ test('Bot instructions and delegation retain the configured Matrix server name',
   assert.deepEqual(deliveries[1].options.to, [finance.id]);
   assert.equal(deliveries[1].roomId, '!team:chat.example.org:8448');
   assert.equal(deliveries[1].options.originRoomId, event.room_id);
-  assert.throws(() => parseBotOutput(JSON.stringify({
+  assert.deepEqual(parseBotOutput(JSON.stringify({
     text: '旧服务器', delegate: { to: '@finance:ds-group.local', body: '预算' },
-  }), hr.id, participants), /registered Bot/);
+  }), hr.id, participants), { text: '旧服务器\n\n（这次没能转交出去：对方不在我能联系的 Bot 里。）' });
 });
