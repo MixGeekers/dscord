@@ -162,3 +162,41 @@ test('one hundred permanently denied invitations cannot starve a later approved 
   assert.equal(approved, 1);
   assert.equal(f.store().pendingInvitations().length, 100);
 });
+
+const delegating = f => {
+  f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
+    text: JSON.stringify({ text: '我去问 Peer。', delegate: { to: '@peer:b.node.test', body: '请核对' } }) });
+  // The cross-server room is the only one this Bot shares with Peer; its own home room has neither.
+  f.runtime.roomRosters.set(roomId, [{ id: botId, kind: 'bot' }, { id: humanId, kind: 'human' }, { id: '@peer:b.node.test', kind: 'bot' }]);
+};
+const drain = async node => { for (let i = 0; i < 10 && await node.processOne(); i++); };
+
+test('a delegation goes to a room the delegate is actually in, not the node home room', async t => {
+  const f = await fixture(t);
+  delegating(f);
+  await drain(f.runtime);
+  const request = f.sent.find(message => message.options.kind === 'task.request');
+  assert.equal(request.roomId, roomId);
+  assert.equal(request.options.replyTo, '$node-request');
+  assert.deepEqual(f.sent.map(message => message.options.deliveryRole), ['ack', 'delegate']);
+});
+
+test('when the delegation cannot be sent, the requester is told it did not go out', async t => {
+  const f = await fixture(t);
+  delegating(f);
+  f.runtime.roomRosters.clear();
+  const errors = [];
+  f.runtime.onError = message => errors.push(message);
+  const send = f.matrix.send;
+  f.matrix.send = async (target, body, options) => {
+    if (options.kind === 'task.request') throw Object.assign(new Error('Bot is not in the room'), { status: 403 });
+    return send(target, body, options);
+  };
+  await drain(f.runtime);
+  assert.deepEqual(f.sent.map(message => message.options.deliveryRole), ['ack', 'final']);
+  const notice = f.sent[1];
+  assert.equal(notice.roomId, roomId);
+  assert.equal(notice.options.replyTo, '$node-request');
+  assert.match(notice.body, /没有发出去.*Peer不会处理/);
+  assert.match(errors.join('\n'), /Matrix delivery failed/);
+});

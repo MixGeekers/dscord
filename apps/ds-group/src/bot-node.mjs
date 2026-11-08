@@ -389,6 +389,26 @@ export class BotNode {
 
   senderName(id, room) { return speakerOf(id, this.participants, room).name; }
 
+  /**
+   * Where a delegation is sent: a room both this Bot and the delegate are known to be
+   * in. The node's own collaboration room first, then the room the request came from,
+   * then any other room seen with both. A cross-server Bot usually shares only the
+   * source room; the node's room is the last resort when nothing is known.
+   */
+  collaborationRoomFor(event, to) {
+    if (!to) return this.roomId;
+    // This Bot is in a room it received the request from or read a roster of (rosters are
+    // only readable by members), or one its member state says it joined.
+    const joined = (room, id) => room.memberProfiles?.[id]?.membership === 'join';
+    const shared = roomId => {
+      const room = this.roomContextFor(roomId);
+      if (room.membership === 'leave') return false;
+      const self = roomId === event.room_id || this.roomRosters.has(roomId) || joined(room, this.participant.id);
+      return self && (room.members?.length ? room.members.includes(to) : joined(room, to));
+    };
+    return [this.roomId, event.room_id, ...this.roomRosters.keys()].find(shared) || this.roomId;
+  }
+
   roomContextFor(roomId) {
     const room = this.store.roomContext(roomId);
     const people = this.roomRosters.get(roomId);
@@ -833,7 +853,7 @@ export class BotNode {
     this.store.produced(item.event_id, receipt);
     const output = { text, failure: true };
     this.delivery.applyOutput(item, output);
-    const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants, this.roomId);
+    const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants, this.collaborationRoomFor(item.event));
     this.store.generated(item.event_id, receipt, deliveries);
   }
 
@@ -868,7 +888,8 @@ export class BotNode {
           && (!request.event.fileBatch?.id || previous.fileBatch?.id === request.event.fileBatch.id));
         output.resultAttachments = uniqueAttachments([...earlierParts.flatMap(previous => previous.attachments || []), ...(request.event.attachments || eventAttachments(item.event))]);
       }
-      const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants, this.roomId);
+      const deliveries = deliveriesFor(item.event, output, this.participant.id, this.participants,
+        this.collaborationRoomFor(item.event, output.delegate?.to));
       const deliveredArtifacts = uniqueAttachments(deliveries.filter(delivery => delivery.options.kind !== 'task.request')
         .flatMap(delivery => delivery.options.attachments || []));
       const published = { ...response, publishedArtifacts: attachments, deliveredArtifacts, delegated: Boolean(output.delegate),
@@ -890,6 +911,21 @@ export class BotNode {
       await this.acceptResult(item, { status: 'failed', errorCode: error.message, toolCalls: response.toolCalls || 0 });
     }
     await this.flushTaskUpdates();
+  }
+
+  /** The requester was told the work went to another Bot; say plainly that it did not. */
+  async retractDelegation(item, delivery, error) {
+    const to = delivery.options.to?.[0];
+    const name = this.participants.find(person => person.id === to)?.name || to;
+    const threadRootId = threadOf(item.event);
+    const body = `刚才说已经交给${name}，但请求没有发出去（${error.message}），${name}不会处理这件事。`;
+    try {
+      await this.matrix.send(item.event.room_id, body, { transactionId: `${delivery.transaction_id}-undelivered`, to: [],
+        replyTo: item.event.event_id, ...(threadRootId ? { threadRootId } : {}), kind: 'reply', deliveryRole: 'final',
+        taskId: delivery.options.taskId,
+        mentions: { users: [], roles: [], everyone: false, here: false, replyUserId: item.event.sender, roleUsers: [], everyoneUsers: [], hereUsers: [] },
+        mMentions: { user_ids: [item.event.sender] } });
+    } catch (cause) { this.onError(`Delegation failure notice not sent: ${cause.message}`); }
   }
 
   finishDeliveryState(delivery) {
@@ -984,6 +1020,7 @@ export class BotNode {
           const item = this.store.item(delivery.source_event_id);
           this.taskUpdate(item, { status: 'failed', stage: 'delivering', summary: error.message });
           await this.flushTaskUpdates();
+          if (delivery.options.deliveryRole === 'delegate') await this.retractDelegation(item, delivery, error);
           this.onError(this.lastError);
           return true;
         }
