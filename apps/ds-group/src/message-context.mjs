@@ -3,7 +3,10 @@ import { withoutNativeMemoryViews } from './native-request.mjs';
 const metadata = event => event.content?.['org.ds_group'] || {};
 export const homeOf = id => typeof id === 'string' && id.startsWith('@') && id.includes(':') ? id.slice(id.indexOf(':') + 1) : null;
 
-/** Names are labels. Only the full Matrix ID identifies a speaker. */
+/**
+ * Names are labels. Only the full Matrix ID identifies a speaker's account; the global identity ID
+ * the server's roster gives (`globalId`) is the person behind it, the same on every chat server.
+ */
 export function speakerOf(id, participants = [], room = {}) {
   const person = participants.find(person => person.id === id);
   const profile = Object.hasOwn(room.memberProfiles || {}, id) ? room.memberProfiles[id] : undefined;
@@ -17,6 +20,7 @@ export function speakerOf(id, participants = [], room = {}) {
       nameObservedAt: Number.isFinite(profile.observedAt) ? profile.observedAt : null,
       nameEventTimestamp: Number.isFinite(profile.eventTimestamp) ? profile.eventTimestamp : null,
       nameEventId: typeof profile.eventId === 'string' ? profile.eventId : null } : {}),
+    ...(person?.globalId ? { globalId: person.globalId } : {}),
     ...(person?.ownerId ? { ownerId: person.ownerId } : {}) };
 }
 
