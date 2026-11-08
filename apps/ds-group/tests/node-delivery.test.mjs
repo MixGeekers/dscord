@@ -44,6 +44,8 @@ async function fixture(t) {
       delivery: { direct: async id => { assert.ok(people.some(person => person.id === id)); if (options.direct) await options.direct(id); return directRoom(participant.id, id); } },
       files: { prepare: async request => ({ ...request, files: request.event.attachments || [], workdir: directory }),
         upload: async artifact => file(artifact.name || 'result') } });
+    // Every Bot in this fixture shares the group room; a request to another Bot goes there.
+    node.contacts.seeRoom(roomId, people);
     const ingest = async (...events) => { store.ingest(events, undefined, value => node.delivery.register(value)); await node.flushTaskUpdates(); };
     return { node, store, calls, ingest };
   }
@@ -158,7 +160,7 @@ test('private collaboration uses Bot DMs, handles eleven inputs and returns thro
   const f = await fixture(t);
   let turns = 0;
   const a = f.build(hr, { turn: async () => ++turns === 1
-    ? { status: 'completed', text: JSON.stringify({ text: '受理详情', delegate: { to: finance.id, body: '处理这些附件' } }) }
+    ? { status: 'completed', text: JSON.stringify({ text: '受理详情' }), asks: [{ to: finance.id, body: '处理这些附件' }] }
     : receipt('最终成果') });
   const b = f.build(finance, { turn: async () => receipt('子成果', {
     text: JSON.stringify({ text: '子成果', delivery: { kind: 'direct', recipientId: hr.id } }),
@@ -205,7 +207,7 @@ test('natural work requested in a known human DM keeps Bot collaboration and fin
   const f = await fixture(t);
   let turns = 0;
   const a = f.build(hr, { turn: async () => ++turns === 1
-    ? { status: 'completed', text: JSON.stringify({ text: '开始协作', delegate: { to: finance.id, body: '制作一个文件' } }) }
+    ? { status: 'completed', text: JSON.stringify({ text: '开始协作' }), asks: [{ to: finance.id, body: '制作一个文件' }] }
     : receipt('交付成果') });
   const b = f.build(finance, { turn: async () => receipt('同伴成果', { artifacts: [{ path: '/synthetic/natural', name: 'natural-result' }] }) });
   const humanRoom = directRoom(hr.id, alice.id);
@@ -248,7 +250,7 @@ test('a parent delivery change while a delegated Bot works moves the peer result
   const f = await fixture(t);
   let turns = 0;
   const a = f.build(hr, { turn: async () => ++turns === 1
-    ? { status: 'completed', text: JSON.stringify({ text: '开始协作', delegate: { to: finance.id, body: '制作一个附件' } }) } : receipt('最终报告') });
+    ? { status: 'completed', text: JSON.stringify({ text: '开始协作' }), asks: [{ to: finance.id, body: '制作一个附件' }] } : receipt('最终报告') });
   const b = f.build(finance, { turn: async () => receipt('子结果', { artifacts: [{ path: '/synthetic/child', name: 'child' }] }) });
   await a.ingest(event('$late-parent', '整理数据', { to: [hr.id] }));
   await f.drain(a.node);
@@ -274,7 +276,7 @@ test('separate human private requests cannot reuse another human recipient', asy
   await f.drain(n.node);
   assert.equal(f.sent[0].room_id, directRoom(finance.id, alice.id));
   assert.equal(f.sent[1].room_id, directRoom(finance.id, bob.id));
-  assert.throws(() => parseBotOutput(JSON.stringify({ text: '报告', delivery: { kind: 'direct', roomId: '!untrusted' } }), finance.id, people), /room identifiers/);
+  assert.throws(() => parseBotOutput(JSON.stringify({ text: '报告', delivery: { kind: 'direct', roomId: '!untrusted' } }), people), /room identifiers/);
 });
 
 test('concurrent task publication cannot restore an older delivery route after a newer control', async t => {

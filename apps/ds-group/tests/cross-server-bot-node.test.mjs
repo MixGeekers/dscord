@@ -165,7 +165,7 @@ test('one hundred permanently denied invitations cannot starve a later approved 
 
 const delegating = f => {
   f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
-    text: JSON.stringify({ text: '我去问 Peer。', delegate: { to: '@peer:b.node.test', body: '请核对' } }) });
+    text: JSON.stringify({ text: '我去问 Peer。' }), asks: [{ to: '@peer:b.node.test', body: '请核对' }] });
   // The cross-server room is the only one this Bot shares with Peer; its own home room has neither.
   f.runtime.contacts.seeRoom(roomId, [{ id: botId, kind: 'bot' }, { id: humanId, kind: 'human' }, { id: '@peer:b.node.test', kind: 'bot' }]);
 };
@@ -189,14 +189,45 @@ test('a delegation goes to a room the delegate is actually in, not the node home
   assert.deepEqual(next.event.openRequests.map(open => [open.to, open.request, open.forEventId]), [['@peer:b.node.test', '请核对', '$node-request']]);
 });
 
-test('a handoff written as chat reaches a remote Bot known only by its room membership', async t => {
+test('a Bot that shares no room is asked in a direct room the asking Bot opens, and the room is kept for next time', async t => {
   const f = await fixture(t);
-  delegating(f);
   f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
-    text: '我去问 Peer。\n@peer:b.node.test 请核对这两段' });
+    text: JSON.stringify({ text: '我去问 Far。' }), asks: [{ to: '@far:c.node.test', body: '请看看' }] });
+  const created = [];
+  f.matrix.createRoom = async options => { created.push(options); return { room_id: '!direct:a.node.test' }; };
   await drain(f.runtime);
+  assert.deepEqual(created.map(options => [options.is_direct, options.invite]), [[true, ['@far:c.node.test']]]);
   const request = f.sent.find(message => message.options.kind === 'task.request');
-  assert.deepEqual([request.options.to, request.body], [['@peer:b.node.test'], '请核对这两段']);
+  assert.deepEqual([request.roomId, request.options.to, request.body], ['!direct:a.node.test', ['@far:c.node.test'], '请看看']);
+  assert.equal(await f.runtime.roomForAsk({ room_id: roomId }, '@far:c.node.test'), '!direct:a.node.test');
+  assert.equal(created.length, 1);
+});
+
+test('a result coming back from the deepest request still reaches the person, and only asks count as hops', async t => {
+  const peer = '@peer:b.node.test';
+  const f = await fixture(t, { sender: peer, meta: { kind: 'task.result', taskId: 'task-z', hop: 4,
+    originSenderId: humanId, originRoomId: roomId, originEventId: '$tang' } });
+  f.bridge.turn = async () => ({ status: 'completed', text: '一共 4 个未修致命 bug。', sessionId: 'native-room-session', artifacts: [], toolReceipts: [] });
+  await drain(f.runtime);
+  const answer = f.sent.at(-1);
+  assert.deepEqual([answer.options.deliveryRole, answer.options.replyTo, answer.options.hop], ['final', '$tang', 4]);
+  assert.match(answer.body, /4 个未修致命 bug/);
+});
+
+test('files a Bot hands to another Bot are uploaded and go with that request only', async t => {
+  const f = await fixture(t);
+  f.runtime.contacts.seeRoom(roomId, [{ id: botId, kind: 'bot' }, { id: '@peer:b.node.test', name: 'Peer', kind: 'bot' }]);
+  const uploads = [];
+  f.runtime.files = { prepare: async request => request,
+    upload: async file => { uploads.push(file.path); return { id: `att-${uploads.length}`, name: file.name, mimeType: 'text/markdown', size: 3, sha256: 'b'.repeat(64), contentUri: 'mxc://a/1' }; } };
+  f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
+    text: JSON.stringify({ text: '我去问 Peer。' }), asks: [{ to: '@peer:b.node.test', body: '核对数量', files: [{ path: '/node/bug-summary.md', name: 'bug-summary.md' }] }] });
+  await drain(f.runtime);
+  assert.deepEqual(uploads, ['/node/bug-summary.md']);
+  const request = f.sent.find(message => message.options.kind === 'task.request');
+  assert.deepEqual(request.options.attachments?.map(file => file.name), ['bug-summary.md']);
+  assert.equal(request.options.hop, 1);
+  assert.equal(f.sent.find(message => message.options.kind !== 'task.request').options.attachments, undefined);
 });
 
 test('when the delegation cannot be sent, the requester is told it did not go out', async t => {
@@ -235,7 +266,7 @@ test('another Bot gets the worker result as the answer to its request, not the f
   const answer = f.sent[1];
   assert.deepEqual([answer.roomId, answer.options.kind, answer.options.to, answer.options.replyTo, answer.options.taskId],
     [roomId, 'task.result', [peer], '$node-request', 'task-x']);
-  assert.deepEqual([answer.options.originEventId, answer.options.originRoomId, answer.options.hop], ['$su', '!b-room:b.node.test', 2]);
+  assert.deepEqual([answer.options.originEventId, answer.options.originRoomId, answer.options.hop], ['$su', '!b-room:b.node.test', 1]);
   assert.match(answer.body, /B-017/);
   assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'returned');
 });

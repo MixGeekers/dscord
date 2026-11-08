@@ -9,8 +9,7 @@ import { HANDOFF_ACK } from '../vendor/ds-bot/src/host/constants.js';
 import { isModelQuotaFailure } from '../src/model-failure.mjs';
 
 // Front tools that only read: an answer that used nothing else can be restarted.
-const READ_ONLY_FRONT_TOOLS = new Set(['recall', 'contacts', 'memory_source', 'raw_source_query', 'read_group_chat', 'read_own_chat',
-  'list_bots', 'read_image', 'web_fetch', 'task_status', 'review_memory']);
+const READ_ONLY_FRONT_TOOLS = new Set(['recall', 'contacts', 'memory_source', 'raw_source_query', 'read_image', 'task_status', 'review_memory']);
 const textOf = message => (message?.content || []).filter(block => block.type === 'text').map(block => block.text).join('');
 const terminal = record => ['completed', 'failed', 'cancelled', 'unknown'].includes(record?.status);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -164,13 +163,6 @@ export class NativeBridge {
     if (!run) return;
     const message = event.data?.message || event.data;
     const source = message?.source;
-    // Native Bot-to-Bot replies carry the exchange they answer. Record it where
-    // it is delivered, so unrelated local chats cannot become DSCord answers.
-    if (event.type === 'user/message' && source?.kind === 'bot' && source.role === 'request'
-      && source.senderSessionId === this.node.nativeBotId && source.audience !== 'user'
-      && run.seen && run.currentTurn === run.turn && source.exchangeId) {
-      run.exchanges.add(source.exchangeId);
-    }
     if (session.id !== run.record.sessionId) {
       const bot = await this.native.bot(this.node.nativeBotId);
       if (session.id !== bot.sessionId) return;
@@ -181,20 +173,10 @@ export class NativeBridge {
     if (event.type === 'turn/start') run.currentTurn = event.data.turn;
     if (event.type === 'user/message') {
       if (textOf(message).startsWith(`${run.marker}\n`)
-        || source?.kind === 'bot' && run.exchanges.has(source.replyTo)
         || run.partContinuation && source?.handoff === true && source.resume === true) {
         run.seen = true;
         run.turn = run.currentTurn;
         run.partContinuation = false;
-        if (source?.replyTo && run.exchanges.has(source.replyTo)) {
-          run.exchanges.delete(source.replyTo);
-          // The answer to a Bot this front asked comes back as its own message; the turn
-          // it starts still ends in the reply to the person who asked in the room.
-          // The steer ends this turn and starts the next one with the note; the request marker
-          // makes that turn this request's, so its answer and completion are the ones kept.
-          const note = `${run.marker}\nDSCord：上面是你为${run.sender}去问来的答复。这一轮的最后一条回复会发给${run.sender}，直接对${run.sender}说，不要回复那个 Bot。`;
-          Promise.resolve().then(() => this.core.prompt(session.id, note, 'steer')).catch(() => {});
-        }
       }
     }
     if (!run.seen) return;
@@ -217,12 +199,10 @@ export class NativeBridge {
     if (event.type === 'turn/end') {
       run.reason = event.data?.reason?.kind;
       run.failure = event.data?.reason?.error;
-      // An acknowledgement is not completion while a teammate still owes a
-      // reply to this Bot. Native direct-to-user work has a different destination.
-      if (run.reason === 'completed' && run.text && run.exchanges.size === 0 || run.reason === 'error' || run.reason === 'cancelled') run.resolve();
+      if (run.reason === 'completed' && run.text || run.reason === 'error' || run.reason === 'cancelled') run.resolve();
       // A turn can end on a tool with no reply (script 02 G16). Nothing will finish the request, and the node's
       // queue waits behind it: ask once for the reply, and a second empty ending finishes it without one.
-      else if (run.reason === 'completed' && !run.text && run.exchanges.size === 0) {
+      else if (run.reason === 'completed' && !run.text) {
         if (run.nudged) run.resolve();
         else {
           run.nudged = true;
@@ -353,7 +333,7 @@ export class NativeBridge {
       // work dispatched from it answers that message, not the peer's result.
       const event = input.event;
       const answer = ['task.result', 'task.failure'].includes(event.kind) && event.senderKind === 'bot' && event.originEventId;
-      this.core.origin = workerTask?.origin || { requestId: input.requestId,
+      this.core.origin = workerTask?.origin || { requestId: input.requestId, hop: Number.isInteger(event.hop) ? event.hop : 0,
         ...(answer
           ? { roomId: event.originRoomId || event.roomId, eventId: event.originEventId, senderId: event.originSenderId,
             ...(event.originThreadRootId ? { threadRootId: event.originThreadRootId } : {}),
@@ -365,8 +345,7 @@ export class NativeBridge {
       let resolve;
       const done = new Promise(done => { resolve = done; });
       const marker = `DSCORD_REQUEST=${input.requestId}`;
-      const run = this.run = { marker, resolve, record, text: '', exchanges: new Set(),
-        sender: input.event.senderName || input.event.senderId };
+      const run = this.run = { marker, resolve, record, text: '', sender: input.event.senderName || input.event.senderId };
       Object.assign(record, { status: 'running', stage: 'working', sessionId: bot.sessionId, model: bot.model,
         contextKey: input.context?.key, source: input.context?.source,
         summary: '原生 Bot 正在处理', startedAt: new Date().toISOString() });
@@ -402,8 +381,9 @@ export class NativeBridge {
       record.text = run.text;
       // Work this turn handed to workers: the reply only acknowledges it, the result follows later.
       // Work started or joined for this message: its result comes later, so this turn's reply is an acknowledgement.
-      record.dispatched = Object.values(this.state.tasks).filter(task => !task.joined && [task.origin, ...(task.followers || [])]
-        .some(origin => origin?.requestId === input.requestId)).map(task => task.id);
+      // Requests to other Bots made with ask_bot: the node sends them with this reply.
+      record.asks = this.core.takeAsks(input.requestId);
+      record.dispatched = this.core.handedOff(input.requestId);
       // The front writes no files; worker results carry theirs without a front turn.
       record.artifacts = [];
       record.status = 'completed'; record.stage = 'completed'; record.summary = '处理完成';
@@ -416,7 +396,7 @@ export class NativeBridge {
       signal?.removeEventListener('abort', abort);
       this.run = null;
       this.waiting = null;
-      if (this.core.origin) this.core.lastOrigin = { origin: this.core.origin, at: Date.now() };
+      this.core.takeAsks(input.requestId);
       this.core.origin = null;
       record.finishedAt = new Date().toISOString();
       await this.save();
@@ -457,7 +437,7 @@ export class NativeBridge {
 
   async cancelNative(run) {
     const agent = await this.native.agent(run.record.sessionId);
-    if (this.run !== run || terminal(run.record) || run.reason === 'completed' && run.exchanges.size === 0) return;
+    if (this.run !== run || terminal(run.record) || run.reason === 'completed') return;
     // Remove only this request if admission queued it behind different work.
     for (const message of [...(agent.inbox?.nextTurn || []), ...(agent.inbox?.nextStep || [])]) {
       if (message.source?.rpcId === run.record.requestId || message.source?.requestId === run.record.requestId || textOf(message).startsWith(`${run.marker}\n`)) {

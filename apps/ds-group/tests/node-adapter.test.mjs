@@ -68,52 +68,29 @@ test('heartbeat reports observed runtime identity and version without inventing 
   } finally { store.close(); }
 });
 
-test('synthetic response protocol accepts text/JSON and validates explicit delegation', () => {
-  assert.deepEqual(parseBotOutput('普通回复', finance.id, participants), { text: '普通回复' });
-  assert.deepEqual(parseBotOutput('```json\n{"text":"收到","delegate":{"to":"@hr:ds-group.local","body":"整理名单"}}\n```', finance.id, participants),
-    { text: '收到', delegate: { to: hr.id, body: '整理名单' } });
-  // A handoff that cannot go out is said in the reply instead of failing it (nothing reached the asker before).
-  for (const to of ['@finance:ds-group.local', '@alice:ds-group.local', '@nobody:ds-group.local']) {
-    assert.deepEqual(parseBotOutput(`{"text":"x","delegate":{"to":"${to}","body":"x"}}`, finance.id, participants),
-      { text: 'x\n\n（这次没能转交出去：对方不在我能联系的 Bot 里。）' });
-  }
-  // Script 02 G14 retest: extra fields such as audience go into the request; a display name resolves to the full ID.
-  assert.deepEqual(parseBotOutput('{"text":"收到","delegate":{"to":"人事","body":"看日志","audience":"玩家小满：通俗说明"}}', finance.id, participants),
-    { text: '收到', delegate: { to: hr.id, body: '看日志\n\naudience：玩家小满：通俗说明' } });
-  // Script 02 G13: the model wrote the full ID as a Matrix link; it is still the same Bot.
-  for (const to of [`matrix:${hr.id}`, `matrix:u/${hr.id.slice(1)}`, `https://matrix.to/#/${hr.id}`, ` ${hr.id} `]) {
-    assert.deepEqual(parseBotOutput(JSON.stringify({ text: '收到', delegate: { to, body: '看日志' } }), finance.id, participants),
-      { text: '收到', delegate: { to: hr.id, body: '看日志' } });
-  }
-  // Script 02 G18 retest: a remote Bot whose roster name is its full ID is still found by its room label.
-  const cold = [...participants.filter(person => person.id !== hr.id), { id: hr.id, name: hr.id, kind: 'bot' }];
-  assert.equal(parseBotOutput(`好的。\n@${hr.name} 写两段`, finance.id, cold).delegate, undefined);
-  assert.deepEqual(parseBotOutput(`好的。\n@${hr.name} 写两段`, finance.id, [...cold, { id: hr.id, name: hr.name, kind: 'bot' }]).delegate,
-    { to: hr.id, body: '写两段' });
-  assert.throws(() => parseBotOutput('{"delegate":{"to":"@hr:ds-group.local","body":"x"}}', finance.id, participants), /non-empty text/);
-  // Script 02 G18: an unescaped quote inside the delegation body must not drop the
-  // delegation and post the raw JSON to the room.
-  assert.deepEqual(parseBotOutput('{"text":"收到，我去找人事","delegate":{"to":"@hr:ds-group.local","body":"不能拿"氛围词"顶上,\n要具体"}}', finance.id, participants),
-    { text: '收到，我去找人事', delegate: { to: hr.id, body: '不能拿"氛围词"顶上,\n要具体' } });
-  assert.throws(() => parseBotOutput('{"text":"收到","delegate":{"to":"@hr:ds-group.local","body":"a", "b"}}', finance.id, participants), /not valid JSON/);
-  // Script 02 G18 retest: a handoff written as chat ("@人事 …" on its own line) becomes the delegation.
-  assert.deepEqual(parseBotOutput(`唐，我这就去要。\n\n@${hr.name} 唐要两段简介，\n各 50 字`, finance.id, participants),
-    { text: '唐，我这就去要。', delegate: { to: hr.id, body: '唐要两段简介，\n各 50 字' } });
-  assert.deepEqual(parseBotOutput(`@${hr.name} 你好`, finance.id, participants, { handoff: false }), { text: `@${hr.name} 你好` });
-  assert.deepEqual(parseBotOutput(`我刚和 @${hr.name} 聊过`, finance.id, participants), { text: `我刚和 @${hr.name} 聊过` });
+test('synthetic response protocol accepts text and structured JSON; asking another Bot is not part of the reply', () => {
+  assert.deepEqual(parseBotOutput('普通回复', participants), { text: '普通回复' });
+  assert.deepEqual(parseBotOutput('```json\n{"text":"收到"}\n```', participants), { text: '收到' });
+  // A request to another Bot is the ask_bot tool; a delegate field or an "@名字" line in the reply is only text.
+  assert.deepEqual(parseBotOutput('{"text":"收到","delegate":{"to":"@hr:ds-group.local","body":"整理名单"}}', participants), { text: '收到' });
+  assert.deepEqual(parseBotOutput(`唐，我这就去要。\n\n@${hr.name} 唐要两段简介`, participants), { text: `唐，我这就去要。\n\n@${hr.name} 唐要两段简介` });
+  assert.throws(() => parseBotOutput('{"artifacts":[]}', participants), /non-empty text/);
+  // An unescaped quote inside structured text must not post the raw JSON to the room.
+  assert.deepEqual(parseBotOutput('{"text":"不能拿"氛围词"顶上,\n要具体"}', participants), { text: '不能拿"氛围词"顶上,\n要具体' });
+  assert.throws(() => parseBotOutput('{"text":"收到", "b"}', participants), /not valid JSON/);
   // Ordinary text that merely starts with a brace is still chat content.
-  assert.deepEqual(parseBotOutput('{a, b} 是两个元素', finance.id, participants), { text: '{a, b} 是两个元素' });
+  assert.deepEqual(parseBotOutput('{a, b} 是两个元素', participants), { text: '{a, b} 是两个元素' });
 });
 
 test('synthetic delegation produces stable transactions and result routing returns once to the requesting Bot', () => {
   const original = event('$alice', { to: [hr.id] });
-  const deliveries = deliveriesFor(original, { text: '财务帮忙核算', delegate: { to: finance.id, body: '100+200' } }, hr.id, participants);
+  const deliveries = deliveriesFor(original, { text: '财务帮忙核算', asks: [{ to: finance.id, body: '100+200', roomId: original.room_id }] }, hr.id, participants);
   assert.equal(deliveries.length, 2);
   assert.deepEqual(deliveries[1].options.to, [finance.id]);
   assert.equal(deliveries[1].options.returnTo, hr.id);
   assert.equal(deliveries[1].options.originSenderId, participants[0].id);
   assert.equal(deliveries[1].options.kind, 'task.request');
-  assert.deepEqual(deliveriesFor(original, { text: '财务帮忙核算', delegate: { to: finance.id, body: '100+200' } }, hr.id, participants), deliveries);
+  assert.deepEqual(deliveriesFor(original, { text: '财务帮忙核算', asks: [{ to: finance.id, body: '100+200', roomId: original.room_id }] }, hr.id, participants), deliveries);
   const requested = event('$hr', deliveries[1].options, { sender: hr.id });
   const result = deliveriesFor(requested, { text: '300' }, finance.id, participants)[0];
   assert.deepEqual(result.options.to, [hr.id]);
@@ -122,13 +99,13 @@ test('synthetic delegation produces stable transactions and result routing retur
   const summary = deliveriesFor(returned, { text: 'Alice，结果是300' }, hr.id, participants)[0];
   assert.deepEqual(summary.options.to, []);
   assert.equal(summary.options.taskId, deliveries[1].options.taskId);
-  assert.throws(() => deliveriesFor(event('$loop', { hop: 4 }), { text: '继续', delegate: { to: hr.id, body: '继续' } }, finance.id, participants), /hop limit/);
+  assert.throws(() => deliveriesFor(event('$loop', { hop: 4 }), { text: '继续', asks: [{ to: hr.id, body: '继续', roomId: event('$loop', { hop: 4 }).room_id }] }, finance.id, participants), /hop limit/);
 });
 
 test('synthetic private-chat delegation goes through the shared room and returns to the original private message', () => {
   const dmRoom = '!alice-hr:ds-group.local';
   const original = event('$private-request', { to: [hr.id] }, { room_id: dmRoom });
-  const deliveries = deliveriesFor(original, { text: '请财务核算', delegate: { to: finance.id, body: '100+200' } }, hr.id, participants, roomId);
+  const deliveries = deliveriesFor(original, { text: '请财务核算', asks: [{ to: finance.id, body: '100+200', roomId: roomId }] }, hr.id, participants);
   assert.equal(deliveries[0].roomId, dmRoom);
   assert.equal(deliveries[0].options.replyTo, '$private-request');
   const delegation = deliveries[1];
@@ -137,11 +114,11 @@ test('synthetic private-chat delegation goes through the shared room and returns
   assert.equal(delegation.options.originRoomId, dmRoom);
   assert.equal(delegation.options.originEventId, '$private-request');
   const requested = event('$hr-delegate', delegation.options, { sender: hr.id });
-  const result = deliveriesFor(requested, { text: '300' }, finance.id, participants, roomId)[0];
+  const result = deliveriesFor(requested, { text: '300' }, finance.id, participants)[0];
   assert.equal(result.roomId, roomId);
   assert.equal(result.options.replyTo, '$hr-delegate');
   assert.deepEqual(result.options.to, [hr.id]);
-  const summary = deliveriesFor(event('$finance-result', result.options, { sender: finance.id }), { text: 'Alice，合计300' }, hr.id, participants, roomId)[0];
+  const summary = deliveriesFor(event('$finance-result', result.options, { sender: finance.id }), { text: 'Alice，合计300' }, hr.id, participants)[0];
   assert.equal(summary.roomId, dmRoom);
   assert.equal(summary.options.replyTo, '$private-request');
   assert.deepEqual(summary.options.to, []);

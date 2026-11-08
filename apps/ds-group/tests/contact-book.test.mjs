@@ -20,7 +20,10 @@ test('each Bot keeps its own book: the same contact has different shared rooms i
   assert.equal(promo.contact(qa).reach, 'room');
   assert.equal(promo.contact(qa).sameDsh, false);
   assert.deepEqual(planner.contact(qa).rooms, ['!r1']);
-  assert.deepEqual([planner.contact(qa).reach, planner.contact(qa).callAs, planner.contact(qa).sameDsh], ['message_bot', 'QA', true]);
+  assert.deepEqual([planner.contact(qa).reach, planner.contact(qa).sameDsh], ['room', true]);
+  // Every request between Bots goes over Matrix: a Bot in the same DSH with no shared room gets a direct room.
+  planner.member('!r1', qa, 'leave');
+  assert.deepEqual([planner.contact(qa).reach, planner.contact(qa).rooms], ['direct', []]);
   assert.equal(promo.contact(qa).firstRoomId, '!r2');
   assert.deepEqual(promo.reachableBots(), [{ id: qa, name: 'QA', reach: 'room', rooms: ['!r2'] }]);
 });
@@ -46,12 +49,11 @@ test('exchanges record who asked whom, for which message, how it ended, and page
   const self = '@dev:a.test';
   const contacts = book(t, self);
   for (const [index, peer] of ['@planner:a.test', '@qa:a.test', '@planner:a.test'].entries()) {
-    contacts.open({ id: `x${index}`, direction: index === 1 ? 'in' : 'out', peer, via: 'message_bot', status: index === 1 ? 'received' : 'sent',
+    contacts.open({ id: `x${index}`, direction: index === 1 ? 'in' : 'out', peer, via: 'matrix', status: index === 1 ? 'received' : 'sent',
       origin: { roomId: '!r1', eventId: `$e${index}`, senderId: '@lin:a.test' } });
   }
-  assert.equal(contacts.awaiting().id, 'x1');
   contacts.settle('x1', { status: 'dispatched', taskId: 'T-1' });
-  assert.equal(contacts.awaiting(), undefined);
+  assert.equal(contacts.exchange('x1').status, 'dispatched');
   contacts.settle('x2', { status: 'returned' });
   const first = contacts.view({ contact: '@planner:a.test', limit: 1 });
   assert.deepEqual(first.exchanges.map(exchange => [exchange.id, exchange.status]), [['x2', 'returned']]);
@@ -72,4 +74,18 @@ test('pending lists requests sent and not yet back, with what was asked and for 
   contacts.settle('T-1>@qa:b.test', { status: 'sent' });
   contacts.settle('T-2>@qa:b.test', { status: 'returned' });
   assert.deepEqual(contacts.pending().map(exchange => [exchange.id, exchange.detail, exchange.origin.eventId]), [['T-1>@qa:b.test', '看小满的 crash.log', '$g13']]);
+});
+
+test('a request names a Bot by its full ID, a Matrix link to it, or a name only one Bot has', t => {
+  const self = '@community:b.test';
+  const qa = '@qa:a.test';
+  const contacts = book(t, self, { people: () => [{ id: qa, name: 'QA', kind: 'bot' }, { id: '@qa2:c.test', name: 'QA2', kind: 'bot' },
+    { id: '@xiaoman:b.test', name: '小满', kind: 'human' }] });
+  contacts.seeRoom('!r4', [{ id: self, kind: 'bot' }, { id: qa, name: 'QA', kind: 'bot' }, { id: '@xiaoman:b.test', name: '小满', kind: 'human' }]);
+  for (const to of [qa, `matrix:${qa}`, `matrix:u/${qa.slice(1)}`, `https://matrix.to/#/${qa}`, ' QA ', '@QA']) assert.equal(contacts.resolve(to).id, qa, to);
+  assert.match(contacts.resolve('@xiaoman:b.test').error, /不在你的通讯录/);
+  assert.match(contacts.resolve('Nobody').error, /不在你的通讯录/);
+  // A Bot met before but sharing no room now is still reached, in a direct room.
+  contacts.open({ id: 'old', direction: 'out', peer: '@qa2:c.test', via: 'matrix', status: 'returned' });
+  assert.equal(contacts.resolve('QA2').reach, 'direct');
 });

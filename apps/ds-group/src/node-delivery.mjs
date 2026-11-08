@@ -209,7 +209,7 @@ export class NodeDelivery {
       const direct = intent.kind === 'direct' && !['ack', 'control'].includes(role);
       if (direct) {
         if (!this.client) throw new Error('Direct delivery service is unavailable');
-        const recipient = role === 'delegate' ? item.response?.delegate?.to || delivery.options.to[0]
+        const recipient = role === 'delegate' ? delivery.options.askTo
           : role === 'peer' ? metadataOf(item.event).returnTo || item.event.sender : intent.recipientId;
         roomId = await this.client.direct(recipient);
       }

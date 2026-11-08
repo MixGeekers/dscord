@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { WorkCore, CARD_REFUSAL, CARD_TOOLS, FRONT_REFUSAL, FRONT_TOOLS, WORKER_DENY, localBot } from '../dsh-connect/work-core.mjs';
+import { WorkCore, CARD_REFUSAL, CARD_TOOLS, FRONT_REFUSAL, FRONT_TOOLS, NATIVE_TEAM_REFUSAL, NATIVE_TEAM_TOOLS, WORKER_DENY, localBot } from '../dsh-connect/work-core.mjs';
 import { ContactBook } from '../src/contact-book.mjs';
 
 async function fixture(t, options = {}) {
@@ -47,8 +47,8 @@ test('the front keeps only communication tools and is refused everything else', 
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
   const front = f.agentFor('front');
-  assert.ok(['dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note'].every(name => front.tools.has(name)));
-  assert.deepEqual(front.restricted, ['bash', 'write']);
+  assert.ok(['dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot'].every(name => front.tools.has(name)));
+  assert.deepEqual(front.restricted, ['bash', 'write', 'message_bot']);
   assert.equal(f.guard({ agent: front, name: 'bash' }), FRONT_REFUSAL);
   assert.equal(f.guard({ agent: front, name: 'recall' }), undefined);
   // Every tool a worker is denied stays available at the front, so nothing becomes unreachable.
@@ -60,6 +60,13 @@ test('the front keeps only communication tools and is refused everything else', 
     assert.equal(f.guard({ agent: front, name }), CARD_REFUSAL);
   }
   assert.equal(f.guard({ agent: f.agentFor('someone-else'), name: 'ask_user' }), undefined);
+  // One way for each thing: the native host's Bot channel, team and groups are off for the front and for workers.
+  for (const name of NATIVE_TEAM_TOOLS) {
+    assert.equal(FRONT_TOOLS.has(name), false, name);
+    assert.equal(f.guard({ agent: front, name }), NATIVE_TEAM_REFUSAL, name);
+  }
+  // Looking things up on the web is a worker's job.
+  assert.equal(f.guard({ agent: front, name: 'web_fetch' }), FRONT_REFUSAL);
 });
 
 test('dispatch starts a worker with the brief and origin, and a verified report goes back once', async t => {
@@ -250,65 +257,53 @@ test('a plain-language requester who joins gets only the files and reply lines f
   assert.equal(second.reply, '玩家版：先别读那个存档，下个补丁会修。');
 });
 
-test('work a Bot does for another Bot goes back through the asking Bot to the room message behind the request', async t => {
-  const dev = await fixture(t, { nativeBotId: 'dev', origin: null });
-  const planner = await fixture(t, { nativeBotId: 'planner', origin: null });
-  await dev.core.serveFront(dev.agentFor('front'));
-  await planner.core.serveFront(planner.agentFor('front'));
-  // 开发助理 is answering 林 in R1 and asks 策划 with message_bot; 策划 dispatches a worker for it.
-  dev.core.origin = { roomId: '!r1', eventId: '$g5', senderId: '@lin', body: '请策划写 known-issues.md' };
-  await planner.core.event({ id: 'front' }, { type: 'user/message', data: { message: { content: [{ type: 'text', text: '写 known-issues.md' }],
-    source: { kind: 'bot', role: 'request', senderSessionId: 'dev', exchangeId: 'x1' } } } });
-  // 开发助理 finishes its turn before 策划 gets round to dispatching.
-  dev.core.origin = null;
-  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '写 known-issues.md', brief: '整理已知问题' });
-  const task = Object.values(planner.state.tasks)[0];
-  assert.deepEqual([task.origin.roomId, task.origin.eventId, task.origin.via], ['!r1', '$g5', '@dev:dsh.test']);
-  await writeFile(path.join(task.dir, 'outputs', 'known-issues.md'), '# 已知问题\n');
-  await run(planner, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: '整理了 3 个已知问题' });
-  assert.equal(planner.results.length, 0);
-  assert.equal(dev.results.length, 1);
-  assert.equal(dev.results[0].task.origin.eventId, '$g5');
-  assert.deepEqual(dev.results[0].task.artifacts.map(file => file.name), ['known-issues.md']);
-  assert.match(dev.results[0].text, /^Lin：「写 known-issues\.md」完成了/);
-  assert.equal(task.notified, true);
-  // Both contact books keep the exchange: who asked whom, for which room message, and how it ended.
-  const asked = planner.core.contacts.exchange('x1');
-  assert.deepEqual([asked.direction, asked.peerId, asked.via, asked.origin.eventId, asked.status, asked.taskId],
-    ['in', '@dev:dsh.test', 'message_bot', '$g5', 'delivered', task.id]);
-  const sent = dev.core.contacts.exchange('x1');
-  assert.deepEqual([sent.direction, sent.peerId, sent.status], ['out', '@planner:dsh.test', 'returned']);
-  assert.deepEqual(dev.core.contacts.contact('@planner:dsh.test').reach, 'message_bot');
+test('ask_bot is the one way to ask another Bot: it names a contact and goes out with this turn\'s reply', async t => {
+  const f = await fixture(t, { origin: { requestId: 'req-1', roomId: '!r4', eventId: '$g13', senderId: '@xiaoman' } });
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.contacts.seeRoom('!r4', [{ id: '@native:dsh.test', kind: 'bot' }, { id: '@qa:a.test', name: 'QA', kind: 'bot' },
+    { id: '@xiaoman', name: '小满', kind: 'human' }]);
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: '核对 crash.log 是不是钟楼读档闪退', audience: '玩家小满：通俗说明', plain: true }), /这一轮结束后发给 QA/);
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'matrix:@qa:a.test', body: '再问一次' }), /已经请过 QA/);
+  assert.match(await run(f, 'front', 'ask_bot', { to: '@xiaoman', body: 'x' }), /不在你的通讯录/);
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: ' ' }), /需要 body/);
+  const asks = f.core.takeAsks('req-1');
+  assert.deepEqual(asks.map(ask => ask.to), ['@qa:a.test']);
+  assert.match(asks[0].body, /^核对 crash\.log 是不是钟楼读档闪退\n\n结果给谁、什么口径：玩家小满：通俗说明\n\n最终读者不该看到技术内部信息/);
+  assert.deepEqual(f.core.takeAsks('req-1'), []);
+  // A worker asks through the front, and a turn with no message to answer has no one to report back to.
+  assert.ok(WORKER_DENY.has('ask_bot'));
+  f.core.origin = null;
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: 'x' }), /没有要回复的消息/);
 });
 
-test('each Bot-to-Bot request keeps its own room message, even when the asking Bot is already done', async t => {
-  const dev = await fixture(t, { nativeBotId: 'dev', origin: null });
-  const ops = await fixture(t, { nativeBotId: 'ops', origin: null });
-  const planner = await fixture(t, { nativeBotId: 'planner', origin: null });
-  await planner.core.serveFront(planner.agentFor('front'));
-  const ask = (from, exchangeId) => planner.core.event({ id: 'front' }, { type: 'user/message', data: { message: {
-    content: [{ type: 'text', text: '帮忙' }], source: { kind: 'bot', role: 'request', senderSessionId: from, exchangeId } } } });
-  // 开发助理 asked while answering R1; its turn ended right after (the core keeps the last room message briefly).
-  dev.core.lastOrigin = { origin: { roomId: '!r1', eventId: '$a' }, at: Date.now() };
-  await ask('dev', 'x1');
-  // 运维 asks next, about R2, and is done before 策划 dispatches either.
-  ops.core.origin = { roomId: '!r2', eventId: '$b' };
-  await ask('ops', 'x2');
-  ops.core.origin = null;
-  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '运维的活', brief: 'b' });
-  // A later room turn of 策划's own goes back to its own room.
-  planner.core.origin = { roomId: '!r3', eventId: '$c' };
-  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '自己的活', brief: 'c' });
-  planner.core.origin = null;
-  const [forOps, own] = Object.values(planner.state.tasks);
-  assert.deepEqual([forOps.origin.roomId, forOps.origin.via], ['!r2', '@ops:dsh.test']);
-  assert.equal(planner.core.contacts.exchange('x2').status, 'dispatched');
-  assert.deepEqual([own.origin.roomId, own.origin.via], ['!r3', undefined]);
-  // The first request still had 开发助理's room message on record when it arrived.
-  await ask('dev', 'x3');
-  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '开发的活', brief: 'a' });
-  const forDev = Object.values(planner.state.tasks)[2];
-  assert.deepEqual([forDev.origin.roomId, forDev.origin.via], ['!r1', '@dev:dsh.test']);
+test('ask_bot hands local files over as attachments and stops passing work after four Bot-to-Bot hops', async t => {
+  const f = await fixture(t, { origin: { requestId: 'req-2', roomId: '!r2', eventId: '$g8', senderId: '@tang', hop: 3 } });
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.contacts.seeRoom('!r2', [{ id: '@native:dsh.test', kind: 'bot' }, { id: '@qa:a.test', name: 'QA', kind: 'bot' }]);
+  const summary = path.join(f.directory, 'bug-summary.md');
+  await writeFile(summary, '# 未修致命 bug\n');
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: '核对未修致命 bug 数', files: [path.join(f.directory, 'missing.md')] }), /读不到文件/);
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: '核对未修致命 bug 数', files: [summary] }), /这一轮结束后发给 QA/);
+  assert.deepEqual(f.core.takeAsks('req-2')[0].files, [{ path: summary, name: 'bug-summary.md' }]);
+  f.core.origin = { ...f.core.origin, hop: 4 };
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: '再转一次' }), /已经在 Bot 之间转了 4 次/);
+  assert.deepEqual(f.core.takeAsks('req-2'), []);
+});
+
+test('one request is either handed to a worker or waits for another Bot in a turn, so the requester gets one result', async t => {
+  const f = await fixture(t, { origin: { requestId: 'req-g22', roomId: '!r2', eventId: '$g22', senderId: '@tang' } });
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.contacts.seeRoom('!r2', [{ id: '@native:dsh.test', kind: 'bot' }, { id: '@planner:a.test', name: '策划', kind: 'bot' }]);
+  // Asked first: no worker for the same request until the planner's result is back.
+  assert.match(await run(f, 'front', 'ask_bot', { to: '策划', body: '补一段游戏简介' }), /这一轮结束后发给 策划/);
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '资料包', brief: '整理媒体资料包' }), /已经请了 策划.*不要派工/);
+  assert.deepEqual(f.core.handedOff('req-g22'), []);
+  assert.equal(f.core.takeAsks('req-g22').length, 1);
+  // Dispatched first: the worker's result is the answer, so the same turn does not also ask the planner.
+  f.core.origin = { requestId: 'req-g22b', roomId: '!r2', eventId: '$g22b', senderId: '@tang' };
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '资料包', brief: '整理媒体资料包' }), /已派工/);
+  assert.match(await run(f, 'front', 'ask_bot', { to: '策划', body: '补一段游戏简介' }), /已经把这件事交给了工作者/);
+  assert.deepEqual(f.core.takeAsks('req-g22b'), []);
 });
 
 test('a plain-language task cannot hand stack traces or raw logs to the person who asked', async t => {

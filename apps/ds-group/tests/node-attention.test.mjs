@@ -284,7 +284,8 @@ test('consecutive Bot chatter is bounded without suppressing real directed deleg
 });
 
 test('real tools and delegation establish tasks while ordinary participation has no task card', async t => {
-  const f = fixture(t, { turn: async () => ({ status: 'completed', text: JSON.stringify({ text: '雨禾帮我核对一下。', delegate: { to: peer.id, body: '请核对明天的出发时间。' } }), sessionId: 'native-session' }) });
+  const f = fixture(t, { turn: async () => ({ status: 'completed', text: JSON.stringify({ text: '雨禾帮我核对一下。' }), asks: [{ to: peer.id, body: '请核对明天的出发时间。' }], sessionId: 'native-session' }) });
+  f.node.contacts.seeRoom(roomId, participants);
   await f.node.ingestEvents([message('$delegate-source', '一起把明天的计划定一下吧。')]);
   await f.node.processAttentionOnce();
   await f.node.processOne();

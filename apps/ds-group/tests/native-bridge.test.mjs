@@ -6,6 +6,8 @@ import os from 'node:os';
 import { NativeBridge } from '../dsh-connect/native-bridge.mjs';
 import { NativeBots } from '../dsh-connect/native-bots.mjs';
 import { parseBotOutput } from '../src/bot-node.mjs';
+import { ContactBook } from '../src/contact-book.mjs';
+import { DatabaseSync } from 'node:sqlite';
 
 async function fixture(t, { idle = Promise.resolve(), send, cwd, beforeObserve, beforeView } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'native-bridge-'));
@@ -140,29 +142,6 @@ test('disconnect while original Bot is busy returns promptly and never cancels i
   assert.equal(f.cancelled(), 0); assert.equal(f.calls.length, 0);
 });
 
-test('native handoff follows its exchange and ignores an unrelated local conversation', async t => {
-  const f = await fixture(t, { send: async ({ event, turn }) => {
-    await event('user/message', { source: { kind: 'bot', role: 'request', senderSessionId: 'native-one', exchangeId: 'work-1' } }, 'native-peer');
-    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: '[HANDOFF_WAIT]' }] } });
-    await event('turn/end', { turn, reason: { kind: 'completed' } });
-    await event('turn/start', { turn: 99 });
-    await event('user/message', { content: [{ type: 'text', text: 'Local user request' }], source: { kind: 'user' } });
-    await event('user/message', { source: { kind: 'bot', role: 'request', senderSessionId: 'native-one', exchangeId: 'unrelated-work' } }, 'native-peer');
-    await event('assistant/message', { turn: 99, message: { content: [{ type: 'text', text: 'Local-only answer' }] } });
-    await event('turn/end', { turn: 99, reason: { kind: 'completed' } });
-    await event('turn/start', { turn: 101 });
-    await event('user/message', { source: { kind: 'bot', role: 'reply', replyTo: 'unrelated-work' } });
-    await event('assistant/message', { turn: 101, message: { content: [{ type: 'text', text: 'Unrelated delegated answer' }] } });
-    await event('turn/end', { turn: 101, reason: { kind: 'completed' } });
-    await event('turn/start', { turn: 100 });
-    await event('user/message', { source: { kind: 'bot', role: 'reply', replyTo: 'work-1' } });
-    await event('assistant/message', { turn: 100, message: { content: [{ type: 'text', text: 'Delegated result' }] } });
-    await event('turn/end', { turn: 100, reason: { kind: 'completed' } });
-  } });
-  const result = await f.bridge.turn(f.request('handoff'));
-  assert.equal(result.status, 'completed'); assert.equal(result.text, 'Delegated result');
-});
-
 test('usage observation cannot fail or restrict a native model stream', async t => {
   const f = await fixture(t);
   f.bridge.run = { seen: true, record: { sessionId: 'native-one', calls: [] } };
@@ -201,47 +180,6 @@ test('a native context-part handoff keeps the request and does not publish its a
   assert.equal(result.text, 'Final result after native context handoff');
 });
 
-test('ordinary delegation acknowledgements wait for all correlated native replies', async t => {
-  let replyWork;
-  const f = await fixture(t, { send: async ({ event, turn }) => {
-    for (const exchangeId of ['first', 'second']) await event('user/message', { source: {
-      kind: 'bot', role: 'request', senderSessionId: 'native-one', exchangeId,
-    } }, 'native-peer');
-    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: 'I delegated the work and will pass on the results later.' }] } });
-    await event('turn/end', { turn, reason: { kind: 'completed' } });
-    // Return from send before either reply, as the real native tool does.
-    replyWork = (async () => {
-      await new Promise(resolve => setTimeout(resolve, 20));
-      await event('turn/start', { turn: 2 });
-      await event('user/message', { source: { kind: 'bot', role: 'reply', replyTo: 'first' } });
-      await event('assistant/message', { turn: 2, message: { content: [{ type: 'text', text: 'The first answer is 437; still waiting for the second.' }] } });
-      await event('turn/end', { turn: 2, reason: { kind: 'completed' } });
-      await new Promise(resolve => setTimeout(resolve, 20));
-      await event('turn/start', { turn: 3 });
-      await event('user/message', { source: { kind: 'bot', role: 'reply', replyTo: 'second' } });
-      await event('assistant/message', { turn: 3, message: { content: [{ type: 'text', text: 'Both actual answers: 437 and 391.' }] } });
-      await event('turn/end', { turn: 3, reason: { kind: 'completed' } });
-    })();
-  } });
-  const steers = [];
-  f.bridge.core.ctx.sessionController = { prompt: async request => { steers.push(request); } };
-  const result = await f.bridge.turn(f.request('await-delegation')); await replyWork;
-  assert.equal(result.status, 'completed'); assert.equal(result.text, 'Both actual answers: 437 and 391.');
-  // Each reply's turn is told that its answer still goes to the person who asked in the room.
-  assert.equal(steers.length, 2);
-  assert.ok(steers.every(request => request.mode === 'steer' && /最后一条回复会发给/.test(request.content[0].text)));
-});
-
-test('native direct-to-user delegation does not wait for a reply to the originating Bot', async t => {
-  const f = await fixture(t, { send: async ({ event, turn }) => {
-    await event('user/message', { source: { kind: 'bot', role: 'request', senderSessionId: 'native-one', exchangeId: 'direct', audience: 'user' } }, 'native-peer');
-    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: 'The Bot will answer you in its own native chat.' }] } });
-    await event('turn/end', { turn, reason: { kind: 'completed' } });
-  } });
-  const result = await f.bridge.turn(f.request('direct-user'));
-  assert.equal(result.status, 'completed'); assert.equal(result.text, 'The Bot will answer you in its own native chat.');
-});
-
 test('ordinary structured native answers are kept verbatim through the native and chat output parsers', async t => {
   let answer;
   const f = await fixture(t, { send: async ({ event, turn }) => {
@@ -253,7 +191,7 @@ test('ordinary structured native answers are kept verbatim through the native an
     answer = value;
     const result = await f.bridge.turn(f.request(`ordinary-data-${index}`));
     assert.equal(result.status, 'completed'); assert.equal(result.text, answer); assert.deepEqual(result.artifacts, []);
-    assert.deepEqual(parseBotOutput(result.text, f.node.id, []), { text: answer });
+    assert.deepEqual(parseBotOutput(result.text, []), { text: answer });
   }
 });
 
@@ -320,31 +258,6 @@ test('a turn that joins a running task is an acknowledgement, so a Bot request i
   assert.deepEqual(result.dispatched, ['T-9']);
 });
 
-test('the steer after a Bot reply starts the turn whose answer completes the request', async t => {
-  let event;
-  const f = await fixture(t, { send: async ({ event: emit, turn }) => {
-    event = emit;
-    await emit('user/message', { source: { kind: 'bot', role: 'request', senderSessionId: 'native-one', exchangeId: 'ask' } }, 'native-peer');
-    await emit('assistant/message', { turn, message: { content: [{ type: 'text', text: '我去问一下宣发。' }] } });
-    await emit('turn/end', { turn, reason: { kind: 'completed' } });
-    setTimeout(async () => {
-      await emit('turn/start', { turn: 2 });
-      await emit('user/message', { source: { kind: 'bot', role: 'reply', replyTo: 'ask' } });
-    }, 10);
-  } });
-  // As the host does: the steer aborts the running turn and starts a new one with the note.
-  f.bridge.core.ctx.sessionController = { prompt: async request => {
-    await event('turn/end', { turn: 2, reason: { kind: 'aborted', source: 'ds-bot/steer' } });
-    await event('turn/start', { turn: 3 });
-    await event('user/message', { content: request.content, source: { kind: 'user' } });
-    await event('assistant/message', { turn: 3, message: { content: [{ type: 'text', text: '小满，宣发说下周发。' }] } });
-    await event('turn/end', { turn: 3, reason: { kind: 'completed' } });
-  } };
-  const result = await f.bridge.turn(f.request('steered'));
-  assert.equal(result.status, 'completed');
-  assert.equal(result.text, '小满，宣发说下周发。');
-});
-
 test('a turn that ends on a tool without a reply is asked once for the reply, then finished', async t => {
   let event;
   const f = await fixture(t, { send: async ({ event: emit, turn }) => {
@@ -372,4 +285,22 @@ test('a turn that ends on a tool without a reply is asked once for the reply, th
   assert.equal(empty.status, 'completed');
   assert.equal(empty.text, '');
   assert.equal(prompts.length, 2);
+});
+
+test('requests made with ask_bot go out with the reply of the turn that made them, once', async t => {
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  let asked;
+  const f = await fixture(t, { send: async ({ event, turn }) => {
+    asked = await f.bridge.core.askBot({ to: 'QA', body: '看看这份 crash.log' });
+    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: '我去请 QA 看日志。' }] } });
+    await event('turn/end', { turn, reason: { kind: 'completed' } });
+  } });
+  f.bridge.core.contacts = new ContactBook({ db, self: { id: f.node.id } });
+  f.bridge.core.contacts.seeRoom('!a:home.test', [{ id: f.node.id, kind: 'bot' }, { id: '@qa:other.test', name: 'QA', kind: 'bot' }]);
+  const result = await f.bridge.turn(f.request('asks'));
+  assert.match(asked, /发给 QA/);
+  assert.equal(result.text, '我去请 QA 看日志。');
+  assert.deepEqual(result.asks, [{ to: '@qa:other.test', body: '看看这份 crash.log' }]);
+  assert.deepEqual(f.bridge.core.takeAsks('asks'), []);
 });

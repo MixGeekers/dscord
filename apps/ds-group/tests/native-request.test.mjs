@@ -43,3 +43,19 @@ test('markers, quoted envelopes and mismatched source identities never authorize
     m => { const envelope = requestEnvelope(m); envelope.replyRoute.roomId = '!different:test'; m.content[0].text = m.content[0].text.split('\n').slice(0,-1).join('\n') + '\n' + JSON.stringify(envelope); },
   ]) { const message = structuredClone(original); mutate(message); assert.equal(projectNativeRequestMessage(message), message); }
 });
+
+test('a turn on another Bot\'s result is told its reply goes to the original requester, not to that Bot', () => {
+  const input = { requestId: 'req-g21', botId: '@publicity:b.test', context: undefined, history: [],
+    event: { eventId: '$planner-result', roomId: '!direct:b.test', senderId: '@planner:a.test', senderName: '策划', senderKind: 'bot',
+      kind: 'task.result', body: '（策划 交回的结果）角色名需要林确认。', originSenderId: '@tang:b.test', originRoomId: '!r2:b.test', originEventId: '$g21' } };
+  const text = nativeMessage({ input, bot: { id: 'a', name: '宣发' }, files: { workdir: '/synthetic/attachments', files: [] } });
+  const envelope = JSON.parse(text.split('\n').at(-1));
+  assert.deepEqual(envelope.replyGoesTo, { senderId: '@tang:b.test', roomId: '!r2:b.test', eventId: '$g21' });
+  assert.equal(envelope.replyRoute.eventId, '$planner-result');
+  assert.match(text, /不对交回结果的 Bot 道谢/);
+  assert.doesNotMatch(text, /直接回答当前发送者/);
+  const human = nativeMessage({ input: { ...input, event: { ...input.event, senderKind: 'human', kind: undefined, originEventId: undefined } },
+    bot: { id: 'a', name: '宣发' }, files: { workdir: '/synthetic/attachments', files: [] } });
+  assert.match(human, /直接回答当前发送者/);
+  assert.equal(Object.hasOwn(JSON.parse(human.split('\n').at(-1)), 'replyGoesTo'), false);
+});
