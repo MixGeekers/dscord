@@ -53,6 +53,24 @@ test('all accepted room messages are observed durably without sending them to th
   assert.equal(f.store.cursor(), 'matrix-replay');
 });
 
+test('a decided natural reply waiting behind this Bot\'s own work is not dropped when the decision window passes', async t => {
+  const realNow = Date.now;
+  t.after(() => { Date.now = realNow; });
+  for (const [delay, spoken] of [[60_000, true], [11 * 60_000, false]]) {
+    const f = fixture(t);
+    await f.node.ingestEvents([message(`$g12-${delay}`, '新日期是哪天？')]);
+    await f.node.processAttentionOnce();
+    // Script 02 G12: SPEAK was decided, then the Bot spent two minutes on another task first.
+    const start = realNow();
+    Date.now = () => start + delay;
+    await f.node.processOne();
+    await f.node.processOne();
+    Date.now = realNow;
+    assert.equal(f.turns.length, spoken ? 1 : 0, `after ${delay} ms`);
+    if (!spoken) assert.equal(f.store.item(`$g12-${delay}`).status, 'cancelled');
+  }
+});
+
 test('observation failure keeps a separate replay watermark and never rolls back accepted Matrix events', async t => {
   let fail = true;
   const calls = [];

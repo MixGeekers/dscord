@@ -57,6 +57,7 @@ async function attentionCall(operation, timeoutMs, parentSignal) {
   } finally { clearTimeout(timer); signal.removeEventListener('abort', interrupted); }
 }
 
+const SPOKEN_ATTENTION_MS = 10 * 60_000;
 const STRUCTURED = /^\{\s*"(?:text|delegate|delivery|artifacts)"\s*:/;
 
 /**
@@ -412,7 +413,9 @@ export class BotNode {
             evidence = { kind: 'natural', botId: this.participant.id, decisionId: id, eventIds: batch.eventIds,
               sourceEventIds: messages.filter(message => !message.withdrawn).map(message => message.eventId),
               workStateVersion: workView.stateVersion,
-              watermark: batch.watermark, expiresAt: batch.expiresAt,
+              // The decision window has passed: from here the answer only waits for this Bot's own queue,
+              // which must not silently drop it. A newer turn in the conversation still supersedes it.
+              watermark: batch.watermark, expiresAt: batch.expiresAt, speakBy: Date.now() + SPOKEN_ATTENTION_MS,
               notBefore: Math.max(Date.now() + delay, (this.lastAttentionSpokeAt || 0) + config.cooldownMs),
               context: { ...context, attention: { decisionId: id, watermark: batch.watermark, eventIds: batch.eventIds,
                 participationOnly: true, memoryView: input.memoryView, workView } },
@@ -450,7 +453,7 @@ export class BotNode {
     if (item.response?.delegated || item.response?.toolCalls > 0 || item.response?.artifacts?.length) return undefined;
     if (attentionModeFor(this.attention, item.event.room_id) !== 'natural') return 'mode_changed';
     if (!this.decisionProvider || this.decisionProvider.configured === false) return 'provider_unavailable';
-    if (Date.now() >= evidence.expiresAt) return 'expired';
+    if (Date.now() >= (evidence.speakBy ?? evidence.expiresAt)) return 'expired';
     return attentionConflict(evidence, item.event,
       this.store.messagesAfter(item.event.room_id, evidence.watermark.sequence), this.participants);
   }
