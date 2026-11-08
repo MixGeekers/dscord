@@ -47,7 +47,7 @@ test('the front keeps only communication tools and is refused everything else', 
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
   const front = f.agentFor('front');
-  assert.ok(['dispatch_work', 'task_status', 'task_cancel', 'task_note'].every(name => front.tools.has(name)));
+  assert.ok(['dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note'].every(name => front.tools.has(name)));
   assert.deepEqual(front.restricted, ['bash', 'write']);
   assert.equal(f.guard({ agent: front, name: 'bash' }), FRONT_REFUSAL);
   assert.equal(f.guard({ agent: front, name: 'recall' }), undefined);
@@ -199,6 +199,30 @@ test('a worker that asked cannot deliver before the answer arrives, and a note c
   await f.core.event(worker, { type: 'user/message', data: { content: [{ type: 'text', text: '前台补充：改成英文表头' }] } });
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: '按日/月/年统一了' }), /已汇报完成/);
   assert.equal(task.status, 'done'); assert.equal(task.waiting, undefined);
+});
+
+test('a second message asking for the same work joins the task and gets its own reply, also after the task ended', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.origin = { roomId: '!players', eventId: '$g13', senderId: '@xiaoman', senderName: '小满' };
+  await run(f, 'front', 'dispatch_work', { audience: '玩家', title: '查崩溃', brief: '看 crash.log' });
+  const task = Object.values(f.state.tasks)[0];
+  // 苏 asks about the same crash in R2 while QA is still on it.
+  f.core.origin = { roomId: '!r2', eventId: '$g14', senderId: '@su', senderName: '苏', files: ['/in/crash.log'] };
+  assert.match(await run(f, 'front', 'task_join', { id: task.id }), /已登记.*task_note/s);
+  assert.match(await run(f, 'front', 'task_join', { id: task.id }), /已经是/);
+  assert.match(await run(f, 'front', 'task_join', { id: 'nope' }), /没有这个任务/);
+  await run(f, 'worker-1', 'work_report', { status: 'done', reply: '是钟楼已知问题，先别进钟楼', summary: 'ok' });
+  assert.deepEqual(f.results.map(result => [result.task.id, result.task.origin.eventId]), [[task.id, '$g13'], [`${task.id}-1`, '$g14']]);
+  assert.match(f.results[1].text, /同一件事[\s\S]*先别进钟楼/);
+  assert.equal(f.state.tasks[`${task.id}-1`].notified, true);
+  assert.equal(task.notifiedOrigins, 2);
+  // A third asker after the task ended is answered at once; nobody earlier gets it twice.
+  f.core.origin = { roomId: '!r3', eventId: '$late', senderId: '@tang' };
+  assert.match(await run(f, 'front', 'task_join', { id: task.id }), /已经结束/);
+  assert.deepEqual(f.results.map(result => result.task.origin.eventId), ['$g13', '$g14', '$late']);
+  await f.core.flush();
+  assert.equal(f.results.length, 3);
 });
 
 test('work a Bot does for another Bot goes back through the asking Bot to the room message behind the request', async t => {

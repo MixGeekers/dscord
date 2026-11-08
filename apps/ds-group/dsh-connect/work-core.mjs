@@ -14,7 +14,7 @@ import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-
 
 // Tools the front keeps. Everything else is refused there and done by a worker.
 export const FRONT_TOOLS = new Set([
-  'dispatch_work', 'task_status', 'task_cancel', 'task_note',
+  'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note',
   'recall', 'contacts', 'memory_source', 'raw_source_query',
   'read_group_chat', 'read_own_chat', 'list_bots', 'message_bot', 'post_to_group', 'group_relay',
   'read_image', 'web_fetch', 'ask_user', 'ask_user_question', 'show_view',
@@ -27,7 +27,7 @@ export const WORKER_DENY = new Set([
   'ask_user', 'ask_user_question', 'message_bot', 'post_to_group', 'group_relay', 'show_view',
   'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal',
   'schedule_create', 'schedule_edit', 'remember', 'forget', 'review_memory',
-  'dispatch_work', 'task_status', 'task_cancel', 'task_note',
+  'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note',
 ]);
 export const FRONT_REFUSAL = '前台不直接做这件事。用 dispatch_work 把它交给工作者，然后告诉对方已经开始。';
 
@@ -151,6 +151,10 @@ export class WorkCore {
           plain: { type: 'boolean', description: '对方不该看到技术内部信息时为 true：核心会拒绝带堆栈、异常类型、源码位置或日志原文的 reply 和交付文本文件，让工作者改写' },
         },
         execute: args => this.dispatch(args) },
+      { name: 'task_join', output,
+        description: '当前消息要的东西已经有任务在做或做完了（例如另一个人刚问过同一个问题）时用，不要重复派工：把当前消息登记为这个任务的又一位请求者，结果会同样回复到这条消息。任务已经结束时立刻回复。',
+        parameters: { id: { type: 'string', required: true, description: '任务编号' } },
+        execute: args => this.join(args.id) },
       { name: 'task_status', output,
         description: '查看本 Bot 最近的工作者任务和状态。',
         parameters: { id: { type: 'string', description: '任务编号；不填列出最近的任务' } },
@@ -203,6 +207,25 @@ export class WorkCore {
     if (task.status === 'running') return `已派工：${id}（${title}），工作者已开始，结果会由核心直接交付给对方。现在简短告诉对方已开始即可。`;
     const ahead = this.tasks().filter(other => other.status === 'queued' && other.createdAt < task.createdAt).length;
     return `已派工：${id}（${title}），但 ${this.maxWorkers} 个工作者都在忙，它在排队${ahead ? `，前面还有 ${ahead} 个` : ''}。现在告诉对方已接下、正在排队，有空位会自动开始；不要说已经开始。`;
+  }
+
+  /** Another message asking for what a task already does: it gets the same result. */
+  async join(id) {
+    let task = this.state.tasks[String(id || '')];
+    if (task?.joined) task = this.state.tasks[task.id.replace(/-\d+$/, '')];
+    if (!task) return '没有这个任务。用 task_status 看最近的任务编号。';
+    const origin = this.origin || this.askedOrigin();
+    if (!origin) return '现在没有要回复的消息，不能登记。';
+    const origins = [task.origin, ...(task.followers || [])];
+    if (origins.some(other => other?.eventId === origin.eventId && other?.via === origin.via)) return `这条消息已经是 ${task.id} 的请求者。`;
+    task.followers = [...(task.followers || []), origin];
+    if (origin.exchangeId) this.contacts?.settle(origin.exchangeId, { status: 'dispatched', taskId: task.id });
+    await this.save();
+    if (ended(task) && task.notified) {
+      await this.notify(task, { kind: 'result' });
+      return `${task.id}（${task.title}）已经结束，结果已回复到这条消息。不要再重复结果。`;
+    }
+    return `已登记：${task.id}（${task.title}）完成后，结果也会由核心回复到这条消息。现在简短告诉对方已经在处理即可。${origin.files?.length ? '这条消息带了文件；工作者需要时用 task_note 把路径转给它。' : ''}`;
   }
 
   async pump() {
@@ -328,7 +351,7 @@ export class WorkCore {
 
 
   status(id) {
-    const list = id ? [this.state.tasks[id]].filter(Boolean) : this.tasks().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
+    const list = id ? [this.state.tasks[id]].filter(Boolean) : this.tasks().filter(task => !task.joined).sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
     if (!list.length) return id ? `没有任务 ${id}。` : '没有工作者任务。';
     return list.map(task => `${task.id} ${task.status} ${task.title}${task.progress && !ended(task) ? ` · 进度：${task.progress}` : ''}${task.summary ? ` · ${task.summary.slice(0, 300)}` : ''}`).join('\n');
   }
@@ -431,7 +454,23 @@ export class WorkCore {
   }
 
   async notify(task, message) {
-    const asker = message.kind === 'result' && task.origin?.via ? coreOf(task.origin.via) : undefined;
+    if (message.kind !== 'result') { await this.onResult?.(task, message); return; }
+    // Every message that asked for this task gets the result, each as a reply to itself.
+    const origins = [task.origin, ...(task.followers || [])];
+    for (let index = task.notifiedOrigins ?? (task.notified ? 1 : 0); index < origins.length; index++) {
+      let copy = { ...task, followers: [], notifiedOrigins: 0 };
+      // A joined requester's copy is kept in the ledger, where the node's delivery turn looks it up.
+      if (index) copy = this.state.tasks[`${task.id}-${index}`] = { ...copy, id: `${task.id}-${index}`, origin: origins[index], joined: true, notified: true, notifiedOrigins: 1 };
+      if (!await this.deliverTo(copy)) return;
+      task.notifiedOrigins = index + 1;
+      task.notified = true;
+      await this.save();
+    }
+  }
+
+  /** One result to one requester: back through the Bot that asked, or through this Bot's node. */
+  async deliverTo(task) {
+    const asker = task.origin?.via ? coreOf(task.origin.via) : undefined;
     if (asker && asker !== this && asker.onResult) {
       const bot = await this.native.bot(this.node.nativeBotId).catch(() => null);
       await asker.adopt({ ...structuredClone(task), by: bot?.name || null });
@@ -440,24 +479,24 @@ export class WorkCore {
         this.contacts?.settle(exchangeId, { status: task.status === 'done' ? 'delivered' : 'failed', taskId: task.id });
         asker.contacts?.settle(exchangeId, { status: task.status === 'done' ? 'returned' : 'failed', taskId: task.id });
       }
-      task.notified = true; await this.save();
-      return;
+      return true;
     }
-    if (!this.onResult) return;
-    await this.onResult(task, message);
-    if (message.kind === 'result') { task.notified = true; await this.save(); }
+    if (!this.onResult) return false;
+    await this.onResult(task, { kind: 'result' });
+    return true;
   }
 
   /** Another Bot's finished task, done for a request this Bot made: delivered from here, where the request started. */
   async adopt(task) {
-    this.state.tasks[task.id] = { ...task, notified: false };
+    this.state.tasks[task.id] = { ...task, notified: false, notifiedOrigins: 0 };
     await this.save();
     await this.notify(this.state.tasks[task.id], { kind: 'result' });
   }
 
   /** Results that finished while no Bot node was listening (or before a restart). */
   async flush() {
-    for (const task of this.tasks()) if (ended(task) && !task.notified) await this.notify(task, { kind: 'result' });
+    const pending = task => (task.notifiedOrigins ?? (task.notified ? 1 : 0)) < 1 + (task.followers?.length || 0);
+    for (const task of this.tasks()) if (ended(task) && pending(task)) await this.notify(task, { kind: 'result' });
   }
 
   /** What the workers are doing now, for the node's kernel state. */
@@ -474,7 +513,8 @@ export class WorkCore {
   resultText(task, message) {
     if (message.kind === 'question') return `[task.question] 工作者 ${task.id}（${task.title}）提问：${message.question}\n请回答：可以直接问对方，或用 task_note 把答案转给工作者。`;
     if (task.status === 'unknown') return `「${task.title}」在宿主重启时还没有结束，结果不确定。我没有自动重做，需要的话告诉我。`;
-    return `${task.by ? `${task.by}：` : ''}「${task.title}」${task.status === 'done' ? '完成了' : '没有完成'}。\n\n${task.reply || task.summary || ''}`.trim();
+    const joined = task.joined ? '你问的和另一位成员先前的请求是同一件事，下面是那份结果。\n\n' : '';
+    return `${task.by ? `${task.by}：` : ''}「${task.title}」${task.status === 'done' ? '完成了' : '没有完成'}。\n\n${joined}${task.reply || task.summary || ''}`.trim();
   }
 
   /** Record a delivered result for the front's next turn. */
