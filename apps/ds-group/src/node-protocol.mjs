@@ -1,5 +1,4 @@
 import { readFileSync } from 'node:fs';
-import { z } from 'zod';
 
 // The Core⇄Bot-node contract has its own version, separate from the product and
 // kernel versions. A kernel (the DSH plugin) declares the protocol range it speaks;
@@ -24,8 +23,6 @@ const PACKAGE = JSON.parse(readFileSync(new URL('../package.json', import.meta.u
 export const KERNEL_VERSION = PACKAGE.version;
 
 const PROTOCOL = /^(0|[1-9]\d{0,3})\.(0|[1-9]\d{0,3})$/;
-const protocolText = z.string().regex(PROTOCOL);
-const shortText = z.string().min(1).max(200).refine(value => !value.includes('\0'));
 
 export function parseProtocol(value) {
   const found = typeof value === 'string' ? PROTOCOL.exec(value) : null;
@@ -49,15 +46,18 @@ export function accepts(coreVersion, version = BASELINE_PROTOCOL) {
   return wanted.major === own.major && wanted.minor <= own.minor;
 }
 
-export const helloRequest = z.object({
-  botId: shortText,
-  nodeId: shortText,
-  kernel: z.object({
-    version: z.string().min(1).max(64),
-    protocol: z.object({ min: protocolText, max: protocolText }),
-    capabilities: z.array(z.string().min(1).max(64)).max(64).default([]),
-  }),
-});
+const text = (value, max) => typeof value === 'string' && value.length > 0 && value.length <= max && !value.includes('\0');
+
+/** A hello request, or null when it is malformed. Plain checks: this module also loads inside the DSH plugin, which has no zod. */
+export function parseHello(input) {
+  const kernel = input?.kernel;
+  const range = kernel?.protocol;
+  const capabilities = kernel?.capabilities ?? [];
+  if (!text(input?.botId, 200) || !text(input?.nodeId, 200) || !text(kernel?.version, 64)) return null;
+  if (typeof range?.min !== 'string' || typeof range?.max !== 'string' || !PROTOCOL.test(range.min) || !PROTOCOL.test(range.max)) return null;
+  if (!Array.isArray(capabilities) || capabilities.length > 64 || !capabilities.every(item => text(item, 64))) return null;
+  return { botId: input.botId, nodeId: input.nodeId, kernel: { version: kernel.version, protocol: { min: range.min, max: range.max }, capabilities } };
+}
 
 /** Core's answer to a hello. A 426 still names Core's protocol so the node can find a kernel that speaks it. */
 export function answerHello(input, { protocol = NODE_PROTOCOL, capabilities = CORE_CAPABILITIES, serverVersion = KERNEL_VERSION } = {}) {

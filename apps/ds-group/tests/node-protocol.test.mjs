@@ -4,7 +4,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createCore } from '../src/core.mjs';
-import { KERNEL_PROTOCOL, KERNEL_VERSION, NODE_PROTOCOL, accepts, answerHello, hello, parseProtocol, supports } from '../src/node-protocol.mjs';
+import { KERNEL_PROTOCOL, KERNEL_VERSION, NODE_PROTOCOL, accepts, answerHello, hello, parseHello, parseProtocol, supports } from '../src/node-protocol.mjs';
 
 test('protocol versions parse strictly and ranges compare by major then minor', () => {
   assert.deepEqual(parseProtocol('1.12'), { major: 1, minor: 12 });
@@ -24,6 +24,13 @@ test('Core accepts a node on its own major up to its own minor, and a node that 
   assert.equal(accepts('2.0', undefined), false);
   assert.equal(accepts('1.0', undefined), true);
   assert.equal(accepts('1.0', 'garbage'), false);
+});
+
+test('hello requests are checked by hand, since the plugin side has no schema library', () => {
+  const good = { botId: '@a:t', nodeId: 'a', kernel: { version: '0.5.0', protocol: { min: '1.0', max: '1.1' } } };
+  assert.deepEqual(parseHello(good), { ...good, kernel: { ...good.kernel, capabilities: [] } });
+  for (const bad of [null, [], { ...good, botId: '' }, { ...good, nodeId: 'a\0' }, { ...good, kernel: { ...good.kernel, version: 'x'.repeat(65) } },
+    { ...good, kernel: { ...good.kernel, protocol: { min: '1', max: '1.1' } } }, { ...good, kernel: { ...good.kernel, capabilities: [''] } }]) assert.equal(parseHello(bad), null);
 });
 
 test('hello answers with the server protocol, and an incompatible kernel still learns which protocol to look for', () => {

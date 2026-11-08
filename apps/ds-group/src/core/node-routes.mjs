@@ -1,6 +1,6 @@
 import { requireNodeScope } from '../node-auth.mjs';
 import { publicKernelSummary } from '../kernel-control.mjs';
-import { HELLO_PATH, NODE_PROTOCOL, accepts, answerHello, helloRequest } from '../node-protocol.mjs';
+import { HELLO_PATH, NODE_PROTOCOL, accepts, answerHello, parseHello } from '../node-protocol.mjs';
 
 export const NODE_OFFLINE_MS = 20000;
 const NODE_STATUSES = new Set(['idle', 'thinking', 'error', 'offline']);
@@ -19,10 +19,10 @@ export function nodeRoutes(router, app) {
   // The protocol handshake. Its request and answer only ever gain fields, so every
   // kernel, however old, can learn which protocol this server speaks.
   router.post(HELLO_PATH, async ({ scope, body, send }) => {
-    const parsed = helloRequest.safeParse(await body());
-    if (!parsed.success) return send(400, { error: 'Invalid node hello', code: 'HELLO_INVALID' });
-    requireNodeScope(scope, { botId: parsed.data.botId, nodeId: parsed.data.nodeId });
-    const answer = answerHello(parsed.data);
+    const input = parseHello(await body());
+    if (!input) return send(400, { error: 'Invalid node hello', code: 'HELLO_INVALID' });
+    requireNodeScope(scope, { botId: input.botId, nodeId: input.nodeId });
+    const answer = answerHello(input);
     send(answer.status, answer.body);
   });
   router.post('/internal/nodes/heartbeat', async ({ scope, body, send }) => {
