@@ -5,7 +5,7 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import path from "node:path";
 
-export const DEFAULT_VERIFIED_DOWNLOAD_BYTES = 256 * 1024 * 1024;
+const DEFAULT_VERIFIED_DOWNLOAD_BYTES = 256 * 1024 * 1024;
 const fail = (status, message, code = "MEDIA_INTEGRITY_FAILED") =>
   Object.assign(new Error(message), { status, code });
 function positiveInteger(value, name) {

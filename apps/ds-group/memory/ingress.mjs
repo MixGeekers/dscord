@@ -25,8 +25,7 @@ export function nativeMemoryInput({ source = {}, text, home, sessionId, sequence
 export const isSourceMessage = message => ['user', 'bot', 'user-question-reply'].includes(message?.source?.kind)
   && !message.source.handoff && !['goal', 'kickoff', 'resume'].includes(message.source.role);
 
-// New entries use the receiving Bot as namespace so a claimed message can move
-// to a new native part. Legacy Session keys remain readable by the caller.
+// Keys use the receiving Bot as namespace so a claimed message can move to a new native part.
 // Equal text, senders or event IDs in another room/receiving Bot never collide.
 export function heldIngressKey(receiverId, source = {}) {
   const eventId = source.eventId || source.memoryOrigin?.eventId;
@@ -40,9 +39,9 @@ export function prepareClaimedSources({ memory, botId, sessionId, messages, home
     if (!isSourceMessage(message)) continue;
     const text = (message.content || []).filter(block => block.type === 'text').map(block => block.text).join('\n');
     const source = message.source;
-    const heldKey = heldIngressKey(botId, source), legacyKey = heldIngressKey(sessionId, source);
+    const heldKey = heldIngressKey(botId, source);
     const preparedKey = message.id ? `prepared-source:${sessionId}:${message.id}` : undefined;
-    const input = (heldKey && memory.store.getMeta(heldKey)) || (legacyKey && memory.store.getMeta(legacyKey)) || (preparedKey && memory.store.getMeta(preparedKey))
+    const input = (heldKey && memory.store.getMeta(heldKey)) || (preparedKey && memory.store.getMeta(preparedKey))
       || nativeMemoryInput({ source, text, home, sessionId, messageId: message.id, timestamp: source.timestamp ?? clock(), roomId: fallbackRoom, stableOnly: true });
     if (!input?.event?.eventId) {
       current = memory.clearCurrent(botId, sessionId, 'claimed-message-has-no-stable-source-id');

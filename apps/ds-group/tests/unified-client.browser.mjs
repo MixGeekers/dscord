@@ -130,7 +130,6 @@ let trapOrigin;
 let browser;
 let page;
 let failure;
-let build;
 
 function publicConfig(origin = homeOrigin) {
   return {
@@ -577,7 +576,7 @@ const contentTypes = {
 
 try {
   await mkdir(output, { recursive: true });
-  build = await promisify(execFile)("npm", ["run", "build"], {
+  await promisify(execFile)("npm", ["run", "build"], {
     cwd: packageRoot,
     maxBuffer: 2 ** 20,
   });
@@ -1204,7 +1203,13 @@ try {
   checks.push("ownedBotRailUsesExactIdentityHomeDmSeparateDraftsUnreadAndReloadWithoutServerHighlight");
   checks.push("verifiedOwnedBotCacheKeepsGlobalContextWhileProfileRefreshIsPending");
 
-  await page.evaluate((key) => sessionStorage.removeItem(key), botCacheKey);
+  // Drop the cache during the reload itself so a poll finishing first cannot write it back.
+  await page.addInitScript((key) => {
+    if (!sessionStorage.getItem("test-drop-bot-cache")) return;
+    sessionStorage.removeItem("test-drop-bot-cache");
+    sessionStorage.removeItem(key);
+  }, botCacheKey);
+  await page.evaluate(() => sessionStorage.setItem("test-drop-bot-cache", "1"));
   const releaseLegacyProfile = await reloadWithHeldProfile(page, homeUser);
   assert.equal(await page.locator("#owned-bot-count").textContent(), "…");
   assert.match(await page.locator("#global-bots-button").getAttribute("aria-label"), /Loading Bots/);
@@ -1321,7 +1326,7 @@ try {
   });
   await page.waitForFunction(() => navigator.serviceWorker.controller);
   await page.evaluate(
-    ({ homeUser, homeOrigin, homeRoom }) =>
+    ({ homeOrigin, homeRoom }) =>
       navigator.serviceWorker.dispatchEvent(
         new MessageEvent("message", {
           source: navigator.serviceWorker.controller,
@@ -1509,78 +1514,30 @@ try {
   );
 
   state.configMode = "same";
-  const legacyContext = await browser.newContext({
-    viewport: { width: 1440, height: 1000 },
-    locale: "en-US",
-  });
-  await legacyContext.addInitScript(
-    ({ homeUser, homeRoom }) => {
-      if (sessionStorage.getItem("legacy-seeded")) return;
-      sessionStorage.setItem("legacy-seeded", "true");
-      sessionStorage.setItem(
-        "ds-group.session",
-        JSON.stringify({
-          user_id: homeUser,
-          access_token: "legacy-fixture-token",
-        }),
-      );
-      sessionStorage.setItem(
-        `ds-group.room.${homeUser}`,
-        JSON.stringify(homeRoom),
-      );
-      sessionStorage.setItem(
-        `ds-group.draft.${homeUser}.${homeRoom}`,
-        JSON.stringify({ body: "Existing same-origin draft", attachments: [] }),
-      );
-    },
-    { homeUser, homeRoom },
-  );
-  const legacyPage = await legacyContext.newPage();
-  legacyPage.on("pageerror", (error) => pageErrors.push(error.message));
-  await legacyPage.goto(clientOrigin);
-  await legacyPage.waitForFunction(
-    () =>
-      document.querySelector("#message-input").textContent ===
-      "Existing same-origin draft",
-  );
-  assert.equal(
-    await legacyPage
-      .locator("#login-dialog")
-      .evaluate((element) => element.open),
-    false,
-  );
-  assert.equal(
-    await legacyPage.evaluate(() => sessionStorage.getItem("ds-group.session")),
-    null,
-  );
-  assert.equal(await legacyPage.locator("#current-id").textContent(), homeUser);
-  await legacyContext.close();
-  checks.push("sameOriginLegacySessionAndDraftUpgradeToVerifiedCentralSubject");
 
   const privateOrigin = "http://192.168.50.25:24360";
   const privateContext = await browser.newContext({ locale: "en-US" });
+  const { parseClientConfig } = await import("../web/src/client-config.ts");
+  const { bindSession, sessionStorageKey, storageKey } = await import("../web/src/session.ts");
+  const privateConfig = parseClientConfig({ schemaVersion: 1 }, privateOrigin);
+  const privateSession = bindSession(
+    { user_id: homeUser, access_token: "legacy-fixture-token" },
+    privateConfig,
+    { authorityId: "urn:uuid:fixture-home" },
+  );
   await privateContext.addInitScript(
-    ({ homeUser, homeRoom }) => {
-      sessionStorage.setItem(
-        "ds-group.session",
-        JSON.stringify({
-          user_id: homeUser,
-          access_token: "legacy-fixture-token",
-        }),
-      );
-      sessionStorage.setItem(
-        `ds-group.room.${homeUser}`,
-        JSON.stringify(homeRoom),
-      );
-      sessionStorage.setItem(
-        `ds-group.draft.${homeUser}.${homeRoom}`,
-        JSON.stringify({
-          body: "Private HTTP same-origin draft",
-          attachments: [],
-        }),
-      );
+    (stored) => {
+      for (const [key, value] of Object.entries(stored))
+        sessionStorage.setItem(key, JSON.stringify(value));
     },
-    { homeUser, homeRoom },
+    {
+      [sessionStorageKey(privateConfig)]: privateSession,
+      [storageKey(privateConfig, "room", privateSession, "home.test")]: homeRoom,
+      [storageKey(privateConfig, "draft", privateSession, "home.test", homeRoom)]: {
+        body: "Private HTTP same-origin draft",
+        attachments: [],
+      },
+    },
   );
   await privateContext.route(privateOrigin + "/**", (route) => {
     const work = (async () => {

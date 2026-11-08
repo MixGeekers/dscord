@@ -1,14 +1,22 @@
 import type { Catalog } from "../locale";
 
 const en = {
-  nativeHelp: "Create a Bot in DSCord on its node, sign in there with this account, then select it here. The same Bot keeps its identity, memory and work when joining a server.",
+  nativeHelp:
+    "Create a Bot in DSCord on its node, sign in there with this account, then select it here. The same Bot keeps its identity, memory and work when joining a server.",
   nativeEmpty: "No Bot nodes discovered for this account.",
-  nodeConnection: "Connect a Bot node", nodeConnectionHelp: "Open DSCord in DSH on the Bot’s machine and sign in with this account. Create a local Bot there, then refresh this list to add it.",
-  nativeBots: "Bots on your nodes", nativeAdded: "Already added", nativeReady: "Ready to add", nativeOffline: "Connect its node to add it",
-  nativeLifecycle: "Bots run in their own DSCord kernel on a node. Closing this page keeps their identity, chats, memory and work.",
+  nodeConnection: "Connect a Bot node",
+  nodeConnectionHelp:
+    "Open DSCord in DSH on the Bot’s machine and sign in with this account. Create a local Bot there, then refresh this list to add it.",
+  nativeBots: "Bots on your nodes",
+  nativeAdded: "Already added",
+  nativeReady: "Ready to add",
+  nativeOffline: "Connect its node to add it",
+  nativeLifecycle:
+    "Bots run in their own DSCord kernel on a node. Closing this page keeps their identity, chats, memory and work.",
   refresh: "Refresh",
   modelSettings: "Model settings",
-  modelHelp: "Open DSCord on the Bot’s node to choose its working model. Model credentials stay in the node’s private configuration.",
+  modelHelp:
+    "Open DSCord on the Bot’s node to choose its working model. Model credentials stay in the node’s private configuration.",
   runtimeModel: "Running model",
   createBot: "Add existing Bot",
   botName: "Bot name",
@@ -21,7 +29,8 @@ const en = {
     "The creation receipt is incomplete. Retry to confirm the Bot.",
   connection: "Connect Bot",
   botId: "Bot ID",
-  connectInDsh: "Sign in to DSCord in DSH with this account, choose its model, then bring this Bot online.",
+  connectInDsh:
+    "Sign in to DSCord in DSH with this account, choose its model, then bring this Bot online.",
   offline: "Offline",
   online: "Online",
   busy: "Working",
@@ -37,14 +46,22 @@ const en = {
 export const botMessages: Catalog<keyof typeof en> = {
   en,
   "zh-CN": {
-    nativeHelp: "在节点的 DSCord 中创建 Bot 并登录同一账号，再从这里选择加入服务器。同一个 Bot 会保留身份、记忆和工作。",
+    nativeHelp:
+      "在节点的 DSCord 中创建 Bot 并登录同一账号，再从这里选择加入服务器。同一个 Bot 会保留身份、记忆和工作。",
     nativeEmpty: "尚未发现此账号的 Bot 节点。",
-    nodeConnection: "连接 Bot 节点", nodeConnectionHelp: "在 Bot 所在机器的 DSH 中打开 DSCord，登录同一账号并创建本地 Bot，然后刷新此列表添加。",
-    nativeBots: "节点上的 Bot", nativeAdded: "已添加", nativeReady: "可添加", nativeOffline: "请先连接它所在的节点",
-    nativeLifecycle: "Bot 在节点的 DSCord 自有内核中运行。关闭网页后，身份、对话、记忆和工作继续保留。",
+    nodeConnection: "连接 Bot 节点",
+    nodeConnectionHelp:
+      "在 Bot 所在机器的 DSH 中打开 DSCord，登录同一账号并创建本地 Bot，然后刷新此列表添加。",
+    nativeBots: "节点上的 Bot",
+    nativeAdded: "已添加",
+    nativeReady: "可添加",
+    nativeOffline: "请先连接它所在的节点",
+    nativeLifecycle:
+      "Bot 在节点的 DSCord 自有内核中运行。关闭网页后，身份、对话、记忆和工作继续保留。",
     refresh: "刷新",
     modelSettings: "模型设置",
-    modelHelp: "请在 Bot 所在节点的 DSCord 中选择工作模型。模型凭据保留在节点的私有配置中。",
+    modelHelp:
+      "请在 Bot 所在节点的 DSCord 中选择工作模型。模型凭据保留在节点的私有配置中。",
     runtimeModel: "当前运行模型",
     createBot: "添加已有 Bot",
     botName: "Bot 名称",
@@ -55,7 +72,8 @@ export const botMessages: Catalog<keyof typeof en> = {
     receiptMissing: "创建回执不完整。请重试确认 Bot。",
     connection: "连接 Bot",
     botId: "Bot ID",
-    connectInDsh: "在 DSH 的 DSCord 页面登录同一账号，选择模型后将此 Bot 上线。",
+    connectInDsh:
+      "在 DSH 的 DSCord 页面登录同一账号，选择模型后将此 Bot 上线。",
     offline: "离线",
     online: "在线",
     busy: "工作中",

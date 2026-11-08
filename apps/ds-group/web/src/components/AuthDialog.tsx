@@ -229,151 +229,153 @@ export function AuthDialog({
           </Button>
         </div>
         <div className="dialog-scroll-region">
-        <label htmlFor="login-user">{t("username")}</label>
-        <Input
-          id="login-user"
-          ref={usernameInput}
-          type="text"
-          name="username"
-          autoComplete="username"
-          autoCapitalize="none"
-          spellCheck={false}
-          required
-          value={username}
-          list={
-            !registering && bootstrap?.demoLogin === true
-              ? "demo-accounts"
-              : undefined
-          }
-          disabled={disabled}
-          aria-invalid={Boolean(fieldErrors.username)}
-          aria-describedby={fieldErrors.username ? "username-error" : undefined}
-          onChange={(event) => {
-            editedUsername.current = true;
-            setUsername(event.target.value);
-            clearFieldError("username");
-          }}
-        />
-        {!registering && bootstrap?.demoLogin === true && (
-          <datalist id="demo-accounts">
-            {humans.map((person) => (
-              <option key={person.id} value={person.localpart ?? person.id}>
-                {person.name}
-              </option>
-            ))}
-          </datalist>
-        )}
-        {fieldErrors.username && (
-          <p id="username-error" className="field-error" role="alert">
-            {t("usernameRequired")}
-          </p>
-        )}
-        {registering && (
-          <>
-            <label htmlFor="register-name">{t("displayName")}</label>
-            <Input
-              id="register-name"
-              ref={displayNameInput}
-              type="text"
-              name="displayName"
-              autoComplete="nickname"
-              required
-              value={displayName}
-              disabled={disabled}
-              aria-invalid={Boolean(fieldErrors.displayName)}
-              aria-describedby={
-                fieldErrors.displayName ? "display-name-error" : undefined
-              }
-              onChange={(event) => {
-                setDisplayName(event.target.value);
-                clearFieldError("displayName");
-              }}
-            />
-            {fieldErrors.displayName && (
-              <p id="display-name-error" className="field-error" role="alert">
-                {t("displayNameRequired")}
-              </p>
-            )}
-          </>
-        )}
-        <label htmlFor="login-password">{t("password")}</label>
-        <div className="auth-password-field">
+          <label htmlFor="login-user">{t("username")}</label>
           <Input
-            id="login-password"
-            ref={passwordInput}
-            type={showPassword ? "text" : "password"}
-            name="password"
-            autoComplete={registering ? "new-password" : "current-password"}
-            required={passwordRequired}
-            value={password}
+            id="login-user"
+            ref={usernameInput}
+            type="text"
+            name="username"
+            autoComplete="username"
+            autoCapitalize="none"
+            spellCheck={false}
+            required
+            value={username}
+            list={
+              !registering && bootstrap?.demoLogin === true
+                ? "demo-accounts"
+                : undefined
+            }
             disabled={disabled}
-            aria-invalid={Boolean(fieldErrors.password)}
+            aria-invalid={Boolean(fieldErrors.username)}
             aria-describedby={
-              fieldErrors.password ? "password-error" : undefined
+              fieldErrors.username ? "username-error" : undefined
             }
             onChange={(event) => {
-              setPassword(event.target.value);
-              clearFieldError("password");
+              editedUsername.current = true;
+              setUsername(event.target.value);
+              clearFieldError("username");
             }}
           />
-          <Button
-            variant="ghost"
-            size="icon"
-            id="password-toggle"
-            className="icon-button"
-            type="button"
-            aria-label={t(showPassword ? "hidePassword" : "showPassword")}
-            aria-pressed={showPassword}
-            disabled={disabled}
-            onClick={() => setShowPassword((previous) => !previous)}
+          {!registering && bootstrap?.demoLogin === true && (
+            <datalist id="demo-accounts">
+              {humans.map((person) => (
+                <option key={person.id} value={person.localpart ?? person.id}>
+                  {person.name}
+                </option>
+              ))}
+            </datalist>
+          )}
+          {fieldErrors.username && (
+            <p id="username-error" className="field-error" role="alert">
+              {t("usernameRequired")}
+            </p>
+          )}
+          {registering && (
+            <>
+              <label htmlFor="register-name">{t("displayName")}</label>
+              <Input
+                id="register-name"
+                ref={displayNameInput}
+                type="text"
+                name="displayName"
+                autoComplete="nickname"
+                required
+                value={displayName}
+                disabled={disabled}
+                aria-invalid={Boolean(fieldErrors.displayName)}
+                aria-describedby={
+                  fieldErrors.displayName ? "display-name-error" : undefined
+                }
+                onChange={(event) => {
+                  setDisplayName(event.target.value);
+                  clearFieldError("displayName");
+                }}
+              />
+              {fieldErrors.displayName && (
+                <p id="display-name-error" className="field-error" role="alert">
+                  {t("displayNameRequired")}
+                </p>
+              )}
+            </>
+          )}
+          <label htmlFor="login-password">{t("password")}</label>
+          <div className="auth-password-field">
+            <Input
+              id="login-password"
+              ref={passwordInput}
+              type={showPassword ? "text" : "password"}
+              name="password"
+              autoComplete={registering ? "new-password" : "current-password"}
+              required={passwordRequired}
+              value={password}
+              disabled={disabled}
+              aria-invalid={Boolean(fieldErrors.password)}
+              aria-describedby={
+                fieldErrors.password ? "password-error" : undefined
+              }
+              onChange={(event) => {
+                setPassword(event.target.value);
+                clearFieldError("password");
+              }}
+            />
+            <Button
+              variant="ghost"
+              size="icon"
+              id="password-toggle"
+              className="icon-button"
+              type="button"
+              aria-label={t(showPassword ? "hidePassword" : "showPassword")}
+              aria-pressed={showPassword}
+              disabled={disabled}
+              onClick={() => setShowPassword((previous) => !previous)}
+            >
+              <Icon name={showPassword ? "eyeOff" : "eye"} />
+            </Button>
+          </div>
+          {fieldErrors.password && (
+            <p id="password-error" className="field-error" role="alert">
+              {t("passwordRequired")}
+            </p>
+          )}
+          <div
+            id="login-error"
+            className="login-error"
+            role="alert"
+            hidden={!visibleError}
           >
-            <Icon name={showPassword ? "eyeOff" : "eye"} />
-          </Button>
-        </div>
-        {fieldErrors.password && (
-          <p id="password-error" className="field-error" role="alert">
-            {t("passwordRequired")}
-          </p>
-        )}
-        <div
-          id="login-error"
-          className="login-error"
-          role="alert"
-          hidden={!visibleError}
-        >
-          {visibleError}
-        </div>
+            {visibleError}
+          </div>
         </div>
         <footer className="dialog-footer">
-        <Button
-          variant="default"
-          id="login-submit"
-          className="primary-button login-submit"
-          type="submit"
-          disabled={disabled}
-        >
-          {t(
-            registering
-              ? disabled
-                ? "creatingAccount"
-                : "createAccount"
-              : disabled
-                ? "signingIn"
-                : "signIn",
-          )}
-        </Button>
-        {registrationOpen && (
           <Button
-            variant="ghost"
-            id="auth-toggle-mode"
-            className="text-button auth-mode-switch"
-            type="button"
+            variant="default"
+            id="login-submit"
+            className="primary-button login-submit"
+            type="submit"
             disabled={disabled}
-            onClick={changeMode}
           >
-            {t(registering ? "backToSignIn" : "createAccount")}
+            {t(
+              registering
+                ? disabled
+                  ? "creatingAccount"
+                  : "createAccount"
+                : disabled
+                  ? "signingIn"
+                  : "signIn",
+            )}
           </Button>
-        )}
+          {registrationOpen && (
+            <Button
+              variant="ghost"
+              id="auth-toggle-mode"
+              className="text-button auth-mode-switch"
+              type="button"
+              disabled={disabled}
+              onClick={changeMode}
+            >
+              {t(registering ? "backToSignIn" : "createAccount")}
+            </Button>
+          )}
         </footer>
       </form>
     </dialog>

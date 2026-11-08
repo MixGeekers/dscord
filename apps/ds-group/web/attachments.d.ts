@@ -48,7 +48,6 @@ export function renderAttachmentCard(
     request?: RawRequest;
     roomId?: string;
     eventId?: string;
-    allowLegacy?: boolean;
     onPreview?(preview: AttachmentPreview): void | Promise<void>;
     onError?(message: string): void;
   },

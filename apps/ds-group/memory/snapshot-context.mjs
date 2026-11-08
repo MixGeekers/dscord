@@ -3,12 +3,12 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm';
 import { estimateMessage } from '@deepseek-ai/dsh-token-meter/estimate';
 import { projectNativeRequestMessage } from '../src/native-request.mjs';
 
-export const SNAPSHOT_INDEX_KEY = 'dscord-memory-snapshots';
+const SNAPSHOT_INDEX_KEY = 'dscord-memory-snapshots';
 export const RETIRED_SNAPSHOT_KIND = 'knowledge-context-retired';
 
 // The official registry owns replay, checkpoints and per-Session watermarks.
 // Keep only identities here, never a second copy of the snapshot bodies.
-export const snapshotProjection = {
+const snapshotProjection = {
   key: SNAPSHOT_INDEX_KEY,
   stateVersion: 2,
   stateSchema: z.object({
@@ -37,7 +37,7 @@ export const snapshotProjection = {
   },
 };
 
-export const isRetiredSnapshot = message => message.source?.kind === RETIRED_SNAPSHOT_KIND
+const isRetiredSnapshot = message => message.source?.kind === RETIRED_SNAPSHOT_KIND
   && message.source.input === 'context' && message.content.length === 0;
 
 // The official surface cannot remove a node outright. Its durable empty

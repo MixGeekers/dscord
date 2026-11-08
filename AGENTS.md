@@ -5,8 +5,6 @@ These instructions apply to work in this repository. Start with the root README 
 ## Repository layout
 
 - `apps/ds-group/` contains DSCord Core, the chat and administration interfaces, Bot-node integration, memory services, deployment files and tests.
-- `plugins/` and `lab/` contain separately maintained components and prototypes. Preserve their files and behavior when the task does not involve them.
-- `架构与设计/`, `技术候选/`, `research/` and `测试/` contain design and research material. Historical experiments describe their recorded environment and results. Consult the current implementation for supported product behavior.
 
 ## Implementation and configuration
 

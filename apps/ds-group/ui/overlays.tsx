@@ -33,7 +33,10 @@ export function PopoverContent({
 
 export const Dialog = DialogPrimitive.Root;
 export const DialogTitle = DialogPrimitive.Title;
-export function DialogContent({ className, ...props }: DialogPrimitive.Popup.Props) {
+export function DialogContent({
+  className,
+  ...props
+}: DialogPrimitive.Popup.Props) {
   return (
     <DialogPrimitive.Portal keepMounted>
       <DialogPrimitive.Backdrop className="ds-dialog-backdrop" />

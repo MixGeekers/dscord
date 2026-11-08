@@ -106,12 +106,7 @@ export interface ChatEvent {
   };
 }
 export type TaskStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "unknown";
+  "queued" | "running" | "completed" | "failed" | "cancelled" | "unknown";
 export interface WorkTask {
   requestId: string;
   taskId?: string;

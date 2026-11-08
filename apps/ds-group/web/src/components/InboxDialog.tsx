@@ -213,7 +213,11 @@ export function InboxDialog({
           {t("markAllRead")}
         </Button>
       </div>
-      <div id="inbox-list" className="inbox-list dialog-scroll-region" aria-live="polite">
+      <div
+        id="inbox-list"
+        className="inbox-list dialog-scroll-region"
+        aria-live="polite"
+      >
         {loading ? (
           <p className="muted">{t("loading")}</p>
         ) : error ? (

@@ -42,13 +42,13 @@ test('claimed source preparation switches authors and rooms before append withou
   assert.equal(memory.pendingRequests('a').length, 0);
 }));
 
-test('equal routing text and event IDs in separate rooms or Sessions do not collide', async () => withMemory(async memory => {
+test('equal routing text and event IDs in separate rooms or receiving Bots do not collide', async () => withMemory(async memory => {
   const first = message('$same', '!first:test', '@alice:test'), second = message('$same', '!second:test', '@bob:test');
   const firstInput = input(first), secondInput = input(second);
   firstInput.event.body = 'Original first-room evidence'; secondInput.event.body = 'Original second-room evidence';
-  memory.store.setMeta(heldIngressKey('session', first.source), firstInput);
-  memory.store.setMeta(heldIngressKey('session', second.source), secondInput);
-  assert.notEqual(heldIngressKey('session', first.source), heldIngressKey('other-session', first.source));
+  memory.store.setMeta(heldIngressKey('a', first.source), firstInput);
+  memory.store.setMeta(heldIngressKey('a', second.source), secondInput);
+  assert.notEqual(heldIngressKey('a', first.source), heldIngressKey('b', first.source));
   for (const [msg, expected] of [[first, firstInput], [second, secondInput]]) {
     prepareClaimedSources({ memory, botId: 'a', sessionId: 'session', messages: [msg], home: '/synthetic' });
     const ref = memory.current('a').sourceRefs[0];

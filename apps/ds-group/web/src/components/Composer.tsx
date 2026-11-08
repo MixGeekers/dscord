@@ -44,7 +44,6 @@ export interface ComposerProps {
   request?: RawRequest;
   requestScope?: string;
   contextKey?: string;
-  legacyDraftKey?: string;
   canSend?: boolean;
   room: Room | null;
   mentionables: Mentionables;
@@ -305,14 +304,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       const editor = editorRef.current;
       if (!manager || !editor) return;
       saveDraft();
-      let draft = contextKey ? readStored<Draft>(contextKey) : null;
-      if (!draft && contextKey && props.legacyDraftKey) {
-        draft = readStored<Draft>(props.legacyDraftKey);
-        if (draft) {
-          sessionStorage.setItem(contextKey, JSON.stringify(draft));
-          sessionStorage.removeItem(props.legacyDraftKey);
-        }
-      }
+      const draft = contextKey ? readStored<Draft>(contextKey) : null;
       contextRef.current = contextKey;
       restoringRef.current = true;
       manager.setContext(contextKey);

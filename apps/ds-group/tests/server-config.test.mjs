@@ -42,7 +42,6 @@ test('mounted server data configures password login and distinguishes readiness 
     assert.equal((await fetch(base + '/readyz')).status, 503);
     assert.equal((await fetch(base + '/healthz')).status, 200);
     const status = await (await fetch(base + '/api/status')).json();
-    assert.equal(status.core.evidenceScope, 'server');
     assert.equal(status.budget.used, 0);
   } finally {
     if (core) await core.close();

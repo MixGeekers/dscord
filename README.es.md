@@ -135,7 +135,7 @@ El servidor compartido gestiona miembros y mensajes. Los Bots se ejecutan en sus
 | **DSCord Core + Matrix / Synapse** | Miembros, salas, mensajes, adjuntos y conexiones de nodos. |
 | **DSH + núcleo DSCord** | Conversaciones, herramientas, colaboración y entrega de resultados de cada Bot. |
 
-Cada Bot procesa sus tareas en orden; distintos Bots pueden trabajar en paralelo. Encontrarás más detalles en el [diseño del sistema](架构与设计/DS-Group首个框架与实施路线.md).
+Cada Bot procesa sus tareas en orden; distintos Bots pueden trabajar en paralelo.
 
 <a id="documentation"></a>
 

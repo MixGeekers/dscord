@@ -15,7 +15,7 @@ export class ApiError extends Error {
     this.code = code;
   }
 }
-export function apiUrl(
+function apiUrl(
   config: ClientConfig,
   route: string,
   target: "core" | "auth" = "core",
@@ -45,11 +45,7 @@ export function createRequest(
     // Callers cannot inject a different account's credential.
     headers.delete("Authorization");
     if (session) {
-      const legacySameOrigin =
-        !session.binding &&
-        config.homeCoreUrl === config.assetOrigin &&
-        config.authUrl === config.assetOrigin;
-      if (!sameBinding(session, config) && !legacySameOrigin)
+      if (!sameBinding(session, config))
         throw new Error("Session is not bound to this home service");
       headers.set("Authorization", `Bearer ${session.access_token}`);
     }

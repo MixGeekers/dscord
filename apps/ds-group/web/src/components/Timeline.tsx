@@ -25,7 +25,6 @@ export interface TimelineProps {
   participants: Participant[];
   session: Session | null;
   request?: RawRequest;
-  allowLegacyMedia?: boolean;
   mentionables: Mentionables;
   roles: Role[];
   onReply(event: ChatEvent): void;
@@ -39,12 +38,30 @@ function formattedText(text: string): ReactNode[] {
   return messageParts(text).map((part) => {
     const key = `${part.offset}:${part.kind}`;
     if (part.kind === "pre")
-      return <pre key={key} className="message-code">{part.text}</pre>;
+      return (
+        <pre key={key} className="message-code">
+          {part.text}
+        </pre>
+      );
     if (part.kind === "code")
-      return <code key={key} className="inline-code">{part.text}</code>;
+      return (
+        <code key={key} className="inline-code">
+          {part.text}
+        </code>
+      );
     if (part.kind === "strong") return <strong key={key}>{part.text}</strong>;
     if (part.kind === "link")
-      return <a key={key} className="message-link" href={part.href} target="_blank" rel="noopener noreferrer">{part.text}</a>;
+      return (
+        <a
+          key={key}
+          className="message-link"
+          href={part.href}
+          target="_blank"
+          rel="noopener noreferrer"
+        >
+          {part.text}
+        </a>
+      );
     return part.text;
   });
 }
@@ -312,7 +329,6 @@ export function Timeline(props: TimelineProps) {
                             request={props.request}
                             roomId={event.room_id}
                             eventId={event.event_id}
-                            allowLegacy={props.allowLegacyMedia}
                           />
                         ))}
                       </div>

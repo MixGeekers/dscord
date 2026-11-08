@@ -194,7 +194,7 @@ export class MemoryStore {
     const subjectId = canonicalIdentity(nonempty(input.subjectId, 'SUBJECT_REQUIRED'));
     const predicate = input.predicate?.trim() || 'note';
     const kind = input.kind || 'stated';
-    if (!['stated', 'reported', 'observation', 'inference', 'legacy'].includes(kind)) fail('INVALID_CLAIM_KIND');
+    if (!['stated', 'reported', 'observation', 'inference'].includes(kind)) fail('INVALID_CLAIM_KIND');
     const validFrom = input.validFrom ?? Math.min(...sourceRefs.map(ref => this.source(ref.id).timestamp ?? this.clock()));
     const validUntil = input.validUntil ?? null;
     const saidBy = canonicalIdentity(input.saidBy) || null;
