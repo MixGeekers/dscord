@@ -22,6 +22,7 @@ test('front and worker tools register as object JSON Schemas under the pinned DS
   });
   t.after(() => core.dispose());
   await core.serveFront(agent('front'));
+  core.origin = { roomId: '!room', eventId: '$ask', senderId: '@ann' };
   await core.dispatch({ title: 'x', brief: 'y' });
   const names = ['dispatch_work', 'task_status', 'task_cancel', 'task_note', 'work_report', 'work_ask'];
   assert.deepEqual([...registered.keys()].sort(), [...names].sort());

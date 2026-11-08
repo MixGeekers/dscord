@@ -261,7 +261,7 @@ export class NativeBridge {
 
   /** A worker result goes out as it is, without a front turn: it never waits behind conversation and is never retold. */
   async deliverResult(record, task) {
-    Object.assign(record, { status: 'completed', stage: 'completed', summary: '工作者结果已交付', mode: 'worker-result',
+    Object.assign(record, { status: 'completed', stage: 'completed', summary: '工作者结果已交付', mode: 'worker-result', workerStatus: task.status,
       text: this.core.resultText(task, { kind: 'result' }), artifacts: task.status === 'done' ? task.artifacts || [] : [],
       startedAt: new Date().toISOString(), finishedAt: new Date().toISOString() });
     await this.core.delivered(task);

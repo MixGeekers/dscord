@@ -174,9 +174,9 @@ export class ContactBook {
   }
 
   /** The latest request another Bot sent this Bot that it has not acted on yet. */
-  awaiting(maxAgeMs = 30 * 60_000) {
+  awaiting({ via, maxAgeMs = 30 * 60_000 } = {}) {
     const row = this.db.prepare(`SELECT id FROM contact_exchanges WHERE direction='in' AND status='received' AND at>=?
-      ORDER BY at DESC, rowid DESC LIMIT 1`).get(this.now() - maxAgeMs);
+      AND (? IS NULL OR via=?) ORDER BY at DESC, rowid DESC LIMIT 1`).get(this.now() - maxAgeMs, via ?? null, via ?? null);
     return row && this.exchange(row.id);
   }
 

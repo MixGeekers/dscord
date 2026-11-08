@@ -176,6 +176,9 @@ export class WorkCore {
     if (!title || !brief) return '需要 title 和 brief。';
     const id = shortId();
     const origin = this.origin || this.askedOrigin();
+    // Work needs a message to answer. A turn the native host resumed on its own after a
+    // restart has none, and must not quietly redo work the restart left unknown.
+    if (!origin) return '现在没有要回复的消息，不能派工。宿主重启后结果不确定的任务不会自动重做；对方要重做时会再发消息。';
     const task = this.state.tasks[id] = { id, title, brief, ...(deliverables ? { deliverables: String(deliverables) } : {}),
       ...(audience ? { audience: String(audience).trim().slice(0, 500) } : {}), ...(plain === true ? { plain: true } : {}),
       origin, inputFiles: origin?.files || [], createdAt: new Date().toISOString(), notified: false, toolCalls: 0 };
@@ -334,8 +337,11 @@ export class WorkCore {
   /** Worker Session events: a turn that ends without a report gets one reminder, then fails. */
   /** The room message behind the Bot-to-Bot request this Bot has not acted on yet, from its contact book. */
   askedOrigin() {
-    const asked = this.contacts?.awaiting();
-    return asked?.origin ? { ...asked.origin, via: asked.peerId, exchangeId: asked.id } : null;
+    const asked = this.contacts?.awaiting({ via: 'message_bot' });
+    if (!asked?.origin) return null;
+    // A request whose work a restart left unknown is not asked again by resuming the turn.
+    if (this.tasks().some(task => task.status === 'unknown' && task.origin?.eventId === asked.origin.eventId)) return null;
+    return { ...asked.origin, via: asked.peerId, exchangeId: asked.id };
   }
 
   /** The room message this Bot is answering now, or the one it just finished answering. */

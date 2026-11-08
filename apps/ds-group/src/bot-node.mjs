@@ -90,7 +90,10 @@ export function deliveriesFor(event, output, botId, participants, collaborationR
   if (meta.workerTask && meta.answers) {
     const request = { ...event, event_id: meta.answers.eventId, sender: meta.answers.sender,
       content: { ...event.content, 'org.ds_group': meta.answers.meta } };
-    return deliveriesFor(request, output, botId, participants, collaborationRoomId, event.event_id);
+    // The request was admitted from that Bot; its roster entry may not be loaded again yet after a restart.
+    const known = participants.some(person => person.id === request.sender && person.kind === 'bot')
+      ? participants : [...participants.filter(person => person.id !== request.sender), { id: request.sender, kind: 'bot' }];
+    return deliveriesFor(request, output, botId, known, collaborationRoomId, event.event_id);
   }
   const hop = Number.isInteger(meta.hop) && meta.hop >= 0 ? meta.hop : 0;
   if (hop > 4 || (output.delegate && hop >= 4)) throw new Error('Collaboration hop limit reached');
@@ -511,8 +514,9 @@ export class BotNode {
     // Work done for another Bot's request goes back to that Bot as the answer to its request.
     const request = message.kind === 'result' ? this.store.message(origin.eventId) : undefined;
     const requestMeta = request ? metadataOf(request) : {};
+    // The request was admitted as a Bot's task.request when it arrived; after a restart the room
+    // roster may not be loaded yet, so the stored request is the evidence, not the current roster.
     const answers = requestMeta.kind === 'task.request' && requestMeta.returnTo === request.sender
-      && this.participants.some(person => person.id === request.sender && person.kind === 'bot')
       ? { eventId: request.event_id, sender: request.sender, meta: requestMeta } : undefined;
     const event = { type: 'm.room.message', event_id: eventId, room_id: origin.roomId, sender: this.participant.id,
       origin_server_ts: Date.now(), content: { msgtype: 'm.notice', body: text, 'org.ds_group': { kind: 'task.result', workerTask: task.id, workerKind: message.kind,
@@ -884,6 +888,8 @@ export class BotNode {
       this.delivery.applyOutput(item, output);
       output.controlOnly = response.controlOnly === true;
       output.accepted = response.dispatched?.length > 0;
+      // A worker that failed, or whose outcome a restart made unknown, is not a result.
+      if (response.workerStatus && response.workerStatus !== 'done') output.failure = true;
       await this.withTransferControl(item, async signal => {
         for (const artifact of response.artifacts || []) {
           if (!this.files) throw new Error('This node has no attachment transfer service');

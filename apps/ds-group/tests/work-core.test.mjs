@@ -25,11 +25,13 @@ async function fixture(t, options = {}) {
   };
   const native = { bot: async () => ({ id: 'native', name: 'Lin', sessionId: 'front', model: 'p/m' }), agent: async id => agentFor(id) };
   const state = { tasks: {} }; let saves = 0;
-  const { nativeBotId = 'native', ...rest } = options;
+  const { nativeBotId = 'native', origin = { roomId: '!room', eventId: '$ask', senderId: '@ann' }, ...rest } = options;
   const id = `@${nativeBotId}:dsh.test`;
   const core = new WorkCore({ ctx, native, node: { id, nativeBotId, directory }, state, save: async () => { saves++; }, ...rest });
   const db = new DatabaseSync(':memory:');
   core.contacts = new ContactBook({ db, self: { id }, local: localBot });
+  // The room message the front is answering; null for a Bot that is only asked by another Bot.
+  core.origin = origin;
   t.after(() => db.close());
   const results = [];
   core.onResult = async (task, message) => { results.push({ task: structuredClone(task), message, text: core.resultText(task, message) }); };
@@ -175,8 +177,8 @@ test('a worker that asked cannot deliver before the answer arrives, and a note c
 });
 
 test('work a Bot does for another Bot goes back through the asking Bot to the room message behind the request', async t => {
-  const dev = await fixture(t, { nativeBotId: 'dev' });
-  const planner = await fixture(t, { nativeBotId: 'planner' });
+  const dev = await fixture(t, { nativeBotId: 'dev', origin: null });
+  const planner = await fixture(t, { nativeBotId: 'planner', origin: null });
   await dev.core.serveFront(dev.agentFor('front'));
   await planner.core.serveFront(planner.agentFor('front'));
   // 开发助理 is answering 林 in R1 and asks 策划 with message_bot; 策划 dispatches a worker for it.
@@ -206,9 +208,9 @@ test('work a Bot does for another Bot goes back through the asking Bot to the ro
 });
 
 test('each Bot-to-Bot request keeps its own room message, even when the asking Bot is already done', async t => {
-  const dev = await fixture(t, { nativeBotId: 'dev' });
-  const ops = await fixture(t, { nativeBotId: 'ops' });
-  const planner = await fixture(t, { nativeBotId: 'planner' });
+  const dev = await fixture(t, { nativeBotId: 'dev', origin: null });
+  const ops = await fixture(t, { nativeBotId: 'ops', origin: null });
+  const planner = await fixture(t, { nativeBotId: 'planner', origin: null });
   await planner.core.serveFront(planner.agentFor('front'));
   const ask = (from, exchangeId) => planner.core.event({ id: 'front' }, { type: 'user/message', data: { message: {
     content: [{ type: 'text', text: '帮忙' }], source: { kind: 'bot', role: 'request', senderSessionId: from, exchangeId } } } });
@@ -253,4 +255,18 @@ test('a plain-language task cannot hand stack traces or raw logs to the person w
   await writeFile(path.join(task.dir, 'outputs', 'triage.md'), '# 处理建议\n先别读那个存档，下个补丁会修。\n');
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '空引用在 SaveLoader.RestoreTowerState', reply: '这是读档时的已知问题，下个补丁会修，先别读那个存档。' }), /已汇报完成/);
   assert.equal(f.results[0].text, '「看崩溃日志」完成了。\n\n这是读档时的已知问题，下个补丁会修，先别读那个存档。');
+});
+
+test('a turn with no message to answer cannot dispatch, so work a restart left unknown is not redone on its own', async t => {
+  const f = await fixture(t, { origin: null, nativeBotId: 'planner' });
+  await f.core.serveFront(f.agentFor('front'));
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '写简介', brief: '按 facts.md 写' }), /不能派工/);
+  // A message_bot request whose work ended unknown is not taken up again by a resumed turn.
+  f.core.state.tasks['T-old'] = { id: 'T-old', title: '写简介', status: 'unknown', origin: { roomId: '!r2', eventId: '$g18' } };
+  f.core.contacts.open({ id: 'x9', direction: 'in', peer: '@promo:b.test', via: 'message_bot', status: 'received', origin: { roomId: '!r2', eventId: '$g18' } });
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '写简介（重做）', brief: '按 facts.md 写' }), /不能派工/);
+  // A Matrix request is answered through the bridge's own origin, never picked up from the book.
+  f.core.contacts.open({ id: 'in:$g19', direction: 'in', peer: '@promo:b.test', via: 'matrix', status: 'received', origin: { roomId: '!r2', eventId: '$g19' } });
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: 'x', brief: 'y' }), /不能派工/);
+  assert.equal(Object.keys(f.state.tasks).length, 1);
 });

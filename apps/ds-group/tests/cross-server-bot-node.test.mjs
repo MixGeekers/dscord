@@ -225,3 +225,22 @@ test('another Bot gets the worker result as the answer to its request, not the f
   assert.match(answer.body, /B-017/);
   assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'returned');
 });
+
+test('after a restart, an unknown worker outcome goes back to the asking Bot as a failure of its request', async t => {
+  const peer = '@peer:b.node.test';
+  const f = await fixture(t, { sender: peer, meta: { kind: 'task.request', returnTo: peer, taskId: 'task-y', hop: 1,
+    originSenderId: humanId, originRoomId: roomId, originEventId: '$tang' } });
+  f.bridge.turn = async request => request.event.workerKind === 'result'
+    ? { status: 'completed', workerStatus: 'unknown', text: '「写简介」在宿主重启时还没有结束，结果不确定。我没有自动重做，需要的话告诉我。',
+      sessionId: 'native-room-session', artifacts: [], toolReceipts: [] }
+    : { status: 'completed', text: '收到，开工。', dispatched: ['T-2'], sessionId: 'native-room-session', artifacts: [], toolReceipts: [] };
+  await drain(f.runtime);
+  // A fresh connection: the foreign Bot's room roster has not been read yet.
+  f.runtime.participants.splice(f.runtime.participants.findIndex(person => person.id === peer), 1);
+  f.runtime.acceptWorkerResult({ id: 'T-2', status: 'unknown', origin: { roomId, eventId: '$node-request', senderId: peer } }, { kind: 'result' }, 'ignored');
+  await drain(f.runtime);
+  const notice = f.sent.at(-1);
+  assert.deepEqual([notice.options.kind, notice.options.to, notice.options.replyTo, notice.options.taskId, notice.options.originEventId],
+    ['task.failure', [peer], '$node-request', 'task-y', '$tang']);
+  assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'failed');
+});
