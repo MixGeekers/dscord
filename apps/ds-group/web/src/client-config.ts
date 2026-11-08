@@ -3,14 +3,19 @@ export interface ClientConfig {
   assetOrigin: string;
   homeCoreUrl: string;
   homeMatrixUrl: string | null;
-  authUrl: string;
 }
 
+/** What a chat server publishes: where it is, and which central server its accounts come from. */
 export interface ClientDiscovery {
-  schemaVersion: 1;
-  authorityId: string;
+  schemaVersion: 2;
   home: { serverName: string; coreUrl: string | null; matrixUrl: string };
-  auth: { mode: string; cookieCredentials: false };
+  central: { issuer: string } | null;
+  auth: {
+    mode: "central-identity-token";
+    audience: string | null;
+    sessionPath: string;
+    cookieCredentials: false;
+  };
 }
 
 /** Deployment configuration is read from the client origin, never from navigation. */
@@ -48,7 +53,7 @@ export function parseClientConfig(
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new Error("Invalid client-config.json");
   const input = value as Record<string, unknown>;
-  const allowed = ["schemaVersion", "homeCoreUrl", "homeMatrixUrl", "authUrl"];
+  const allowed = ["schemaVersion", "homeCoreUrl", "homeMatrixUrl"];
   if (Object.keys(input).some((key) => !allowed.includes(key)))
     throw new Error("Unknown client configuration field");
   if (input.schemaVersion !== 1)
@@ -61,22 +66,14 @@ export function parseClientConfig(
           "Home Core",
           input.homeCoreUrl === asset || input.homeCoreUrl === asset + "/",
         );
-  const authUrl =
-    input.authUrl === undefined
-      ? homeCoreUrl
-      : httpOrigin(
-          input.authUrl,
-          "Authentication origin",
-          input.authUrl === asset || input.authUrl === asset + "/",
-        );
-  const sameOrigin = homeCoreUrl === asset && authUrl === asset;
+  const sameOrigin = homeCoreUrl === asset;
   const homeMatrixUrl =
     input.homeMatrixUrl === undefined
       ? null
       : httpOrigin(input.homeMatrixUrl, "Home Matrix", sameOrigin);
   if (
     asset.startsWith("https:") &&
-    [homeCoreUrl, authUrl, ...(sameOrigin ? [] : [homeMatrixUrl])].some((url) =>
+    [homeCoreUrl, ...(sameOrigin ? [] : [homeMatrixUrl])].some((url) =>
       url?.startsWith("http:"),
     )
   )
@@ -86,7 +83,6 @@ export function parseClientConfig(
     assetOrigin: asset,
     homeCoreUrl,
     homeMatrixUrl,
-    authUrl,
   });
 }
 
@@ -118,7 +114,7 @@ export async function discoverHome(
   signal?: AbortSignal,
 ): Promise<ClientDiscovery> {
   const response = await fetch(
-    new URL("/.well-known/dscord/client", config.authUrl),
+    new URL("/.well-known/dscord/client", config.homeCoreUrl),
     {
       credentials: "omit",
       redirect: "error",
@@ -131,23 +127,22 @@ export async function discoverHome(
   if (!response.ok) throw new Error(`Home discovery: HTTP ${response.status}`);
   const value = (await response.json()) as ClientDiscovery;
   if (
-    value.schemaVersion !== 1 ||
-    typeof value.authorityId !== "string" ||
-    !value.authorityId ||
+    value.schemaVersion !== 2 ||
     typeof value.home?.serverName !== "string" ||
     !value.home.serverName ||
-    value.auth?.mode !== "matrix-password" ||
-    value.auth.cookieCredentials !== false
+    value.auth?.mode !== "central-identity-token" ||
+    value.auth.cookieCredentials !== false ||
+    (value.central !== null && typeof value.central?.issuer !== "string")
   )
     throw new Error("Invalid home discovery");
+  if (value.central) httpOrigin(value.central.issuer, "Central server");
   const coreUrl =
     value.home.coreUrl === null
-      ? config.authUrl
+      ? config.homeCoreUrl
       : httpOrigin(
           value.home.coreUrl,
           "Discovered home Core",
-          config.homeCoreUrl === config.assetOrigin &&
-            config.authUrl === config.assetOrigin,
+          config.homeCoreUrl === config.assetOrigin,
         );
   if (coreUrl !== config.homeCoreUrl)
     throw new Error(
@@ -156,8 +151,7 @@ export async function discoverHome(
   const matrixUrl = httpOrigin(
     value.home.matrixUrl,
     "Discovered home Matrix",
-    config.homeCoreUrl === config.assetOrigin &&
-      config.authUrl === config.assetOrigin,
+    config.homeCoreUrl === config.assetOrigin,
   );
   if (config.homeMatrixUrl && config.homeMatrixUrl !== matrixUrl)
     throw new Error(
@@ -168,6 +162,6 @@ export async function discoverHome(
 
 export function bindingKey(config: ClientConfig): string {
   return encodeURIComponent(
-    JSON.stringify([config.homeCoreUrl, config.authUrl, config.homeMatrixUrl]),
+    JSON.stringify([config.homeCoreUrl, config.homeMatrixUrl]),
   );
 }

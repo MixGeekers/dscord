@@ -37,7 +37,7 @@ export function initializePwa({
     getOwnerScope?.() ??
     JSON.stringify([
       homeCoreUrl,
-      getSession()?.binding?.authorityId,
+      getSession()?.binding?.centralIssuer,
       getSession()?.user_id,
     ]);
   const owner = () =>
@@ -45,7 +45,7 @@ export function initializePwa({
       ? {
           userId: getSession().user_id,
           homeCoreUrl,
-          authorityId: getSession().binding?.authorityId ?? null,
+          centralIssuer: getSession().binding?.centralIssuer ?? null,
         }
       : null;
   const sameOwner = (left, right) =>
@@ -405,8 +405,8 @@ export function initializePwa({
       !data.roomId.startsWith("!") ||
       data.userId !== getSession()?.user_id ||
       data.homeCoreUrl !== homeCoreUrl ||
-      (data.authorityId ?? null) !==
-        (getSession()?.binding?.authorityId ?? null)
+      (data.centralIssuer ?? null) !==
+        (getSession()?.binding?.centralIssuer ?? null)
     )
       return;
     void onOpenRoom(data);

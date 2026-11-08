@@ -1,6 +1,6 @@
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
-import { chmod, mkdir, readFile } from 'node:fs/promises';
+import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { localPath } from '../src/paths.mjs';
@@ -36,9 +36,24 @@ export function centralOptions(config = {}) {
   return { issuer, domain, registration: config.registration ?? 'open', rule: usernameRule(config.usernameRule), clientOrigins };
 }
 
+/**
+ * The saved configuration. On first start a deployment may seed it from the environment
+ * (DSCORD_CENTRAL_ISSUER, DSCORD_CENTRAL_REGISTRATION, DSCORD_CENTRAL_CLIENT_ORIGINS); after that the file is the configuration.
+ */
+export async function loadConfig(dataRoot, env = process.env) {
+  const filename = env.DSCORD_CENTRAL_CONFIG_PATH || path.join(dataRoot, 'central-config.json');
+  try { return JSON.parse(await readFile(filename, 'utf8')); }
+  catch (error) { if (error.code !== 'ENOENT' || !env.DSCORD_CENTRAL_ISSUER) throw error; }
+  const config = { issuer: env.DSCORD_CENTRAL_ISSUER, registration: env.DSCORD_CENTRAL_REGISTRATION || 'open',
+    clientOrigins: (env.DSCORD_CENTRAL_CLIENT_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean) };
+  centralOptions(config);
+  await writeFile(filename, JSON.stringify(config, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+  return config;
+}
+
 export async function createCentral({ dataRoot = localPath('central'), config, now = Date.now } = {}) {
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
-  config ||= JSON.parse(await readFile(process.env.DSCORD_CENTRAL_CONFIG_PATH || path.join(dataRoot, 'central-config.json'), 'utf8'));
+  config ||= await loadConfig(dataRoot);
   const options = centralOptions(config);
   const key = await loadSigningKey(path.join(dataRoot, 'signing-key.json'));
   const filename = path.join(dataRoot, 'central.sqlite');

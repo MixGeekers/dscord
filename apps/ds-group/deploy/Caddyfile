@@ -10,3 +10,9 @@
 		reverse_proxy core:18100
 	}
 }
+
+# The central server on its own hostname. Unset, it answers only on id.localhost.
+{$DS_GROUP_CENTRAL_DOMAIN} {
+	encode zstd gzip
+	reverse_proxy central:18200
+}

@@ -2,7 +2,7 @@
 
 中央服务器只管三件事：账号、签发身份、服务器索引。它不存消息和文件，不转发聊天，也不持有任何 Matrix token。聊天服务器（Core + Synapse）接入一台中央，人和 Bot 都用中央账号登录聊天服务器。整体方案见项目文档《DSCord 中央身份与聊天服务器方案》。
 
-本目录目前实现第一期：账号、账号规则、身份令牌和 Bot 节点授权。聊天服务器接入中央、服务器索引在后续各期完成。
+已经完成：账号、账号规则、身份令牌、Bot 节点授权（第一期），聊天服务器只认中央账号（第二期，见下文“聊天服务器怎样接入”）。服务器索引在后续各期完成。
 
 ## 运行
 
@@ -26,6 +26,8 @@ npm run central
 - `registration`：`open` 允许自助注册，`closed` 关闭。
 - `usernameRule`：账号规则，见下。
 - `clientOrigins`：允许跨域调用中央接口的网页客户端 origin。
+
+配置文件不存在时，可以用环境变量 `DSCORD_CENTRAL_ISSUER`、`DSCORD_CENTRAL_REGISTRATION`、`DSCORD_CENTRAL_CLIENT_ORIGINS`（逗号分隔）在第一次启动时生成它；之后以文件为准，改环境变量不再生效。Compose 自带的 `central` 服务就是这样启动的。
 
 数据目录里的 `signing-key.json` 是签名私钥（权限 `0600`），`central.sqlite` 是账号库。备份时两者都要保留；换掉私钥后，聊天服务器要重新读取公钥。
 
@@ -64,3 +66,12 @@ npm run central
 身份令牌是 Ed25519 签名的 JWT（`alg: EdDSA`），声明包括 `iss`、`sub`（账号编号）、`aud`（聊天服务器 origin）、`iat`、`exp`、`jti`、`username`、`gid`（全局身份 ID）、`kind`（`human` 或 `bot`）、`name`（显示名），Bot 另有 `owner`（所属人的全局身份 ID）。聊天服务器用 `central/tokens.mjs` 的 `verifyIdentityToken` 按中央公钥、`issuer` 和自己的 origin 校验。一张令牌只对写明的那台聊天服务器有效。
 
 撤销授权后，中央不再为那台服务器签发令牌；聊天服务器的本地会话是短期的，续期时要重新拿令牌，因此撤销会在一个会话周期内生效。
+
+## 聊天服务器怎样接入
+
+聊天服务器（Core）在 `core-config.json` 的 `identity.central` 写中央地址（初始化时取 `DS_GROUP_CENTRAL_URL`），并把自己的 `publicUrl` 当作令牌的 `aud`。Core 从中央读 `/.well-known/dscord/central` 和公钥，遇到新的签名密钥时重新读一次。容器网络里 Core 访问中央的地址和中央的公开地址不同时，用 `DS_GROUP_CENTRAL_FETCH_URL` 指定前者；令牌里的 `iss` 仍是公开地址。
+
+- 登录：客户端在中央拿到身份令牌，交给 Core 的 `POST /api/session {identityToken}`，换回这台服务器的会话。Core 没有注册、密码登录和演示登录接口。
+- 账号对应：中央用户名就是 Matrix 本地名。账号第一次登录时 Core 在 Synapse 建同名用户；已有的同名初始化成员由这个中央账号认领，之后只认它。
+- Bot：Bot 的身份令牌带 `owner`，Core 据此把 Bot 记在所属人名下。Bot 节点用自己的会话调 `POST /api/bots/:id/connect` 拿节点配置，并报告它在哪个 DSH 宿主上（`native`）。
+- 发现：`GET /.well-known/dscord/client` 的 `central.issuer` 告诉客户端去哪台中央登录，`auth.audience` 是申请身份令牌时要写的 `audience`。没有配置中央的 Core 返回 `central: null`，登录接口返回 503。

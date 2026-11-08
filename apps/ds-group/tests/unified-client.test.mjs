@@ -45,20 +45,24 @@ const receipt = {
   user_id: "@alice:home.example",
 };
 const discovery = {
-  schemaVersion: 1,
-  authorityId: "urn:uuid:home",
+  schemaVersion: 2,
   home: {
     serverName: "home.example",
     coreUrl: config.homeCoreUrl,
     matrixUrl: config.homeMatrixUrl,
   },
-  auth: { mode: "matrix-password", cookieCredentials: false },
+  central: { issuer: "https://id.example" },
+  auth: {
+    mode: "central-identity-token",
+    audience: config.homeCoreUrl,
+    sessionPath: "/api/session",
+    cookieCredentials: false,
+  },
 };
 const centralReceipt = {
   ...receipt,
   identity: {
-    authorityId: discovery.authorityId,
-    subjectId: "alice-subject",
+    globalId: "alice@id.example",
     matrixUserId: receipt.user_id,
     kind: "human",
   },
@@ -73,23 +77,20 @@ afterEach(() => {
   else globalThis.sessionStorage = originalStorage;
 });
 
-test("client deployment pins separate asset, Core, Matrix and auth origins", () => {
+test("client deployment pins separate asset, Core and Matrix origins", () => {
   assert.equal(config.assetOrigin, asset);
   assert.equal(config.homeCoreUrl, "https://core.example");
-  assert.equal(config.authUrl, config.homeCoreUrl);
   assert.deepEqual(parseClientConfig({ schemaVersion: 1 }, asset), {
     schemaVersion: 1,
     assetOrigin: asset,
     homeCoreUrl: asset,
-    authUrl: asset,
     homeMatrixUrl: null,
   });
-  assert.equal(
+  assert.throws(() =>
     parseClientConfig(
       { schemaVersion: 1, authUrl: "https://auth.example" },
       asset,
-    ).authUrl,
-    "https://auth.example",
+    ),
   );
 });
 
@@ -134,12 +135,15 @@ test("a foreign or malformed binding is never restored as a local session", () =
   assert.equal(restoreSession(config), null);
 });
 
-test("login binds the session to the discovered home authority", () => {
+test("login binds the session to the chat server's central server", () => {
   const session = bindSession(centralReceipt, config, discovery);
-  assert.equal(session.binding.authorityId, discovery.authorityId);
-  assert.equal(session.identity.subjectId, "alice-subject");
+  assert.equal(session.binding.centralIssuer, discovery.central.issuer);
+  assert.equal(session.identity.globalId, "alice@id.example");
   assert.throws(() =>
     bindSession({ user_id: receipt.user_id }, config, discovery),
+  );
+  assert.throws(() =>
+    bindSession(receipt, config, { ...discovery, central: null }),
   );
 });
 
@@ -260,8 +264,11 @@ test("home discovery validates pinned addresses and never receives a credential"
     calls.push({ url: String(url), options });
     return Response.json(discovery);
   };
-  assert.equal((await discoverHome(config)).authorityId, discovery.authorityId);
-  assert.equal(calls[0].url, config.authUrl + "/.well-known/dscord/client");
+  assert.equal(
+    (await discoverHome(config)).central.issuer,
+    discovery.central.issuer,
+  );
+  assert.equal(calls[0].url, config.homeCoreUrl + "/.well-known/dscord/client");
   assert.equal(calls[0].options.credentials, "omit");
   assert.equal(calls[0].options.redirect, "error");
   assert.equal(calls[0].options.headers, undefined);
@@ -271,6 +278,9 @@ test("home discovery validates pinned addresses and never receives a credential"
       home: { ...discovery.home, coreUrl: "https://foreign.example" },
     });
   await assert.rejects(discoverHome(config), /differs/);
+  globalThis.fetch = async () =>
+    Response.json({ ...discovery, auth: { ...discovery.auth, mode: "matrix-password" } });
+  await assert.rejects(discoverHome(config), /Invalid home discovery/);
 });
 
 test("unknown-server discovery uses only the entered origin and public endpoints", async () => {
@@ -369,7 +379,6 @@ test("trusted same-origin HTTP intranet deployment keeps its original session an
     {
       schemaVersion: 1,
       homeCoreUrl: origin,
-      authUrl: origin,
       homeMatrixUrl: matrixUrl,
     },
     origin,

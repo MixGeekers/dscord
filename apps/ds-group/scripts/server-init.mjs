@@ -78,13 +78,14 @@ export function serverOptions(env = process.env) {
     homeserverUrl: normalizedUrl(env.DS_GROUP_MATRIX_URL || 'http://synapse:8008', 'DS_GROUP_MATRIX_URL'),
     publicUrl: normalizedUrl(env.DS_GROUP_PUBLIC_URL || 'http://localhost:18100', 'DS_GROUP_PUBLIC_URL'),
     publicHomeserverUrl: normalizedUrl(env.DS_GROUP_MATRIX_PUBLIC_URL || 'http://localhost:18008', 'DS_GROUP_MATRIX_PUBLIC_URL'),
+    ...(env.DS_GROUP_CENTRAL_URL ? { centralUrl: normalizedUrl(env.DS_GROUP_CENTRAL_URL, 'DS_GROUP_CENTRAL_URL') } : {}),
     mediaStorage: mediaStorageOptions(env),
     ...(env.DS_GROUP_WEB_MODE ? { webMode: parseWebMode(env.DS_GROUP_WEB_MODE) } : {}),
   };
 }
 
 export async function initializeServer(options = serverOptions(), { containerOwnership = process.getuid?.() === 0 } = {}) {
-  const { dataRoot, synapseRoot, serverName, homeserverUrl, publicUrl, publicHomeserverUrl } = options;
+  const { dataRoot, synapseRoot, serverName, homeserverUrl, publicUrl, publicHomeserverUrl, centralUrl } = options;
   if (options.webMode !== undefined) parseWebMode(options.webMode);
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   await mkdir(synapseRoot, { recursive: true, mode: 0o700 });
@@ -106,10 +107,12 @@ export async function initializeServer(options = serverOptions(), { containerOwn
   }
   const corePath = path.join(dataRoot, 'core-config.json');
   const core = await readOptionalJson(corePath) || {
-    nodeSecret: randomBytes(32).toString('hex'), modelCallLimit: null, maxOutputTokens: 8192, demoLogin: false,
+    nodeSecret: randomBytes(32).toString('hex'), modelCallLimit: null, maxOutputTokens: 8192,
   };
   core.webMode = parseWebMode(options.webMode ?? core.webMode);
   core.publicUrl = publicUrl;
+  // People and Bots sign in with accounts on this central server.
+  if (centralUrl) core.identity = { ...core.identity, central: centralUrl };
   const metadata = previous || {
     schemaVersion: 1, serverName, createdAt: new Date().toISOString(),
     registrationSecret: randomBytes(48).toString('hex'),
@@ -152,7 +155,7 @@ export async function initializeServer(options = serverOptions(), { containerOwn
     for (const filename of [dataRoot, synapseRoot, metadataPath, corePath, storagePath, configPath, governance.root, governance.filename,
       path.join(synapseRoot, 'dscord_guard.py'), path.join(synapseRoot, 'governance.generated.yaml')]) await chown(filename, 1000, 1000);
   }
-  return { serverName, publicUrl, publicHomeserverUrl, mediaBackend: mediaStorage.backend, webMode: core.webMode, reused: Boolean(previous) };
+  return { serverName, publicUrl, publicHomeserverUrl, centralUrl: core.identity?.central ?? null, mediaBackend: mediaStorage.backend, webMode: core.webMode, reused: Boolean(previous) };
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] || '').href) {

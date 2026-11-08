@@ -37,7 +37,6 @@ export interface Policy {
   rooms: Rule[];
   botPolicies: BotPolicy[];
   settings: {
-    registrationMode: "open" | "closed" | null;
     maxUploadBytes: number | null;
   };
 }

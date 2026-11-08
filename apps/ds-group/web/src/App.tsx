@@ -7,6 +7,8 @@ import {
   readStored,
 } from "./api";
 import { defaultClientConfig, discoverHome } from "./client-config";
+import { centralIdentityToken, loadCentral } from "./central";
+import type { CentralInfo } from "./central";
 import type { ClientConfig, ClientDiscovery } from "./client-config";
 import {
   bindSession,
@@ -100,6 +102,7 @@ export default function App({
   const [homeDiscovery, setHomeDiscovery] = useState<
     ClientDiscovery | undefined
   >(undefined);
+  const [central, setCentral] = useState<CentralInfo | null>(null);
   const [verified, setVerified] = useState(false);
   const [connection, setConnection] = useState<
     "connecting" | "connected" | "offline"
@@ -175,10 +178,6 @@ export default function App({
   verifiedRef.current = verified;
   const api = useMemo(
     () => createApi(() => sessionRef.current, config),
-    [config],
-  );
-  const authApi = useMemo(
-    () => createApi(() => sessionRef.current, config, "auth"),
     [config],
   );
   const rawRequest = useMemo(
@@ -313,11 +312,24 @@ export default function App({
       .then((discovery) => {
         if (controller.signal.aborted) return;
         const account = sessionRef.current;
-        if (account && account.binding?.authorityId !== discovery.authorityId) {
+        if (
+          account &&
+          account.binding?.centralIssuer !== discovery.central?.issuer
+        ) {
           clearSession();
           setLoginError(t("homeChanged"));
         }
         setHomeDiscovery(discovery);
+        setCentral(null);
+        if (discovery.central)
+          void loadCentral(discovery.central.issuer)
+            .then((info) => {
+              if (!controller.signal.aborted) setCentral(info);
+            })
+            .catch((reason) => {
+              if (!controller.signal.aborted) setLoginError(messageOf(reason));
+            });
+        else setLoginError(t("centralMissing"));
       })
       .catch((reason) => {
         if (!controller.signal.aborted) {
@@ -381,7 +393,7 @@ export default function App({
       else url.searchParams.delete("roomId");
       if (eventId) url.searchParams.set("eventId", eventId);
       else url.searchParams.delete("eventId");
-      for (const key of ["userId", "homeCoreUrl", "authorityId"])
+      for (const key of ["userId", "homeCoreUrl", "centralIssuer"])
         url.searchParams.delete(key);
       history.replaceState(null, "", url);
       if (eventId && nextRoom) {
@@ -445,7 +457,6 @@ export default function App({
 
   useWorkspaceSync({
     api,
-    authApi,
     config,
     session,
     homeDiscovery,
@@ -558,34 +569,32 @@ export default function App({
   );
 
   async function authenticate(input: AuthSubmission) {
-    if (authBusyRef.current || logoutBusy || homeDiscovery === undefined)
+    if (
+      authBusyRef.current ||
+      logoutBusy ||
+      homeDiscovery === undefined ||
+      !central ||
+      !homeDiscovery.auth.audience
+    )
       return;
     authBusyRef.current = true;
     setLoginBusy(true);
     setLoginError("");
     setLoginRateLimitUntil(null);
     try {
-      const { username, password } = input;
       await pwa.current?.beforeIdentityChange("");
-      const receipt =
-        input.mode === "register"
-          ? await authApi<Session>("/api/register", {
-              method: "POST",
-              body: { username, password, displayName: input.displayName },
-              auth: false,
-              timeout: 30000,
-            })
-          : password
-            ? await authApi<Session>("/api/login", {
-                method: "POST",
-                body: { user: username, password },
-                auth: false,
-                timeout: 30000,
-              })
-            : await authApi<Session>(
-                `/api/demo-login?user=${encodeURIComponent(username)}`,
-                { auth: false },
-              );
+      // The account lives at the central server; this server only accepts its identity token.
+      const identityToken = await centralIdentityToken(
+        central.issuer,
+        homeDiscovery.auth.audience,
+        input,
+      );
+      const receipt = await api<Session>(homeDiscovery.auth.sessionPath, {
+        method: "POST",
+        body: { identityToken },
+        auth: false,
+        timeout: 30000,
+      });
       const next = bindSession(receipt, config, homeDiscovery);
       sessionStorage.setItem(sessionStorageKey(config), JSON.stringify(next));
       sessionRef.current = next;
@@ -630,7 +639,7 @@ export default function App({
     try {
       await pwa.current?.beforeIdentityChange("");
       try {
-        await authApi("/api/logout", { method: "POST", body: {} });
+        await api("/api/logout", { method: "POST", body: {} });
       } catch (reason) {
         if (!(reason instanceof ApiError) || reason.status !== 401)
           throw reason;
@@ -1169,9 +1178,9 @@ export default function App({
       />
       <AuthDialog
         open={loginOpen}
-        bootstrap={workspace}
+        central={central}
         session={session}
-        busy={loginBusy || logoutBusy || homeDiscovery === undefined}
+        busy={loginBusy || logoutBusy || !central}
         error={loginError}
         rateLimitUntil={loginRateLimitUntil}
         onSubmit={authenticate}
@@ -1185,20 +1194,6 @@ export default function App({
       />
       <CreateBotDialog
         open={createBotOpen}
-        api={api}
-        session={session}
-        status={status}
-        pendingStorageKey={
-          session ? storageKey(config, "pending-bot", session) : ""
-        }
-        onCreated={(bot) => {
-          setOwnedBotsState((previous) =>
-            previous === null
-              ? null
-              : [...previous.filter((value) => value.id !== bot.id), bot],
-          );
-          refresh();
-        }}
         onClose={() => setCreateBotOpen(false)}
       />
       <RoomDialog

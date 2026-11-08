@@ -13,11 +13,37 @@ x-server-environment: &server-environment
   DS_GROUP_SERVER_NAME: ${DS_GROUP_SERVER_NAME:-localhost}
   DS_GROUP_PUBLIC_URL: ${DS_GROUP_PUBLIC_URL:-http://localhost:18100}
   DS_GROUP_MATRIX_PUBLIC_URL: ${DS_GROUP_MATRIX_PUBLIC_URL:-http://localhost:18008}
+  # People and Bots sign in with accounts on this central server. Point it at another one to share accounts.
+  DS_GROUP_CENTRAL_URL: ${DS_GROUP_CENTRAL_URL:-http://localhost:18200}
   DS_GROUP_GOVERNANCE_DIR: /dscord-policy
   # Empty preserves the mode already saved by init; a fresh deployment defaults to bundled.
   DS_GROUP_WEB_MODE: ${DS_GROUP_WEB_MODE:-}
 
 services:
+  # Accounts and identity tokens only; it stores no messages or files. A deployment that uses an
+  # existing central server can leave this service stopped and set DS_GROUP_CENTRAL_URL.
+  central:
+    <<: *app
+    command: ["node", "central/service.mjs"]
+    environment:
+      DSCORD_CENTRAL_DATA_DIR: /central
+      DSCORD_CENTRAL_HOST: 0.0.0.0
+      DSCORD_CENTRAL_PORT: "18200"
+      DSCORD_CENTRAL_ISSUER: ${DS_GROUP_CENTRAL_URL:-http://localhost:18200}
+      DSCORD_CENTRAL_REGISTRATION: ${DSCORD_CENTRAL_REGISTRATION:-open}
+      DSCORD_CENTRAL_CLIENT_ORIGINS: ${DSCORD_CENTRAL_CLIENT_ORIGINS:-${DS_GROUP_PUBLIC_URL:-http://localhost:18100}}
+    volumes:
+      - central-data:/central
+    ports:
+      - "${DS_GROUP_BIND:-127.0.0.1}:${DS_GROUP_CENTRAL_PORT:-18200}:18200"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:18200/.well-known/dscord/central').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+    stop_grace_period: 15s
+
   config:
     <<: *app
     user: "0:0"
@@ -77,7 +103,7 @@ services:
       <<: *server-environment
       DS_GROUP_HOST: 0.0.0.0
       DS_GROUP_PORT: "18100"
-      DS_GROUP_DEMO_LOGIN: "false"
+      DS_GROUP_CENTRAL_FETCH_URL: ${DS_GROUP_CENTRAL_FETCH_URL:-http://central:18200}
     volumes:
       - core-data:/data
       - governance-data:/dscord-policy
@@ -112,6 +138,7 @@ services:
     stop_grace_period: 15s
 
 volumes:
+  central-data:
   core-data:
   synapse-data:
   governance-data:

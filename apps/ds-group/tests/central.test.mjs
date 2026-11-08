@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtemp, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { createCentral, centralOptions } from '../central/service.mjs';
+import { createCentral, centralOptions, loadConfig } from '../central/service.mjs';
 import { usernameRule } from '../central/rules.mjs';
 import { verifyIdentityToken } from '../central/tokens.mjs';
 
@@ -170,3 +170,20 @@ test('a device code expires after ten minutes', async t => {
   assert.equal((await call('POST', '/api/device/approve', { token: alice.token, body: { userCode: device.userCode, botId: bot.id } })).body.code, 'DEVICE_CODE_UNKNOWN');
   assert.equal((await call('POST', '/api/device/token', { body: { deviceCode: device.deviceCode } })).body.code, 'DEVICE_CODE_EXPIRED');
 });
+
+test('first start seeds the saved configuration from the environment and the file wins afterwards', async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-config-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await assert.rejects(loadConfig(root, {}), { code: 'ENOENT' });
+  const env = { DSCORD_CENTRAL_ISSUER: 'https://id.example.org', DSCORD_CENTRAL_REGISTRATION: 'closed',
+    DSCORD_CENTRAL_CLIENT_ORIGINS: 'https://chat-a.example.org, https://chat-b.example.org' };
+  const seeded = await loadConfig(root, env);
+  assert.deepEqual(seeded, { issuer: 'https://id.example.org', registration: 'closed',
+    clientOrigins: ['https://chat-a.example.org', 'https://chat-b.example.org'] });
+  const filename = path.join(root, 'central-config.json');
+  assert.deepEqual(JSON.parse(await readFile(filename, 'utf8')), seeded);
+  if (process.platform !== 'win32') assert.equal((await stat(filename)).mode & 0o777, 0o600);
+  assert.deepEqual(await loadConfig(root, { ...env, DSCORD_CENTRAL_REGISTRATION: 'open' }), seeded);
+  await assert.rejects(loadConfig(await mkdtemp(path.join(root, 'bad-')), { DSCORD_CENTRAL_ISSUER: 'ftp://id.example.org' }));
+});
+

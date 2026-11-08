@@ -1,7 +1,8 @@
 export const appMessages = {
   "zh-CN": {
     retry: "重新连接",
-    homeChanged: "归属服务的身份已更改，请重新登录",
+    homeChanged: "这台聊天服务器换了中央服务器，请重新登录",
+    centralMissing: "这台聊天服务器还没有接入中央服务器，暂时无法登录",
     receiptPending: "消息回执待确认，请重试",
     notJoined: "当前账号尚未加入此会话",
     joinPending: "群已创建，部分成员待加入",
@@ -12,7 +13,10 @@ export const appMessages = {
   },
   en: {
     retry: "Reconnect",
-    homeChanged: "The home service identity changed. Sign in again.",
+    homeChanged:
+      "This chat server now uses another central server. Sign in again.",
+    centralMissing:
+      "This chat server is not connected to a central server yet, so nobody can sign in.",
     receiptPending: "Message receipt is pending. Try again.",
     notJoined: "Your account has not joined this conversation",
     joinPending: "Group created. Some members are still joining.",

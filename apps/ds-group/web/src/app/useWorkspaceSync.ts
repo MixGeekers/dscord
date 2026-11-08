@@ -28,7 +28,6 @@ const HIDDEN_POLL_MS = 12000;
 
 export interface WorkspaceSync {
   api: Api;
-  authApi: Api;
   config: ClientConfig;
   session: Session | null;
   homeDiscovery: ClientDiscovery | undefined;
@@ -96,8 +95,8 @@ function initialTarget(account: Session, config: ClientConfig) {
       navigation.get("userId") === account.user_id) &&
     (!navigation.has("homeCoreUrl") ||
       navigation.get("homeCoreUrl") === config.homeCoreUrl) &&
-    (!navigation.has("authorityId") ||
-      navigation.get("authorityId") === account.binding?.authorityId);
+    (!navigation.has("centralIssuer") ||
+      navigation.get("centralIssuer") === account.binding?.centralIssuer);
   return matches
     ? { roomId: navigation.get("roomId"), eventId: navigation.get("eventId") }
     : { roomId: null, eventId: null };
@@ -107,7 +106,6 @@ function initialTarget(account: Session, config: ClientConfig) {
 export function useWorkspaceSync(sync: WorkspaceSync) {
   const {
     api,
-    authApi,
     config,
     session,
     homeDiscovery,
@@ -146,7 +144,7 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
           ServerStatus,
         ]
       >([
-        authApi<AccountProfile>("/api/me", options),
+        api<AccountProfile>("/api/me", options),
         api<{ rooms: Room[] }>("/api/rooms", options),
         api<SpacesResult>("/api/spaces", options),
         api<{ participants: Participant[] }>("/api/directory", options),
@@ -329,7 +327,6 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [
     api,
-    authApi,
     config,
     session,
     homeDiscovery,

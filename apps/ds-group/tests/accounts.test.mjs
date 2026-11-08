@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdtemp, rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { AccountService } from '../src/accounts.mjs';
@@ -75,7 +75,7 @@ async function fixture(t, options = {}) {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'dscord-accounts-'));
   const matrix = matrixFixture();
   const setup = { serverName, homeserverUrl: 'https://matrix.accounts.test', roomId, participants: [
-    { id: aliceId, localpart: 'alice', name: 'Alice', kind: 'human', accessToken: 'alice-server-token', password: 'legacy-password' },
+    { id: aliceId, localpart: 'alice', name: 'Alice', kind: 'human', accessToken: 'alice-server-token', password: 'alice-password' },
   ] };
   const service = await new AccountService({ setup, dataRoot, registrationSecret: 'synthetic-registration-secret', clientFactory: matrix.clientFactory, ...options }).initialize();
   const services = [service];
@@ -89,18 +89,26 @@ async function fixture(t, options = {}) {
   } };
 }
 
-test('registration persists dynamic members, joins the lobby and isolates browser sessions from the server', async t => {
+// Claims as a verified identity token from the central server carries them.
+const human = (username, name = username, sub = `sub-${username}`) => ({ sub, username, gid: `${username}@id.test`, kind: 'human', name });
+const bot = (username, name = username) => ({ ...human(username, name), kind: 'bot', owner: 'alice@id.test' });
+
+test('a first sign-in creates the account, joins the lobby and keeps browser sessions apart from the server session', async t => {
   const changed = [];
   const f = await fixture(t, { onParticipant: person => changed.push(person) });
   const originalArray = f.setup.participants;
-  const session = await f.service.register({ username: 'charlie', password: 'human-password', displayName: 'Charlie' });
+  const session = await f.service.signIn(human('charlie', 'Charlie'));
   const person = f.service.person(session.user_id);
+  assert.equal(session.user_id, `@charlie:${serverName}`);
   assert.equal(originalArray, f.setup.participants);
   assert.equal(person.name, 'Charlie');
+  assert.equal(person.globalId, 'charlie@id.test');
   assert.notEqual(person.accessToken, session.access_token);
   assert.equal(f.matrix.joined.get(person.id).has(roomId), true);
   assert.equal(changed.length, 1);
-  assert.deepEqual(await f.service.me(session.access_token), { user: { id: person.id, name: 'Charlie', kind: 'human', localpart: 'charlie' }, ownedBots: [], identity: session.identity });
+  assert.deepEqual(session.identity, { globalId: 'charlie@id.test', matrixUserId: person.id, kind: 'human' });
+  assert.deepEqual(await f.service.me(session.access_token), { user: { id: person.id, name: 'Charlie', kind: 'human', localpart: 'charlie', globalId: 'charlie@id.test' },
+    ownedBots: [], identity: session.identity });
   const publicJson = JSON.stringify(f.service.publicParticipants());
   assert.equal(publicJson.includes('accessToken'), false);
   assert.equal(publicJson.includes('password'), false);
@@ -108,13 +116,12 @@ test('registration persists dynamic members, joins the lobby and isolates browse
   const restored = await f.restore();
   assert.equal(restored.person(person.id).accessToken, person.accessToken);
   assert.equal(restored.ownerId, aliceId);
-  assert.equal((await readFile(path.join(f.dataRoot, 'accounts.sqlite'))).includes(Buffer.from('human-password')), false);
 });
 
-test('each login has its own device and logout preserves other clients and the Core service token', async t => {
+test('each sign-in has its own device and logout preserves other clients and the Core service token', async t => {
   const f = await fixture(t);
-  const first = await f.service.login({ user: 'alice', password: 'alice-password' });
-  const second = await f.service.login({ user: aliceId, password: 'alice-password' });
+  const first = await f.service.signIn(human('alice', 'Alice'));
+  const second = await f.service.signIn(human('alice', 'Alice'));
   assert.notEqual(first.device_id, second.device_id);
   assert.notEqual(first.access_token, second.access_token);
   assert.deepEqual(await f.service.logout(first.access_token), { loggedOut: true });
@@ -123,273 +130,119 @@ test('each login has its own device and logout preserves other clients and the C
   assert.equal(f.matrix.tokens.has('alice-server-token'), true);
   assert.deepEqual(await f.service.logout('alice-server-token'), { loggedOut: true, localOnly: true });
   assert.equal(f.matrix.tokens.has('alice-server-token'), true);
-  assert.equal((await f.service.me('alice-server-token')).user.id, aliceId);
   assert.equal(f.matrix.calls.some(call => call.route === '/_matrix/client/v3/logout' && call.token === 'alice-server-token'), false);
 });
 
-test('registration and service-session recovery retain the request client address for Matrix login limits', async t => {
+test('a seeded account is claimed by the central account of the same name, and only by that one', async t => {
+  const f = await fixture(t);
+  const session = await f.service.signIn(human('alice', 'Alice Liddell'));
+  assert.equal(session.user_id, aliceId);
+  assert.equal(f.service.person(aliceId).accessToken, 'alice-server-token');
+  assert.equal(f.service.person(aliceId).name, 'Alice Liddell');
+  assert.equal(f.matrix.users.get(aliceId).name, 'Alice Liddell');
+  await assert.rejects(f.service.signIn(human('alice', 'Alice', 'another-central-subject')), error => error.code === 'IDENTITY_CONFLICT');
+  await assert.rejects(f.service.signIn(bot('alice'), { ownerId: aliceId }), error => error.code === 'IDENTITY_KIND_CONFLICT');
+});
+
+test('a seeded account without a password Core can use cannot be claimed', async t => {
+  const f = await fixture(t);
+  f.service.db.prepare('UPDATE accounts SET recovery_password=NULL WHERE user_id=?').run(aliceId);
+  await assert.rejects(f.service.signIn(human('alice')), error => error.code === 'ACCOUNT_NOT_CLAIMABLE');
+});
+
+test('sign-in forwards the client address to every Matrix registration and login call', async t => {
   const f = await fixture(t);
   const clientIp = '192.0.2.10';
-  const session = await f.service.register({ username: 'charlie', password: 'password' }, { clientIp });
-  const registrationCalls = f.matrix.calls.filter(call => call.route === '/_synapse/admin/v1/register' || call.route === '/_matrix/client/v3/login');
-  assert.equal(registrationCalls.length, 3);
-  assert.equal(registrationCalls.every(call => call.options.clientIp === clientIp), true);
-  f.matrix.tokens.delete(f.service.person(session.user_id).accessToken);
-  f.matrix.calls.length = 0;
-  const nextIp = '2001:db8::7';
-  await f.service.login({ user: 'charlie', password: 'password' }, { clientIp: nextIp });
-  const logins = f.matrix.calls.filter(call => call.route === '/_matrix/client/v3/login');
-  assert.equal(logins.length, 2);
-  assert.equal(logins.every(call => call.options.clientIp === nextIp), true);
-  assert.equal(logins.some(call => call.body.device_id.startsWith('DSCORD_CORE_')), true);
+  await f.service.signIn(human('charlie'), { clientIp });
+  const calls = f.matrix.calls.filter(call => call.route === '/_synapse/admin/v1/register' || call.route === '/_matrix/client/v3/login');
+  assert.equal(calls.length, 3);
+  assert.equal(calls.every(call => call.options.clientIp === clientIp), true);
 });
 
-test('registration recovery sends its current client address when an upstream response was lost', async t => {
+test('a lost registration response recovers on the next sign-in with the reserved password', async t => {
   const f = await fixture(t);
-  const input = { username: 'charlie', password: 'password' };
   f.matrix.loseNextRegistration();
-  await assert.rejects(f.service.register(input, { clientIp: '192.0.2.10' }), /lost registration/);
-  f.matrix.calls.length = 0;
-  await f.service.register(input, { clientIp: '192.0.2.11' });
-  const logins = f.matrix.calls.filter(call => call.route === '/_matrix/client/v3/login');
-  assert.equal(logins.length, 2);
-  assert.equal(logins.every(call => call.options.clientIp === '192.0.2.11'), true);
-});
-
-test('concurrent identical registrations share provisioning while conflicting credentials cannot take its reservation', async t => {
-  const f = await fixture(t);
-  const input = { username: 'charlie', password: 'secret', displayName: 'Charlie' };
-  const first = f.service.register(input);
-  const second = f.service.register(input);
-  await assert.rejects(f.service.register({ ...input, password: 'other-password' }), error => error.status === 409);
-  const sessions = await Promise.all([first, second]);
-  assert.equal(sessions[0].user_id, sessions[1].user_id);
-  assert.notEqual(sessions[0].access_token, sessions[1].access_token);
-  assert.equal(f.matrix.calls.filter(call => call.method === 'POST' && call.route === '/_synapse/admin/v1/register').length, 1);
-  assert.equal(f.service.publicParticipants().filter(person => person.localpart === 'charlie').length, 1);
-});
-
-test('lost registration responses recover after restart using the reserved identity and password', async t => {
-  const f = await fixture(t);
-  const input = { username: 'charlie', password: 'secret', displayName: 'Charlie' };
-  f.matrix.loseNextRegistration();
-  await assert.rejects(f.service.register(input), /lost registration/);
-  assert.equal(f.service.person(`@charlie:${serverName}`), undefined);
+  await assert.rejects(f.service.signIn(human('charlie')), /lost registration/);
+  assert.equal(f.service.row('@charlie:accounts.test').status, 'provisioning');
   const restored = await f.restore();
-  await assert.rejects(restored.register({ ...input, displayName: 'Someone else' }), error => error.status === 409);
-  const session = await restored.register(input);
-  assert.equal(restored.person(session.user_id).name, 'Charlie');
-  assert.equal(f.matrix.users.size, 2);
+  const session = await restored.signIn(human('charlie'));
+  assert.equal(session.user_id, '@charlie:accounts.test');
+  assert.equal(restored.row(session.user_id).status, 'active');
 });
 
-test('an upstream existing account is left intact by registration and can be adopted by authenticated login', async t => {
+test('a Matrix account made outside DSCord is left intact', async t => {
   const f = await fixture(t);
-  const id = `@existing:${serverName}`;
-  f.matrix.users.set(id, { password: 'existing-password', name: 'Existing member' });
-  const input = { username: 'existing', password: 'existing-password', displayName: 'Replacement name' };
-  await assert.rejects(f.service.register(input), error => error.status === 409);
-  await assert.rejects(f.service.register(input), error => error.status === 409);
-  assert.equal(f.matrix.users.get(id).name, 'Existing member');
-  const session = await f.service.login({ user: 'existing', password: 'existing-password' });
-  assert.equal(session.user_id, id);
-  assert.equal(f.service.person(id).kind, 'human');
-  assert.equal(f.service.person(id).name, 'Existing member');
-  assert.equal(f.matrix.users.get(id).name, 'Existing member');
+  f.matrix.users.set('@dave:accounts.test', { password: 'their-own-password', name: 'Dave' });
+  await assert.rejects(f.service.signIn(human('dave')), error => error.code === 'MATRIX_ACCOUNT_EXISTS');
+  assert.equal(f.matrix.users.get('@dave:accounts.test').password, 'their-own-password');
 });
 
-test('a partial lobby join preserves credentials and succeeds on retry without creating a second account', async t => {
+test('a partial lobby join preserves credentials and succeeds on the next sign-in without a second account', async t => {
   const f = await fixture(t);
   f.matrix.failNextJoin();
-  const input = { username: 'charlie', password: 'secret' };
-  await assert.rejects(f.service.register(input), error => error.status === 503);
-  const token = f.service.row(`@charlie:${serverName}`).service_token;
-  const session = await f.service.register(input);
-  assert.equal(f.service.person(session.user_id).accessToken, token);
-  assert.equal(f.matrix.calls.filter(call => call.method === 'POST' && call.route === '/_synapse/admin/v1/register').length, 1);
+  await assert.rejects(f.service.signIn(human('charlie')), error => error.status === 503);
+  const token = f.service.row('@charlie:accounts.test').service_token;
+  assert.ok(token);
+  await f.service.signIn(human('charlie'));
+  assert.equal(f.service.row('@charlie:accounts.test').service_token, token);
+  assert.equal(f.matrix.joined.get('@charlie:accounts.test').has(roomId), true);
 });
 
-test('owned Bot creation is idempotent, keeps duplicate display names independent and persists ownership', async t => {
+test('a Bot signs in with its owner from the identity token and stays out of the lobby', async t => {
   const f = await fixture(t);
-  const first = f.service.createBot(aliceId, { name: 'Helper', requestId: 'one' });
-  const again = f.service.createBot(aliceId, { name: 'Helper', requestId: 'one' });
-  const [bot, duplicate] = await Promise.all([first, again]);
-  assert.deepEqual(bot, duplicate);
-  assert.match(bot.localpart, /^bot-[a-f0-9-]+$/);
-  assert.equal(bot.ownerId, aliceId);
-  assert.equal('accessToken' in bot, false);
-  assert.equal(f.matrix.joined.has(bot.id), false);
-  const other = await f.service.createBot(aliceId, { name: 'Helper', requestId: 'two' });
-  assert.notEqual(bot.id, other.id);
-  await assert.rejects(f.service.createBot(aliceId, { name: 'Different', requestId: 'one' }), error => error.status === 409);
-  await assert.rejects(f.service.createBot(bot.id, { name: 'Invalid owner' }), error => error.status === 403);
-  await assert.rejects(f.service.login({ user: bot.id, password: 'anything' }), error => error.status === 403);
-  const restored = await f.restore();
-  assert.deepEqual(restored.ownedBots(aliceId).map(value => value.id).sort(), [bot.id, other.id].sort());
-  assert.equal((await restored.createBot(aliceId, { name: 'Helper', requestId: 'one' })).id, bot.id);
+  await assert.rejects(f.service.signIn(bot('helper')), error => error.code === 'IDENTITY_TOKEN_OWNER');
+  const session = await f.service.signIn(bot('helper', 'Helper'), { ownerId: aliceId });
+  assert.equal(session.identity.kind, 'bot');
+  assert.equal(session.identity.ownerMatrixUserId, aliceId);
+  assert.deepEqual(f.service.ownedBots(aliceId), [{ id: '@helper:accounts.test', localpart: 'helper', name: 'Helper', kind: 'bot', ownerId: aliceId, globalId: 'helper@id.test' }]);
+  assert.equal(f.matrix.joined.get('@helper:accounts.test'), undefined);
+  await assert.rejects(f.service.me(session.access_token), error => error.status === 403);
+  await assert.rejects(f.service.signIn(human('helper')), error => error.code === 'IDENTITY_KIND_CONFLICT');
 });
 
-test('Bot creation resumes its durable password and identity after a lost upstream response', async t => {
+test('incomplete claims fail before contacting Matrix', async t => {
   const f = await fixture(t);
-  f.matrix.loseNextRegistration();
-  await assert.rejects(f.service.createBot(aliceId, { name: 'Helper', requestId: 'resume' }), /lost registration/);
-  const id = [...f.matrix.users.keys()].find(value => value !== aliceId);
-  const restored = await f.restore();
-  const bot = await restored.createBot(aliceId, { name: 'Helper', requestId: 'resume' });
-  assert.equal(bot.id, id);
-  assert.equal(f.matrix.users.size, 2);
-});
-
-test('closed or unconfigured registration rejects new humans while existing accounts can still sign in', async t => {
-  const f = await fixture(t, { config: { registrationMode: 'closed' } });
-  assert.deepEqual(f.service.registration(), { enabled: false, mode: 'closed' });
-  await assert.rejects(f.service.register({ username: 'charlie', password: 'secret' }), /closed/);
-  assert.equal((await f.service.login({ user: 'alice', password: 'alice-password' })).user_id, aliceId);
-  const missing = await fixture(t, { registrationSecret: undefined });
-  assert.deepEqual(missing.service.registration(), { enabled: false, mode: 'open' });
-  await assert.rejects(missing.service.register({ username: 'charlie', password: 'secret' }), /registration configuration/);
-});
-
-test('malformed account bodies and foreign identities fail before contacting Matrix', async t => {
-  const f = await fixture(t);
-  await assert.rejects(f.service.register(null), error => error.status === 400);
-  await assert.rejects(f.service.login([]), error => error.status === 400);
-  await assert.rejects(f.service.createBot(aliceId, null), error => error.status === 400);
-  await assert.rejects(f.service.login({ user: '@alice:elsewhere.test', password: 'password' }), error => error.status === 400);
-  await assert.rejects(f.service.register({ username: 'other', password: 'secret', displayName: 'bad\nname' }), error => error.status === 400);
+  for (const claims of [{ ...human('charlie'), username: 'Charlie!' }, { ...human('charlie'), sub: undefined }, { ...human('charlie'), gid: 7 }]) {
+    await assert.rejects(f.service.signIn(claims), error => error.code === 'IDENTITY_TOKEN_CLAIMS');
+  }
   assert.equal(f.matrix.calls.length, 0);
 });
 
-test('an empty unconfigured directory starts with registration disabled and never infers identity from its URL', async t => {
-  const setup = { homeserverUrl: 'http://127.0.0.1:1', roomId, participants: [] };
-  const f = await fixture(t, { setup, registrationSecret: undefined });
-  assert.equal(f.service.serverName, undefined);
-  assert.equal(setup.serverName, undefined);
-  assert.deepEqual(f.service.publicParticipants(), []);
-  assert.deepEqual(f.service.registration(), { enabled: false, mode: 'open' });
-  await assert.rejects(f.service.login({ user: 'alice', password: 'password' }), error => error.status === 503);
-  await assert.rejects(f.service.register({ username: 'alice', password: 'password' }), error => error.status === 403);
-  assert.equal(f.matrix.calls.length, 0);
-});
-
-test('an empty directory reads Matrix identity from server metadata and retains it across restart', async t => {
-  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'dscord-empty-accounts-'));
-  const setup = { homeserverUrl: 'http://127.0.0.1:1', participants: [] };
-  await writeFile(path.join(dataRoot, 'server.json'), JSON.stringify({ serverName, registrationSecret: 'synthetic-secret' }));
-  const service = await new AccountService({ setup, dataRoot }).initialize();
-  t.after(async () => { service.close(); await rm(dataRoot, { recursive: true, force: true }); });
-  assert.equal(service.serverName, serverName);
-  assert.equal(setup.serverName, serverName);
-  assert.deepEqual(service.registration(), { enabled: true, mode: 'open' });
-  service.close();
-  await rm(path.join(dataRoot, 'server.json'));
-  const restored = await new AccountService({ setup: { homeserverUrl: setup.homeserverUrl, participants: [] }, dataRoot }).initialize();
-  try {
-    assert.equal(restored.serverName, serverName);
-    assert.deepEqual(restored.registration(), { enabled: false, mode: 'open' });
-  } finally { restored.close(); }
-});
-
-test('stable subjects survive display-name changes, Bot creation retries and restart without replacing old credentials', async t => {
-  const f = await fixture(t);
-  const human = f.service.identity(aliceId);
-  const bot = await f.service.createBot(aliceId, { name: 'Alice', requestId: 'stable-owner' });
-  const botIdentity = f.service.identity(bot.id);
-  assert.notEqual(botIdentity.subjectId, human.subjectId);
-  assert.equal(botIdentity.ownerSubjectId, human.subjectId);
-  assert.equal(botIdentity.ownerMatrixUserId, aliceId);
-  f.service.db.prepare('UPDATE accounts SET name=? WHERE user_id=?').run('Different nickname', aliceId);
-  f.service.refreshSetup();
-  assert.deepEqual(f.service.identity(aliceId), human);
-  const restored = await f.restore();
-  assert.deepEqual(restored.identity(aliceId), human);
-  assert.deepEqual(restored.identity(bot.id), botIdentity);
-  assert.equal(restored.person(aliceId).accessToken, 'alice-server-token');
-  assert.equal(restored.person(bot.id).ownerId, aliceId);
+test('a server without Matrix registration configuration refuses sign-in', async t => {
+  const f = await fixture(t, { registrationSecret: undefined });
+  await assert.rejects(f.service.signIn(human('charlie')), error => error.code === 'ACCOUNTS_UNCONFIGURED');
 });
 
 test('disabled accounts cannot sign in, use an existing session or reactivate after restart', async t => {
   const f = await fixture(t);
-  const session = await f.service.login({ user: 'alice', password: 'alice-password' });
+  const session = await f.service.signIn(human('alice'));
   f.service.db.prepare("UPDATE accounts SET status='disabled' WHERE user_id=?").run(aliceId);
   await assert.rejects(f.service.me(session.access_token), error => error.status === 403);
-  await assert.rejects(f.service.login({ user: 'alice', password: 'alice-password' }), /disabled/);
+  await assert.rejects(f.service.signIn(human('alice')), /disabled/);
   await assert.rejects(f.service.activate(aliceId), /disabled/);
   const restored = await f.restore();
   assert.equal(restored.person(aliceId), undefined);
   assert.equal(restored.row(aliceId).status, 'disabled');
-  await assert.rejects(restored.login({ user: 'alice', password: 'alice-password' }), /disabled/);
+  await assert.rejects(restored.signIn(human('alice')), /disabled/);
 });
 
-test('old Matrix account binding requires an actual password proof and never matching nicknames', async t => {
+test('an account database from before central identity is refused', async t => {
   const f = await fixture(t);
-  const id = `@old:${serverName}`;
-  f.matrix.users.set(id, { password: 'old-secret', name: 'Alice' });
-  await assert.rejects(f.service.login({ user: id, password: 'wrong-secret' }), error => error.status === 403);
-  assert.equal(f.service.row(id), undefined);
-  assert.equal(f.service.db.prepare('SELECT * FROM account_subjects WHERE user_id=?').get(id), undefined);
-  const session = await f.service.login({ user: id, password: 'old-secret' });
-  assert.equal(session.identity.matrixUserId, id);
-  assert.notEqual(session.identity.subjectId, f.service.identity(aliceId).subjectId);
-  assert.equal(f.service.person(id).name, 'Alice');
+  f.service.db.prepare("UPDATE account_metadata SET value='1' WHERE key='identitySchemaVersion'").run();
+  await assert.rejects(f.restore(), /predates central identity/);
 });
 
-test('the pre-identity database migrates additively without replacing Matrix IDs or service credentials', async t => {
-  const f = await fixture(t);
-  const bot = await f.service.createBot(aliceId, { name: 'Old Bot', requestId: 'pre-migration' });
-  const credentials = f.service.row(bot.id).service_token;
-  f.service.db.exec("DROP TABLE account_subjects; DELETE FROM account_metadata WHERE key IN ('authorityId','identitySchemaVersion')");
-  const restored = await f.restore();
-  assert.equal(restored.row(aliceId).service_token, 'alice-server-token');
-  assert.equal(restored.row(bot.id).service_token, credentials);
-  assert.equal(restored.row(bot.id).owner_id, aliceId);
-  assert.equal(restored.identity(bot.id).ownerSubjectId, restored.identity(aliceId).subjectId);
-  assert.equal(restored.db.prepare('SELECT COUNT(*) AS count FROM account_subjects').get().count, 2);
-});
-
-test('a newer unknown identity schema fails instead of silently downgrading its metadata', async t => {
-  const f = await fixture(t);
-  f.service.db.prepare("UPDATE account_metadata SET value='99' WHERE key='identitySchemaVersion'").run();
-  await assert.rejects(f.restore(), /Unsupported account identity schema version/);
-});
-
-test('disabled registration retries, Bot provisioning and stale owner objects fail before any upstream mutation', async t => {
-  const f = await fixture(t);
-  const input = { username: 'charlie', password: 'secret', displayName: 'Charlie' };
-  const session = await f.service.register(input);
-  const bot = await f.service.createBot(aliceId, { name: 'Helper', requestId: 'disable-boundary' });
-  f.service.db.prepare("UPDATE accounts SET status='disabled' WHERE user_id IN (?,?,?)").run(session.user_id, bot.id, aliceId);
-  f.matrix.calls.length = 0;
-  await assert.rejects(f.service.register(input), error => error.status === 403);
-  await assert.rejects(f.service.provision(bot.id, 'anything'), error => error.status === 403);
-  await assert.rejects(f.service.createBot(aliceId, { name: 'Another Bot' }), error => error.status === 403);
-  assert.equal(f.matrix.calls.length, 0);
-});
-
-test('native catalog exposes only owner metadata and attaches one stable server identity', async t => {
-  const { NativeBotCatalog } = await import('../src/native-bot-catalog.mjs');
-  const { service, restore } = await fixture(t);
-  const catalog = new NativeBotCatalog(service);
-  const input = { hostId: 'host-a', label: 'Local DSH', bots: [{ id: 'session-a', name: 'Researcher', role: 'Research', model: 'local/chat', main: true, secret: 'never-publish' }] };
-  catalog.publish(aliceId, input);
-  assert.equal(JSON.stringify(catalog.list(aliceId)).includes('never-publish'), false);
-  const [a,b] = await Promise.all([catalog.attach(aliceId, { hostId: 'host-a', nativeBotId: 'session-a' }), catalog.attach(aliceId, { hostId: 'host-a', nativeBotId: 'session-a' })]);
-  assert.equal(a.id,b.id); assert.equal(service.ownedBots(aliceId).length,1);
-  const next = new NativeBotCatalog(await restore());
-  assert.equal((await next.attach(aliceId, { hostId: 'host-a', nativeBotId: 'session-a' })).id,a.id);
-  assert.equal(next.list(aliceId)[0].botId,a.id);
-  assert.throws(()=>next.list('@unknown:accounts.test'));
-});
-
-test('native catalog binds a legacy server Bot without replacing its identity and refuses stale or conflicting choices', async t => {
-  const { NativeBotCatalog } = await import('../src/native-bot-catalog.mjs');
-  const { service } = await fixture(t);
-  const catalog = new NativeBotCatalog(service);
-  const prior = await service.createBot(aliceId,{name:'Existing server Bot'});
-  catalog.publish(aliceId,{hostId:'host-a',bots:[{id:'session-a',name:'Native A'},{id:'session-b',name:'Native B'}]});
-  const linked = await catalog.attach(aliceId,{hostId:'host-a',nativeBotId:'session-a',botId:prior.id});
-  assert.equal(linked.id,prior.id); assert.equal(service.ownedBots(aliceId).length,1);
-  await assert.rejects(catalog.attach(aliceId,{hostId:'host-a',nativeBotId:'session-b',botId:prior.id}), /already linked/);
-  service.db.prepare('UPDATE native_bot_hosts SET updated_at=0').run();
-  await assert.rejects(catalog.attach(aliceId,{hostId:'host-a',nativeBotId:'session-b'}), /Open DSH/);
-  assert.throws(()=>catalog.publish(aliceId,{hostId:'host-a',bots:[{id:'x',name:'A'},{id:'x',name:'B'}]}), /Duplicate/);
+test('an empty directory reads Matrix identity from server metadata and retains it across restart', async t => {
+  const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'dscord-accounts-'));
+  t.after(() => rm(dataRoot, { recursive: true, force: true }));
+  await writeFile(path.join(dataRoot, 'server.json'), JSON.stringify({ serverName, registrationSecret: 'from-metadata' }));
+  const setup = { homeserverUrl: 'https://matrix.accounts.test', participants: [] };
+  const service = await new AccountService({ setup, dataRoot }).initialize();
+  assert.equal(service.serverName, serverName);
+  assert.equal(setup.serverName, serverName);
+  assert.equal(service.registrationSecret, 'from-metadata');
+  service.close();
+  const restored = await new AccountService({ setup: { homeserverUrl: setup.homeserverUrl, participants: [] }, dataRoot }).initialize();
+  assert.equal(restored.serverName, serverName);
+  restored.close();
 });

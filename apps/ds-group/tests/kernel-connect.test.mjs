@@ -46,7 +46,7 @@ test('creating a Bot preserves its request across a lost result and refuses chan
   await assert.rejects(controller.handle({ ...request, role: 'Another role' }), /内容已经变化/);
 });
 
-test('a signed-in local connector publishes only owned and explicitly claimable Bots', async t => {
+test('a signed-in local connector lists only owned and explicitly claimable Bots', async t => {
   const { controller, bots } = await fixture(t);
   controller.state.user = { id: '@alice:home.test', name: 'Same name' };
   bots.push({ id: 'mine', owner: { id: '@alice:home.test' } },
@@ -57,12 +57,11 @@ test('a signed-in local connector publishes only owned and explicitly claimable 
 
 test('roster synchronization retries a failed desired node and continues restoring its peers', async t => {
   const { controller } = await fixture(t);
-  controller.state.accessToken = 'synthetic';
+  controller.state.centralToken = 'synthetic';
   const bots = ['one', 'two', 'stopped'].map(id => ({ id, nativeBinding: { hostId: controller.state.hostId, nativeBotId: id } }));
   controller.state.nodes = Object.fromEntries(bots.map(bot => [bot.id, { ...bot, desired: bot.id !== 'stopped' }]));
   controller.running.set('one', { status: 'error', lastError: 'Startup connection was lost' });
-  controller.publishNative = async () => {};
-  controller.remote = async () => ({ bots });
+  controller.ownedBots = async () => bots;
   const attempts = [];
   let fail = true;
   controller.connect = async id => {

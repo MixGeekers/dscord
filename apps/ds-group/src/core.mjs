@@ -12,7 +12,7 @@ import { TaskService } from './tasks.mjs';
 import { ChatFeatures } from './mentions.mjs';
 import { localPath, packageRoot } from './paths.mjs';
 import { AccountService } from './accounts.mjs';
-import { NativeBotCatalog } from './native-bot-catalog.mjs';
+import { NativeBindings } from './native-bindings.mjs';
 import { IdentityService } from './identity.mjs';
 import { effectiveWebMode } from './web-mode.mjs';
 import { NodeCredentials } from './node-auth.mjs';
@@ -55,21 +55,18 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   if (proxySetting !== undefined && !['true', 'false'].includes(proxySetting)) throw new Error('DS_GROUP_TRUST_PROXY must be true or false');
   if (config.trustProxy !== undefined && typeof config.trustProxy !== 'boolean') throw new Error('trustProxy must be a boolean');
   const trustProxy = proxySetting === undefined ? config.trustProxy === true : proxySetting === 'true';
-  const demoLogin = process.env.DS_GROUP_DEMO_LOGIN === undefined ? config.demoLogin !== false : process.env.DS_GROUP_DEMO_LOGIN === 'true';
-  if (process.env.DS_GROUP_DEMO_LOGIN !== undefined && !['true', 'false'].includes(process.env.DS_GROUP_DEMO_LOGIN)) {
-    throw new Error('DS_GROUP_DEMO_LOGIN must be true or false');
-  }
   if (typeof config.nodeSecret !== 'string' || !config.nodeSecret) throw new Error('Core nodeSecret is required');
   await mkdir(dataRoot, { recursive: true });
   let push;
   const accounts = await new AccountService({ setup, config, dataRoot,
     onParticipant: async person => { if (push) await push.upsertParticipant(person); },
   }).initialize();
-  const nativeBots = new NativeBotCatalog(accounts);
+  const nativeBots = new NativeBindings(accounts);
   setup.serverName ||= accounts.serverName || 'localhost';
   let identity;
   try {
-    identity = await new IdentityService({ accounts, setup, config, dataRoot }).initialize();
+    // DS_GROUP_CENTRAL_FETCH_URL reaches the central server inside a container network; tokens still name its public issuer.
+    identity = new IdentityService({ accounts, setup, config, centralUrl: process.env.DS_GROUP_CENTRAL_FETCH_URL }).initialize();
   } catch (error) {
     accounts.close();
     throw error;
@@ -105,7 +102,7 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   const botWork = new BotWorkService({ setup, accounts, governance, dataRoot, authorizeNode, readJsonBody, tasks,
     nativeBot: id => nativeBots.isNative(id), maxBytes: () => media.maxBytes });
   const app = { setup, config, accounts, nativeBots, identity, governance, nodeCredentials, budget, media, attachmentAccess, chat, chatFeatures, tasks,
-    push, nodes, kernelControl, demoLogin, trustProxy, webMode, startedAt, publicParticipants,
+    push, nodes, kernelControl, trustProxy, webMode, startedAt, publicParticipants,
     nodeSnapshot: () => accounts.publicParticipants().filter(p => p.kind === 'bot').map(participant => {
       const active = nodes.get(participant.id);
       if (!active) return { id: participant.localpart, botId: participant.id, name: participant.name, status: 'offline', engine: 'DSCord node' };
@@ -117,7 +114,7 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   for (const register of [sessionRoutes, pushRoutes, botRoutes, attachmentRoutes, roomRoutes, nodeRoutes]) register(router, app);
   // Feature services that route their own paths.
   const delegates = [collaboration, kernelControl, botWork, tasks, chatFeatures];
-  const unauthenticated = new Set(['/api/login', '/api/register', '/api/logout', '/api/demo-login', '/api/bootstrap', '/api/status', '/api/push/config']);
+  const unauthenticated = new Set(['/api/session', '/api/logout', '/api/bootstrap', '/api/status', '/api/push/config']);
 
   async function dispatch(request, response) {
     const url = new URL(request.url, 'http://localhost');
@@ -144,7 +141,6 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
       policy = await governance.read();
       directory = await collaboration.directory();
       directorySetup.participants = directory;
-      accounts.mode = policy.settings.registrationMode ?? config.registrationMode ?? 'open';
       media.maxBytes = policy.settings.maxUploadBytes ?? Number(config.maxUploadBytes ?? process.env.DS_GROUP_MAX_UPLOAD_BYTES ?? 52428800);
     }
     // Every ordinary credential is checked at this home; no caller-selected upstream is used.

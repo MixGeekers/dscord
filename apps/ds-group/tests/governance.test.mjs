@@ -362,7 +362,7 @@ test("independent management HTTP enforces roles, origin checks, JSON limits and
           "PUT",
           {
             ...state.policy,
-            settings: { registrationMode: "closed", maxUploadBytes: null },
+            settings: { maxUploadBytes: null },
           },
           token,
         )
@@ -542,7 +542,7 @@ test("space grouping uses registered authority before creator inference and keep
   }
 });
 
-test("legacy home Core stays compatible while administration policy changes registration without upgrading chat credentials", async () => {
+test("administration policy changes chat-server settings without upgrading chat credentials", async () => {
   const root = await temp();
   const core = await createCore({
     setup: structuredClone(setup),
@@ -558,7 +558,7 @@ test("legacy home Core stays compatible while administration policy changes regi
     assert.equal(before.participants[0].id, setup.participants[0].id);
     await core.governance.save({
       ...(await core.governance.read()),
-      settings: { registrationMode: "closed", maxUploadBytes: 2097152 },
+      settings: { maxUploadBytes: 2097152 },
       partners: [
         { serverName: "partner.test", name: "Partner", enabled: true },
       ],
@@ -567,7 +567,6 @@ test("legacy home Core stays compatible while administration policy changes regi
       ],
     });
     const after = await (await fetch(base + "/api/bootstrap")).json();
-    assert.equal(after.registration.mode, "closed");
     assert.equal(after.attachments.maxBytes, 2097152);
     assert.equal(
       after.participants.some((person) => person.id === "@bob:partner.test"),
@@ -580,19 +579,6 @@ test("legacy home Core stays compatible while administration policy changes regi
         })
       ).status,
       404,
-    );
-    assert.equal(
-      (
-        await fetch(base + "/api/register", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            username: "new",
-            password: "synthetic-password",
-          }),
-        })
-      ).status,
-      403,
     );
   } finally {
     await core.close();

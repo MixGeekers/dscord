@@ -2,26 +2,19 @@ import type { Catalog } from "../locale";
 
 const en = {
   nativeHelp:
-    "Create a Bot in DSCord on its node, sign in there with this account, then select it here. The same Bot keeps its identity, memory and work when joining a server.",
-  nativeEmpty: "No Bot nodes discovered for this account.",
+    "A Bot is an account on the central server that you own. DSH on the Bot’s machine creates it and runs it, and it keeps one identity, memory and set of work on every chat server it joins.",
   nodeConnection: "Connect a Bot node",
   nodeConnectionHelp:
-    "Open DSCord in DSH on the Bot’s machine and sign in with this account. Create a local Bot there, then refresh this list to add it.",
-  nativeBots: "Bots on your nodes",
-  nativeAdded: "Already added",
-  nativeReady: "Ready to add",
-  nativeOffline: "Connect its node to add it",
+    "Open DSCord in DSH on that machine, sign in with this account and create or link a Bot there. DSH gets the Bot its own sign-in from the central server and connects it to this chat server, and the Bot then appears here.",
   nativeLifecycle:
     "Bots run in their own DSCord kernel on a node. Closing this page keeps their identity, chats, memory and work.",
-  refresh: "Refresh",
   modelSettings: "Model settings",
   modelHelp:
     "Open DSCord on the Bot’s node to choose its working model. Model credentials stay in the node’s private configuration.",
   runtimeModel: "Running model",
-  createBot: "Add existing Bot",
+  createBot: "Add a Bot",
   botName: "Bot name",
   chooseName: "Enter a Bot name",
-  creating: "Adding",
   retry: "Retry creation",
   pending:
     "The creation result is awaiting confirmation. Retry to check the same request.",
@@ -40,33 +33,26 @@ const en = {
   copyFailed: "Select the Bot ID and copy it manually.",
   refreshFailed: "Bot created. The list could not refresh. {error}",
   close: "Close",
-  signIn: "Sign in to add an existing Bot",
+  signIn: "Sign in to add a Bot",
 } as const;
 
 export const botMessages: Catalog<keyof typeof en> = {
   en,
   "zh-CN": {
     nativeHelp:
-      "在节点的 DSCord 中创建 Bot 并登录同一账号，再从这里选择加入服务器。同一个 Bot 会保留身份、记忆和工作。",
-    nativeEmpty: "尚未发现此账号的 Bot 节点。",
+      "Bot 是中央服务器上归你所有的账号，由 Bot 所在电脑上的 DSH 创建和运行。它在接入的每台聊天服务器上都是同一个身份，记忆和工作也是同一份。",
     nodeConnection: "连接 Bot 节点",
     nodeConnectionHelp:
-      "在 Bot 所在机器的 DSH 中打开 DSCord，登录同一账号并创建本地 Bot，然后刷新此列表添加。",
-    nativeBots: "节点上的 Bot",
-    nativeAdded: "已添加",
-    nativeReady: "可添加",
-    nativeOffline: "请先连接它所在的节点",
+      "在那台电脑的 DSH 里打开 DSCord，用这个账号登录，在那里创建或关联 Bot。DSH 会向中央服务器为 Bot 申请它自己的登录，再把它接入这台聊天服务器，接好后就会出现在这里。",
     nativeLifecycle:
       "Bot 在节点的 DSCord 自有内核中运行。关闭网页后，身份、对话、记忆和工作继续保留。",
-    refresh: "刷新",
     modelSettings: "模型设置",
     modelHelp:
       "请在 Bot 所在节点的 DSCord 中选择工作模型。模型凭据保留在节点的私有配置中。",
     runtimeModel: "当前运行模型",
-    createBot: "添加已有 Bot",
+    createBot: "添加 Bot",
     botName: "Bot 名称",
     chooseName: "请输入 Bot 名称",
-    creating: "添加中",
     retry: "重试创建",
     pending: "创建结果待确认。重试会核对同一次请求。",
     receiptMissing: "创建回执不完整。请重试确认 Bot。",
@@ -83,6 +69,6 @@ export const botMessages: Catalog<keyof typeof en> = {
     copyFailed: "请选择 Bot ID 后手动复制。",
     refreshFailed: "Bot 已创建，列表刷新失败。{error}",
     close: "关闭",
-    signIn: "登录后添加已有 Bot",
+    signIn: "登录后添加 Bot",
   },
 };

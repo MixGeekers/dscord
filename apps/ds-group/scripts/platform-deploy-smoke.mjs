@@ -14,9 +14,11 @@ const base = Number(process.env.DS_GROUP_PLATFORM_SMOKE_PORT_BASE || 24220);
 if (!Number.isInteger(base) || base < 1024 || base > 65525) throw new Error('Invalid DS_GROUP_PLATFORM_SMOKE_PORT_BASE');
 const project = `dscord-platform-${randomBytes(6).toString('hex')}`;
 const reportPath = path.resolve(process.env.DS_GROUP_PLATFORM_SMOKE_REPORT || path.join(packageRoot, '.local', `${project}.json`));
-const coreUrl = `http://127.0.0.1:${base}`, matrixUrl = `http://127.0.0.1:${base + 8}`, adminUrl = `http://127.0.0.1:${base + 10}`;
+const coreUrl = `http://127.0.0.1:${base}`, matrixUrl = `http://127.0.0.1:${base + 8}`, adminUrl = `http://127.0.0.1:${base + 10}`,
+  centralUrl = `http://127.0.0.1:${base + 20}`;
 const env = { ...process.env, DS_GROUP_IMAGE: process.env.DS_GROUP_IMAGE || 'ds-group:ci',
   DS_GROUP_BIND: '127.0.0.1', DS_GROUP_HTTP_PORT: String(base), DS_GROUP_MATRIX_PORT: String(base + 8), DS_GROUP_ADMIN_PORT: String(base + 10),
+  DS_GROUP_CENTRAL_PORT: String(base + 20), DS_GROUP_CENTRAL_URL: centralUrl,
   DS_GROUP_SERVER_NAME: `${project}.test`, DS_GROUP_PUBLIC_URL: coreUrl, DS_GROUP_MATRIX_PUBLIC_URL: matrixUrl,
   DS_GROUP_WEB_MODE: 'api-only', DS_GROUP_MEDIA_BACKEND: 'local', DS_GROUP_BOOTSTRAP_DEMO: 'true' };
 if (process.env.DS_GROUP_PLATFORM) {
@@ -25,7 +27,7 @@ if (process.env.DS_GROUP_PLATFORM) {
 }
 const report = { schemaVersion: 1, project, startedAt: new Date().toISOString(), status: 'running',
   evidenceLevel: 'real isolated Docker Compose Core/Synapse/administration and persistent named volumes; synthetic identities; zero model',
-  image: env.DS_GROUP_IMAGE, origins: { coreUrl, matrixUrl, adminUrl }, checks: [], modelCalls: 0, physicalCrossMachine: false };
+  image: env.DS_GROUP_IMAGE, origins: { coreUrl, matrixUrl, adminUrl, centralUrl }, checks: [], modelCalls: 0, physicalCrossMachine: false };
 const composeArgs = ['compose', '--project-name', project, '-f', path.join(packageRoot, 'deploy/compose.yaml')];
 const sensitive = new Set();
 let browser, page, adminToken, login, group, sent, savedPolicy, before, started = false;
@@ -57,46 +59,46 @@ async function noChatWeb() {
   }
 }
 async function snapshot() {
-  const code = "const fs=require('node:fs'),c=require('node:crypto');console.log(JSON.stringify(Object.fromEntries(['core-config.json','server.json','identity-config.json','matrix-setup.json'].map(f=>[f,c.createHash('sha256').update(fs.readFileSync('/data/'+f)).digest('hex')]))));";
+  const code = "const fs=require('node:fs'),c=require('node:crypto');console.log(JSON.stringify(Object.fromEntries(['core-config.json','server.json','matrix-setup.json'].map(f=>[f,c.createHash('sha256').update(fs.readFileSync('/data/'+f)).digest('hex')]))));";
   return JSON.parse(await compose(['exec', '-T', 'core', 'node', '-e', code]));
 }
 
 await mkdir(path.dirname(reportPath), { recursive: true });
 try {
-  for (const port of [base, base + 8, base + 10]) {
+  for (const port of [base, base + 8, base + 10, base + 20]) {
     const server = http.createServer();
     await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, '127.0.0.1', resolve); });
     await new Promise(resolve => server.close(resolve));
   }
-  for (const file of ['Dockerfile', 'deploy/compose.yaml', 'scripts/server-init.mjs', 'scripts/central-init.mjs', 'scripts/platform-deploy-smoke.mjs',
-    'src/core.mjs', 'src/admin.mjs', 'src/admin-auth.mjs', 'src/identity.mjs', 'src/web-mode.mjs', 'deploy/synapse/dscord_guard.py']) {
+  for (const file of ['Dockerfile', 'deploy/compose.yaml', 'scripts/server-init.mjs', 'central/service.mjs', 'scripts/platform-deploy-smoke.mjs',
+    'src/core.mjs', 'src/central-trust.mjs', 'src/admin.mjs', 'src/admin-auth.mjs', 'src/identity.mjs', 'src/web-mode.mjs', 'deploy/synapse/dscord_guard.py']) {
     (report.sourceSha256 ||= {})[file] = hash(await readFile(path.join(packageRoot, file)));
   }
   report.imageIdentity = (await execute('docker', ['image', 'inspect', env.DS_GROUP_IMAGE, '--format', '{{.Id}} {{.Os}}/{{.Architecture}}'])).stdout.trim();
   started = true;
-  await check('real Compose starts API-only Core, official Synapse and independent administration listener', async () => {
+  await check('real Compose starts the central server, API-only Core, official Synapse and independent administration listener', async () => {
     await compose(['up', '--no-build', '--detach', '--wait', '--wait-timeout', '180']);
     report.containerRuntime = JSON.parse(await compose(['exec', '-T', 'core', 'node', '-e', 'console.log(JSON.stringify({platform:process.platform,arch:process.arch,node:process.version}))']));
     if (process.env.DS_GROUP_PLATFORM) assert.equal(`${report.containerRuntime.platform}/${report.containerRuntime.arch === 'x64' ? 'amd64' : report.containerRuntime.arch}`, process.env.DS_GROUP_PLATFORM);
     await request(coreUrl, '/healthz'); await request(coreUrl, '/readyz'); await request(adminUrl, '/healthz'); await request(matrixUrl, '/_matrix/client/versions');
+    await request(centralUrl, '/.well-known/dscord/central');
     assert.equal((await request(coreUrl, '/api/bootstrap')).web.mode, 'api-only'); await noChatWeb();
-    return { services: ['config', 'synapse', 'bootstrap', 'core', 'administration'], mode: 'api-only', rootStatus: 404, adminHealth: 200 };
+    return { services: ['central', 'config', 'synapse', 'bootstrap', 'core', 'administration'], mode: 'api-only', rootStatus: 404, adminHealth: 200 };
   });
-  await check('containerized central initialization persists the default home without replacing its Matrix identities', async () => {
-    const initial = await request(coreUrl, '/api/bootstrap');
-    const result = JSON.parse(await compose(['run', '--rm', '--no-deps', '-T', '--user', '1000:1000', 'config', 'node', 'scripts/central-init.mjs',
-      '--data-dir', '/data', '--core-url', coreUrl, '--matrix-url', matrixUrl]));
-    assert.equal(result.mode, 'central'); assert.equal(result.registeredAccounts, 4);
-    await compose(['restart', '--timeout', '30', 'core']); await compose(['up', '--no-build', '--detach', '--wait', '--wait-timeout', '180']);
+  await check('the chat server names its central server and existing Matrix identities stay in place', async () => {
     const discovery = await request(coreUrl, '/.well-known/dscord/client');
-    assert.equal(discovery.mode, 'central'); assert.equal(discovery.home.coreUrl, coreUrl); assert.equal(discovery.home.matrixUrl, matrixUrl);
-    assert.deepEqual((await request(coreUrl, '/api/bootstrap')).participants.map(p => p.id), initial.participants.map(p => p.id));
-    return { mode: discovery.mode, authorityId: discovery.authorityId, home: discovery.home, existingIdentitiesPreserved: true };
+    assert.deepEqual(discovery.central, { issuer: centralUrl }); assert.equal(discovery.auth.audience, coreUrl);
+    assert.equal(discovery.home.coreUrl, coreUrl); assert.equal(discovery.home.matrixUrl, matrixUrl);
+    assert.equal((await request(coreUrl, '/api/bootstrap')).participants.length, 4);
+    return { central: discovery.central, home: discovery.home };
   });
-  await check('ordinary central login and room business work while management credentials remain separate', async () => {
-    const credentials = JSON.parse(await compose(['exec', '-T', 'core', 'node', 'scripts/server-admin.mjs', 'credentials', 'alice']));
-    sensitive.add(credentials.password);
-    login = await request(coreUrl, '/api/login', { body: credentials }); sensitive.add(login.access_token);
+  await check('central sign-in and room business work while management credentials remain separate', async () => {
+    const account = await request(centralUrl, '/api/register', { body: { username: 'alice', password: `${project}-password`, displayName: 'Alice' } });
+    sensitive.add(account.token);
+    const { token: identityToken } = await request(centralUrl, '/api/identity-tokens', { token: account.token, body: { audience: coreUrl, allowNew: true } });
+    sensitive.add(identityToken);
+    login = await request(coreUrl, '/api/session', { body: { identityToken } }); sensitive.add(login.access_token);
+    assert.equal(login.identity.globalId, 'alice@127.0.0.1');
     group = await request(coreUrl, '/api/rooms', { token: login.access_token, body: { name: 'Platform deployment QA', inviteIds: [], requestId: 'platform-room' } });
     sent = await request(coreUrl, `/api/rooms/${encodeURIComponent(group.roomId)}/messages`, { token: login.access_token,
       body: { body: 'Persistent API-only deployment message', to: [], transactionId: 'platform-message' } });
@@ -118,7 +120,7 @@ try {
       await page.getByLabel('Password', { exact: true }).fill(admin.password); await page.getByRole('button', { name: 'Sign in', exact: true }).click();
       await page.getByRole('heading', { name: 'Overview', exact: true }).waitFor();
     }
-    return { userId: login.user_id, subjectId: login.identity.subjectId, ordinaryTokenManagementStatus: 401, managementTokenCoreStatus: 401, eventId: sent.event_id };
+    return { userId: login.user_id, globalId: login.identity.globalId, ordinaryTokenManagementStatus: 401, managementTokenCoreStatus: 401, eventId: sent.event_id };
   });
   await check('independent management UI/assets and real governance apply work against the containerized Synapse guard', async () => {
     const response = await fetch(adminUrl); assert.equal(response.status, 200); const html = await response.text();
@@ -141,18 +143,18 @@ try {
     }
     return { builtAssets: assets.length, savedRevision: savedPolicy.revision, actualApplication: applied.application.status, livePolicyObserved: applied.livePolicyObserved, configurationWritable: applied.configurationWritable };
   });
-  await check('container recreation with mode omitted preserves central identity, sessions, admin policy and API-only', async () => {
+  await check('container recreation with mode omitted preserves accounts, sessions, admin policy and API-only', async () => {
     before = await snapshot(); await compose(['down', '--timeout', '45']); env.DS_GROUP_WEB_MODE = '';
     await compose(['up', '--no-build', '--detach', '--wait', '--wait-timeout', '180']); await noChatWeb();
     assert.deepEqual(await snapshot(), before);
-    const me = await request(coreUrl, '/api/me', { token: login.access_token }); assert.equal(me.identity.subjectId, login.identity.subjectId);
+    const me = await request(coreUrl, '/api/me', { token: login.access_token }); assert.equal(me.identity.globalId, login.identity.globalId);
     const history = await request(coreUrl, `/api/rooms/${encodeURIComponent(group.roomId)}/messages`, { token: login.access_token });
     assert.ok(history.events.some(event => event.event_id === sent.event_id));
     assert.equal((await request(adminUrl, '/admin-api/me', { token: adminToken })).username, 'qa-admin');
     const policy = await request(adminUrl, '/admin-api/policy', { token: adminToken }); assert.deepEqual(policy.policy, savedPolicy); assert.equal(policy.application.livePolicyObserved, true);
     assert.equal((await request(coreUrl, '/api/status')).budget.used, 0);
     if (page) { await page.reload(); await page.getByRole('heading', { name: 'Overview', exact: true }).waitFor(); assert.deepEqual(report.adminBrowser.pageErrors, []); report.adminBrowser.sessionSurvivedRecreation = true; }
-    return { sameSubjectAndMatrixId: true, sameConfigurationHashes: true, chatSessionAndHistory: true, adminSessionAndPolicy: true, mode: 'api-only', modelCalls: 0 };
+    return { sameGlobalAndMatrixId: true, sameConfigurationHashes: true, chatSessionAndHistory: true, adminSessionAndPolicy: true, mode: 'api-only', modelCalls: 0 };
   });
   report.status = 'passed';
 } catch (error) {

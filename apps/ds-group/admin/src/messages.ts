@@ -112,9 +112,6 @@ export const adminMessages = {
       "Stop Core, administration and Synapse. Back up every persistent volume together, including media and signing keys. A policy snapshot is configuration only.",
     storageHint:
       "The active media destination is configured at deployment initialization. Changing an existing destination requires a migration.",
-    registration: "Local registration",
-    inherited: "Use existing server configuration",
-    open: "Open",
     closed: "Closed",
     upload: "Attachment limit (MiB)",
     existingLimit: "Empty uses the existing limit",
@@ -254,9 +251,6 @@ export const adminMessages = {
     backupHint:
       "停止 Core、管理服务与 Synapse，再一并备份全部持久卷，包括媒体与签名密钥。策略快照仅包含配置。",
     storageHint: "活动媒体目标在部署初始化时配置。已有目标的切换需要迁移。",
-    registration: "本服注册",
-    inherited: "沿用现有服务器配置",
-    open: "开放",
     closed: "关闭",
     upload: "附件上限（MiB）",
     existingLimit: "留空沿用现有上限",

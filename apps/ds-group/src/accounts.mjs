@@ -5,16 +5,18 @@ import { DatabaseSync } from 'node:sqlite';
 import { MatrixClient } from './matrix-client.mjs';
 
 const failure = (status, message) => Object.assign(new Error(message), { status });
-const publicPerson = ({ id, localpart, name, kind, ownerId }) => ({ id, localpart, name, kind,
-  ...(kind === 'bot' ? { ownerId } : {}) });
-function accountInput(value) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw failure(400, 'Account details must be an object');
-  return value;
-}
+const coded = (status, code, message = code) => Object.assign(failure(status, message), { code });
+const publicPerson = ({ id, localpart, name, kind, ownerId, globalId }) => ({ id, localpart, name, kind,
+  ...(kind === 'bot' ? { ownerId } : {}), ...(globalId ? { globalId } : {}) });
+const MATRIX_LOCALPART = /^[a-z0-9._=\-/]{1,64}$/;
+const IDENTITY_SCHEMA_VERSION = '2';
 
 const SESSION_CACHE_MS = 15000;
 
-/** Persistent local identities. Matrix owns passwords and browser sessions. */
+/**
+ * Local accounts on this chat server. Every person and Bot comes from the central server: an
+ * identity token is the only way in, and Core keeps each Matrix password so nobody else needs one.
+ */
 
 export class AccountService {
   constructor({ setup, config = {}, dataRoot, onParticipant, registrationSecret, clientFactory } = {}) {
@@ -25,8 +27,6 @@ export class AccountService {
     this.registrationSecret = registrationSecret;
     this.clientFactory = clientFactory || (accessToken => new MatrixClient({ baseUrl: setup.homeserverUrl, accessToken }));
     this.serverName = setup.serverName || setup.participants[0]?.id.split(':').slice(1).join(':');
-    this.mode = config.registrationMode ?? 'open';
-    if (!['open', 'closed'].includes(this.mode)) throw new Error('registrationMode must be open or closed');
     this.operations = new Map();
     this.sessions = new Map();
   }
@@ -48,21 +48,17 @@ export class AccountService {
   async #initializeDatabase(filename) {
     await chmod(filename, 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
-      CREATE TABLE IF NOT EXISTS account_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS accounts (
+      CREATE TABLE IF NOT EXISTS account_metadata (key TEXT PRIMARY KEY,value TEXT NOT NULL);`);
+    const identityVersion = this.db.prepare("SELECT value FROM account_metadata WHERE key='identitySchemaVersion'").get()?.value;
+    if (identityVersion !== undefined && identityVersion !== IDENTITY_SCHEMA_VERSION) {
+      throw new Error('This account database predates central identity. Start the chat server with a new data directory');
+    }
+    this.db.exec(`CREATE TABLE IF NOT EXISTS accounts (
         user_id TEXT PRIMARY KEY, localpart TEXT UNIQUE NOT NULL, name TEXT NOT NULL, kind TEXT NOT NULL,
         owner_id TEXT, status TEXT NOT NULL, service_token TEXT, service_device_id TEXT,
-        recovery_password TEXT, registration_hash TEXT, last_error TEXT,
+        recovery_password TEXT, central_id TEXT UNIQUE, global_id TEXT UNIQUE, last_error TEXT,
         created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS bot_creation_requests (
-        request_key TEXT PRIMARY KEY, input_hash TEXT NOT NULL, user_id TEXT NOT NULL
-      );
-      CREATE TABLE IF NOT EXISTS account_subjects (
-        user_id TEXT PRIMARY KEY, subject_id TEXT UNIQUE NOT NULL, created_at INTEGER NOT NULL
       );`);
-    const identityVersion = this.db.prepare("SELECT value FROM account_metadata WHERE key='identitySchemaVersion'").get()?.value;
-    if (identityVersion !== undefined && identityVersion !== '1') throw new Error('Unsupported account identity schema version');
     const storedServer = this.db.prepare("SELECT value FROM account_metadata WHERE key='serverName'").get()?.value;
     if (storedServer && this.serverName && storedServer !== this.serverName) throw new Error('Account database belongs to another Matrix server');
     this.serverName ||= storedServer;
@@ -70,11 +66,10 @@ export class AccountService {
       this.setup.serverName = this.serverName;
       this.db.prepare("INSERT OR IGNORE INTO account_metadata VALUES ('serverName',?)").run(this.serverName);
     }
-    this.db.prepare("INSERT OR IGNORE INTO account_metadata VALUES ('authorityId',?)").run(`urn:uuid:${randomUUID()}`);
-    this.authorityId = this.db.prepare("SELECT value FROM account_metadata WHERE key='authorityId'").get().value;
     const seedOwner = this.setup.participants.find(person => person.kind === 'human')?.id;
     if (seedOwner) this.db.prepare("INSERT OR IGNORE INTO account_metadata VALUES ('ownerId',?)").run(seedOwner);
     this.ownerId = this.db.prepare("SELECT value FROM account_metadata WHERE key='ownerId'").get()?.value;
+    // Accounts a deployment seeds directly in Matrix. The central account of the same name claims one on first sign-in.
     for (const person of this.setup.participants) {
       if (!['human', 'bot'].includes(person.kind) || person.id !== `@${person.localpart}:${this.serverName}`) {
         throw new Error('Account registry must contain complete identities on its own Matrix server');
@@ -82,32 +77,21 @@ export class AccountService {
       const existing = this.row(person.id);
       if (existing && existing.kind !== person.kind) throw new Error('An existing account cannot change identity kind');
       this.db.prepare(`INSERT OR IGNORE INTO accounts
-        (user_id,localpart,name,kind,owner_id,status,service_token,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?)`)
+        (user_id,localpart,name,kind,owner_id,status,service_token,recovery_password,created_at,updated_at) VALUES (?,?,?,?,?,'active',?,?,?,?)`)
         .run(person.id, person.localpart, person.name, person.kind, person.kind === 'bot' ? person.ownerId || this.ownerId : null,
-          person.accessToken || null, Date.now(), Date.now());
+          person.accessToken || null, person.password || null, Date.now(), Date.now());
     }
-    // Additive migration: neither Matrix accounts nor owner/node bindings are replaced.
-    for (const row of this.db.prepare("SELECT user_id FROM accounts WHERE status='active'").all()) this.ensureSubject(row.user_id);
-    this.db.prepare("INSERT OR REPLACE INTO account_metadata VALUES ('identitySchemaVersion','1')").run();
+    this.db.prepare("INSERT OR REPLACE INTO account_metadata VALUES ('identitySchemaVersion',?)").run(IDENTITY_SCHEMA_VERSION);
     this.refreshSetup();
     return this;
   }
 
-  registration() { return { enabled: this.mode === 'open' && Boolean(this.serverName && this.registrationSecret), mode: this.mode }; }
-
   row(userId) { return this.db.prepare('SELECT * FROM accounts WHERE user_id=?').get(userId); }
-
-  ensureSubject(userId) {
-    this.db.prepare('INSERT OR IGNORE INTO account_subjects VALUES (?,?,?)').run(userId, randomUUID(), Date.now());
-    return this.db.prepare('SELECT subject_id FROM account_subjects WHERE user_id=?').get(userId).subject_id;
-  }
 
   identity(userId) {
     const row = this.row(userId);
     if (!row) throw failure(403, 'A registered account is required');
-    const owner = row.owner_id && this.row(row.owner_id);
-    return { authorityId: this.authorityId, subjectId: this.ensureSubject(userId), matrixUserId: userId, kind: row.kind,
-      ...(row.owner_id ? { ownerMatrixUserId: row.owner_id, ...(owner?.kind === 'human' ? { ownerSubjectId: this.ensureSubject(row.owner_id) } : {}) } : {}) };
+    return { globalId: row.global_id, matrixUserId: userId, kind: row.kind, ...(row.owner_id ? { ownerMatrixUserId: row.owner_id } : {}) };
   }
 
   assertActive(userId) {
@@ -135,7 +119,8 @@ export class AccountService {
 
   participant(row) {
     return { id: row.user_id, localpart: row.localpart, name: row.name, kind: row.kind,
-      ...(row.owner_id ? { ownerId: row.owner_id } : {}), ...(row.service_token ? { accessToken: row.service_token } : {}) };
+      ...(row.owner_id ? { ownerId: row.owner_id } : {}), ...(row.global_id ? { globalId: row.global_id } : {}),
+      ...(row.service_token ? { accessToken: row.service_token } : {}) };
   }
 
   refreshSetup() {
@@ -161,29 +146,6 @@ export class AccountService {
     const person = this.person(userId);
     await this.onParticipant?.(person);
     return person;
-  }
-
-  normalizeUsername(value) {
-    if (!this.serverName) throw failure(503, 'This server has no Matrix account identity configured');
-    if (typeof value !== 'string') throw failure(400, 'Choose an account name');
-    let localpart = value.trim();
-    if (localpart.startsWith('@')) {
-      const suffix = `:${this.serverName}`;
-      if (!localpart.endsWith(suffix)) throw failure(400, 'Use an account on this server');
-      localpart = localpart.slice(1, -suffix.length);
-    }
-    if (!/^[a-z0-9][a-z0-9._=-]{0,63}$/.test(localpart)) throw failure(400, 'Account names use 1–64 lowercase letters, digits, dots, underscores, equals or hyphens');
-    return localpart;
-  }
-
-  password(value) {
-    if (typeof value !== 'string' || !value || value.length > 1024 || value.includes('\0')) throw failure(400, 'Enter a password of 1–1024 characters');
-    return value;
-  }
-
-  displayName(value) {
-    if (typeof value !== 'string' || !value.trim() || value.trim().length > 80 || /[\u0000-\u001f]/.test(value)) throw failure(400, 'Choose a display name of 1–80 characters');
-    return value.trim();
   }
 
   async serialize(key, work) {
@@ -234,7 +196,6 @@ export class AccountService {
 
   async activate(userId) {
     if (['disabled', 'deactivated'].includes(this.row(userId)?.status)) throw failure(403, 'This account is disabled');
-    this.ensureSubject(userId);
     this.db.prepare("UPDATE accounts SET status='active',last_error=NULL,updated_at=? WHERE user_id=?").run(Date.now(), userId);
     if (!this.ownerId && this.row(userId).kind === 'human') {
       this.db.prepare("INSERT OR IGNORE INTO account_metadata VALUES ('ownerId',?)").run(userId);
@@ -243,8 +204,9 @@ export class AccountService {
     return this.publish(userId);
   }
 
-  async provision(userId, password, clientIp) {
+  async provision(userId, clientIp) {
     const row = this.row(userId);
+    const password = row.recovery_password;
     if (['disabled', 'deactivated'].includes(row?.status)) throw failure(403, 'This account is disabled');
     try {
       if (!row.service_token) {
@@ -260,7 +222,7 @@ export class AccountService {
           }, { clientIp });
         } catch (error) {
           if (error.errcode !== 'M_USER_IN_USE') throw error;
-          if (!recovering) throw Object.assign(failure(409, 'This Matrix account already exists. Sign in to continue'), { code: 'ACCOUNT_EXISTS' });
+          if (!recovering) throw coded(409, 'MATRIX_ACCOUNT_EXISTS', 'This Matrix account was created outside DSCord');
           // A previous attempt may have reached Matrix before its response was lost.
           session = await this.passwordLogin(userId, password, true, clientIp);
         }
@@ -277,51 +239,37 @@ export class AccountService {
     }
   }
 
-  async register(input = {}, { clientIp } = {}) {
-    accountInput(input);
-    if (!this.registration().enabled) throw failure(403, this.mode === 'closed' ? 'Registration is closed on this server' : 'This server has no account registration configuration');
-    const localpart = this.normalizeUsername(input.username);
-    const password = this.password(input.password);
-    const name = this.displayName(input.displayName ?? localpart);
-    const userId = `@${localpart}:${this.serverName}`;
-    const hash = createHmac('sha256', this.registrationSecret).update(JSON.stringify([localpart, name, password])).digest('hex');
-    const previous = this.row(userId);
-    if (['disabled', 'deactivated'].includes(previous?.status)) throw failure(403, 'This account is disabled');
-    if (previous && (previous.kind !== 'human' || previous.registration_hash !== hash || previous.status === 'active' || previous.last_error === 'ACCOUNT_EXISTS')) throw failure(409, 'This account name is already in use. Sign in to continue');
-    if (!previous) this.db.prepare(`INSERT INTO accounts
-      (user_id,localpart,name,kind,status,registration_hash,created_at,updated_at) VALUES (?,?,?,'human','provisioning',?,?,?)`)
-      .run(userId, localpart, name, hash, Date.now(), Date.now());
-    await this.serialize(userId, () => this.provision(userId, password, clientIp));
-    return this.session(await this.passwordLogin(userId, password, false, clientIp));
-  }
-
-  async login(input = {}, { clientIp } = {}) {
-    accountInput(input);
-    const localpart = this.normalizeUsername(input.user);
-    const password = this.password(input.password);
-    const userId = `@${localpart}:${this.serverName}`;
-    const previous = this.row(userId);
-    if (previous?.kind === 'bot') throw failure(403, 'Sign in with a human account');
-    if (['disabled', 'deactivated'].includes(previous?.status)) throw failure(403, 'This account is disabled');
-    const session = await this.passwordLogin(userId, password, false, clientIp);
-    try {
-      await this.serialize(userId, async () => {
-        const current = this.row(userId);
-        if (!current || current.last_error === 'ACCOUNT_EXISTS') {
-          const profile = await this.clientFactory(session.access_token).request('GET', `/_matrix/client/v3/profile/${encodeURIComponent(userId)}/displayname`);
-          this.db.prepare(`INSERT INTO accounts (user_id,localpart,name,kind,status,created_at,updated_at)
-            VALUES (?,?,?,'human','provisioning',?,?) ON CONFLICT(user_id) DO UPDATE SET name=excluded.name`)
-            .run(userId, localpart, profile.displayname || localpart, Date.now(), Date.now());
-        }
-        await this.ensureServiceSession(userId, password, clientIp);
-        await this.joinInitialRoom(userId);
-        await this.activate(userId);
-      });
-      return this.session(session);
-    } catch (error) {
-      await this.clientFactory(session.access_token).request('POST', '/_matrix/client/v3/logout', {}).catch(() => {});
-      throw error;
+  /**
+   * Sign in with verified identity-token claims. The central username is the Matrix localpart, so
+   * the first sign-in creates the account and later ones open another session for it.
+   */
+  async signIn(claims, { ownerId = null, clientIp } = {}) {
+    if (!this.serverName || !this.registrationSecret) throw coded(503, 'ACCOUNTS_UNCONFIGURED', 'This server has no Matrix account registration configuration');
+    const kind = claims.kind === 'bot' ? 'bot' : 'human';
+    if (typeof claims.username !== 'string' || !MATRIX_LOCALPART.test(claims.username) || typeof claims.sub !== 'string' || typeof claims.gid !== 'string') {
+      throw coded(401, 'IDENTITY_TOKEN_CLAIMS', 'The identity token is incomplete');
     }
+    if (kind === 'bot' && !ownerId) throw coded(401, 'IDENTITY_TOKEN_OWNER', 'A Bot identity names its owner');
+    const userId = `@${claims.username}:${this.serverName}`;
+    const name = typeof claims.name === 'string' && claims.name.trim() ? claims.name.trim().slice(0, 80) : claims.username;
+    await this.serialize(userId, async () => {
+      const previous = this.row(userId);
+      if (previous?.central_id && previous.central_id !== claims.sub) throw coded(409, 'IDENTITY_CONFLICT', 'This account belongs to another central identity');
+      if (previous && previous.kind !== kind) throw coded(409, 'IDENTITY_KIND_CONFLICT', 'This account name belongs to another kind of account');
+      if (['disabled', 'deactivated'].includes(previous?.status)) throw failure(403, 'This account is disabled');
+      if (previous && !previous.recovery_password) throw coded(409, 'ACCOUNT_NOT_CLAIMABLE', 'This seeded account has no password Core can use');
+      if (previous) {
+        this.db.prepare('UPDATE accounts SET central_id=?,global_id=?,name=?,owner_id=?,updated_at=? WHERE user_id=?')
+          .run(claims.sub, claims.gid, name, kind === 'bot' ? ownerId : null, Date.now(), userId);
+      } else {
+        this.db.prepare(`INSERT INTO accounts (user_id,localpart,name,kind,owner_id,status,recovery_password,central_id,global_id,created_at,updated_at)
+          VALUES (?,?,?,?,?,'provisioning',?,?,?,?,?)`)
+          .run(userId, claims.username, name, kind, kind === 'bot' ? ownerId : null, randomBytes(32).toString('base64url'),
+            claims.sub, claims.gid, Date.now(), Date.now());
+      }
+      await this.provision(userId, clientIp);
+    });
+    return this.session(await this.passwordLogin(userId, this.row(userId).recovery_password, false, clientIp));
   }
 
   async me(token) {
@@ -332,41 +280,11 @@ export class AccountService {
 
   async logout(token) {
     this.sessions.delete(token);
-    // Synthetic demo credentials are also the Core service credential. They are never revoked here.
+    // A seeded account's credential is also the Core service credential. It is never revoked here.
     if (this.setup.participants.some(person => person.accessToken === token)) return { loggedOut: true, localOnly: true };
     try { await this.clientFactory(token).request('POST', '/_matrix/client/v3/logout', {}); }
     catch (error) { if (error.status !== 401) throw error; }
     return { loggedOut: true };
-  }
-
-  async createBot(userId, input = {}) {
-    accountInput(input);
-    this.human(userId);
-    if (!this.registrationSecret) throw failure(503, 'This server has no Bot account registration configuration');
-    const name = this.displayName(input.name);
-    const requestId = input.requestId ?? randomUUID();
-    if (typeof requestId !== 'string' || !/^[a-zA-Z0-9_.:-]{1,200}$/.test(requestId)) throw failure(400, 'Invalid Bot creation request ID');
-    const key = JSON.stringify([userId, requestId]);
-    const hash = createHash('sha256').update(name).digest('hex');
-    let request = this.db.prepare('SELECT * FROM bot_creation_requests WHERE request_key=?').get(key);
-    if (request && request.input_hash !== hash) throw failure(409, 'This Bot creation request belongs to another name');
-    if (!request) {
-      const localpart = `bot-${randomUUID()}`;
-      const botId = `@${localpart}:${this.serverName}`;
-      this.db.exec('BEGIN IMMEDIATE');
-      try {
-        this.db.prepare(`INSERT INTO accounts
-          (user_id,localpart,name,kind,owner_id,status,recovery_password,created_at,updated_at) VALUES (?,?,?,'bot',?,'provisioning',?,?,?)`)
-          .run(botId, localpart, name, userId, randomBytes(32).toString('base64url'), Date.now(), Date.now());
-        this.db.prepare('INSERT INTO bot_creation_requests VALUES (?,?,?)').run(key, hash, botId);
-        this.db.exec('COMMIT');
-      } catch (error) { this.db.exec('ROLLBACK'); throw error; }
-      request = { user_id: botId };
-    }
-    const row = this.row(request.user_id);
-    if (row.status === 'active') return publicPerson(this.person(row.user_id));
-    const person = await this.serialize(row.user_id, () => this.provision(row.user_id, row.recovery_password));
-    return publicPerson(person);
   }
 
   close() { this.db?.close(); this.db = null; }

@@ -176,26 +176,6 @@ export function DeploymentPanel({ admin }: Props) {
         </div>
         <div className="admin-settings-group">
           <h3>{t("requestLimits")}</h3>
-          <Field label={t("registration")}>
-            <NativeSelect
-              disabled={readOnly}
-              value={policy.settings.registrationMode || ""}
-              onChange={(event) =>
-                setPolicy({
-                  ...policy,
-                  settings: {
-                    ...policy.settings,
-                    registrationMode: (event.target.value || null) as
-                      "open" | "closed" | null,
-                  },
-                })
-              }
-            >
-              <option value="">{t("inherited")}</option>
-              <option value="open">{t("open")}</option>
-              <option value="closed">{t("closed")}</option>
-            </NativeSelect>
-          </Field>
           <Field label={t("upload")}>
             <Input
               type="number"

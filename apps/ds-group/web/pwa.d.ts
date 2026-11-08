@@ -10,7 +10,7 @@ export interface PwaOptions {
     eventId?: string;
     userId?: string;
     homeCoreUrl?: string;
-    authorityId?: string | null;
+    centralIssuer?: string | null;
   }): void | Promise<void>;
 }
 export function initializePwa(options: PwaOptions): PwaHandle;

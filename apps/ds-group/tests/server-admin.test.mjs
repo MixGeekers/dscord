@@ -14,6 +14,12 @@ const serverName = 'admin.test';
 const ownerId = `@alice:${serverName}`;
 const legacySecret = 'synthetic-admin-legacy-secret';
 
+// A Bot exists on this chat server once it signs in with its central identity.
+async function botAccount(accounts, username, name) {
+  const session = await accounts.signIn({ sub: `sub-${username}`, username, gid: `${username}@id.test`, kind: 'bot', name }, { ownerId });
+  return accounts.person(session.user_id);
+}
+
 async function fixture(t) {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'dscord-server-admin-'));
   const setup = { serverName, homeserverUrl: 'http://matrix.invalid', publicHomeserverUrl: 'https://matrix.admin.test',
@@ -27,6 +33,7 @@ async function fixture(t) {
     clientFactory: () => ({ async request(method, route, input) {
       if (route === '/_synapse/admin/v1/register' && method === 'GET') return { nonce: 'nonce' };
       if (route === '/_synapse/admin/v1/register') return { user_id: `@${input.username}:${serverName}`, access_token: `synthetic-token-${input.username}` };
+      if (route === '/_matrix/client/v3/login') return { user_id: input.identifier.user, access_token: `synthetic-session-${input.identifier.user}` };
       if (route.includes('/profile/')) return {};
       throw new Error(`Unexpected Matrix fixture request ${route}`);
     } }),
@@ -46,8 +53,8 @@ async function fixture(t) {
 
 test('CLI exports dynamic Bot accounts with immediately visible scoped credentials across processes', async t => {
   const f = await fixture(t);
-  const bot = await f.accounts.createBot(ownerId, { name: 'New helper', requestId: 'helper' });
-  const other = await f.accounts.createBot(ownerId, { name: 'Other helper', requestId: 'other' });
+  const bot = await botAccount(f.accounts, 'helper', 'New helper');
+  const other = await botAccount(f.accounts, 'other-helper', 'Other helper');
   const savedSetup = JSON.parse(await readFile(path.join(f.dataRoot, 'matrix-setup.json'), 'utf8'));
   assert.equal(savedSetup.participants.some(person => person.id === bot.id), false);
   const [bundle, repeated, otherBundle] = await Promise.all([
@@ -77,7 +84,7 @@ test('the credentials CLI retains the historical synthetic human password lookup
 
 test('node export honors the same external JSON configuration paths as Core', async t => {
   const f = await fixture(t);
-  const bot = await f.accounts.createBot(ownerId, { name: 'External config helper', requestId: 'external-config' });
+  const bot = await botAccount(f.accounts, 'external-helper', 'External config helper');
   for (const [key, name] of [['DS_GROUP_MATRIX_SETUP_PATH', 'matrix-setup.json'], ['DS_GROUP_CORE_CONFIG_PATH', 'core-config.json']]) {
     f.env[key] = path.join(f.dataRoot, `mounted-${name}`);
     await writeFile(f.env[key], await readFile(path.join(f.dataRoot, name)));
