@@ -88,7 +88,7 @@ test('slots queue extra work, cancel stops a worker without a result message, an
   const f = await fixture(t, { maxWorkers: 1 });
   await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { title: 'one', brief: '1' });
-  assert.match(await run(f, 'front', 'dispatch_work', { title: 'two', brief: '2' }), /排队中/);
+  assert.match(await run(f, 'front', 'dispatch_work', { title: 'two', brief: '2' }), /在排队.*不要说已经开始/);
   const [first, second] = Object.values(f.state.tasks);
   assert.equal(second.status, 'queued');
   assert.match(await run(f, 'front', 'task_note', { id: second.id, text: '用中文' }), /排队中/);

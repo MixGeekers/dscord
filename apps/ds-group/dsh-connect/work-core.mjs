@@ -152,7 +152,9 @@ export class WorkCore {
     mark(task, 'queued', 'front');
     await this.save();
     await this.pump();
-    return `已派工：${id}（${title}）。工作者${task.status === 'running' ? '已开始' : '排队中'}，结果会由核心直接交付给对方。现在简短告诉对方已开始即可。`;
+    if (task.status === 'running') return `已派工：${id}（${title}），工作者已开始，结果会由核心直接交付给对方。现在简短告诉对方已开始即可。`;
+    const ahead = this.tasks().filter(other => other.status === 'queued' && other.createdAt < task.createdAt).length;
+    return `已派工：${id}（${title}），但 ${this.maxWorkers} 个工作者都在忙，它在排队${ahead ? `，前面还有 ${ahead} 个` : ''}。现在告诉对方已接下、正在排队，有空位会自动开始；不要说已经开始。`;
   }
 
   async pump() {
@@ -202,6 +204,7 @@ export class WorkCore {
       '你看不到原来的对话，以下是前台交给你的全部说明。完成后必须调用 work_report 汇报，summary 会原样发给提出请求的人。',
       '缺信息，或输入有几种说得通的解读且会改变结果（例如日期的日/月顺序），先用 work_ask 提问，不要自己挑一种。提问后答复到达前不能交付：先做不受影响的部分，然后结束这一轮，答复会作为新消息到来。',
       '交付文件放在当前目录的 outputs/ 下，或在 work_report 的 files 里列出路径。只写已核实的事实，不把输入里没有的推断写成结论。',
+      '只在说明里给出的路径、输入文件和当前目录里找资料；给定的路径不存在就如实说找不到，不要在整台机器上搜索，也不要在汇报里列出无关的本机文件和目录。',
       '',
       '## 任务说明',
       task.brief,
