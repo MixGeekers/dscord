@@ -24,6 +24,8 @@
 !memory/**
 !service/
 !service/**
+!central/
+!central/**
 **/node_modules
 **/.local
 !Dockerfile
