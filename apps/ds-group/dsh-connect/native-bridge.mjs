@@ -333,7 +333,7 @@ export class NativeBridge {
       // work dispatched from it answers that message, not the peer's result.
       const event = input.event;
       const answer = ['task.result', 'task.failure'].includes(event.kind) && event.senderKind === 'bot' && event.originEventId;
-      this.core.origin = workerTask?.origin || { requestId: input.requestId,
+      this.core.origin = workerTask?.origin || { requestId: input.requestId, hop: Number.isInteger(event.hop) ? event.hop : 0,
         ...(answer
           ? { roomId: event.originRoomId || event.roomId, eventId: event.originEventId, senderId: event.originSenderId,
             ...(event.originThreadRootId ? { threadRootId: event.originThreadRootId } : {}),

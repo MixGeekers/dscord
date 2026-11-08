@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MatrixClient } from './matrix-client.mjs';
-import { ContactBook } from './contact-book.mjs';
+import { ContactBook, MAX_ASK_DEPTH } from './contact-book.mjs';
 import { localPath, packageRoot } from './paths.mjs';
 import { NodeStore } from './node-store.mjs';
 import { NodeFiles, eventAttachments } from './node-files.mjs';
@@ -119,7 +119,8 @@ export function deliveriesFor(event, output, botId, participants, seed = event.e
   const hop = Number.isInteger(meta.hop) && meta.hop >= 0 ? meta.hop : 0;
   // Requests to other Bots this turn made with ask_bot, each in the room the node picked for it.
   const asks = output.asks || [];
-  if (hop > 4 || (asks.length && hop >= 4)) throw new Error('Collaboration hop limit reached');
+  // hop counts how many times the work was passed from Bot to Bot; replies and results keep it.
+  if (hop > MAX_ASK_DEPTH || (asks.length && hop >= MAX_ASK_DEPTH)) throw new Error('Collaboration hop limit reached');
   const taskId = typeof meta.taskId === 'string' && meta.taskId ? meta.taskId : `task-${digest(event.event_id).slice(0, 24)}`;
   const requestedByBot = participants.some(p => p.kind === 'bot' && p.id === event.sender);
   const originSenderId = requestedByBot && typeof meta.originSenderId === 'string' ? meta.originSenderId : event.sender;
@@ -140,7 +141,7 @@ export function deliveriesFor(event, output, botId, participants, seed = event.e
   const replyRoomId = isFinalResult ? originRoomId : event.room_id;
   const replyEventId = isFinalResult ? originEventId : event.event_id;
   const replyThreadRootId = isFinalResult ? originThreadRootId : sourceThreadRootId;
-  const common = { taskId, originSenderId, originRoomId, originEventId, hop: hop + 1,
+  const common = { taskId, originSenderId, originRoomId, originEventId, hop,
     ...(originThreadRootId ? { originThreadRootId } : {}),
     ...(output.delivery || meta.delivery ? { delivery: output.delivery || meta.delivery } : {}) };
   const replyRecipient = isFinalResult ? originSenderId : event.sender;
@@ -164,12 +165,12 @@ export function deliveriesFor(event, output, botId, participants, seed = event.e
   const askedFiles = uniqueAttachments([...sourceAttachments, ...attachments]);
   for (const [index, ask] of asks.entries()) {
     result.push({ roomId: ask.roomId, body: ask.body, options: {
-      ...common, transactionId: `${prefix}-ask-${index + 1}`, to: [ask.to], returnTo: botId, kind: 'task.request',
+      ...common, hop: hop + 1, transactionId: `${prefix}-ask-${index + 1}`, to: [ask.to], returnTo: botId, kind: 'task.request',
       // The asked Bot, also on file parts that do not notify it (their to is empty); not sent to Matrix.
       deliveryRole: 'delegate', askTo: ask.to,
       ...(event.room_id === ask.roomId ? { replyTo: event.event_id,
         ...(sourceThreadRootId ? { threadRootId: sourceThreadRootId } : {}) } : {}),
-      ...(askedFiles.length ? { attachments: askedFiles } : {}),
+      ...(askedFiles.length || ask.attachments?.length ? { attachments: uniqueAttachments([...askedFiles, ...(ask.attachments || [])]) } : {}),
       mentions: { users: [ask.to], roles: [], everyone: false, here: false },
       mMentions: { user_ids: [ask.to] },
     } });
@@ -941,6 +942,20 @@ export class BotNode {
           }
           attachments.push(uploaded);
         }
+        // Files a Bot hands to another Bot go as attachments: the other node cannot read this one's paths.
+        for (const ask of response.asks || []) {
+          ask.attachments = [];
+          for (const file of ask.files || []) {
+            if (!this.files) throw new Error('This node has no attachment transfer service');
+            const key = digest(`ask\0${ask.to}\0${file.path}`);
+            let uploaded = this.store.uploaded(item.event_id, key);
+            if (!uploaded) {
+              uploaded = await this.files.upload(file, request, signal);
+              this.store.recordUpload(item.event_id, key, uploaded);
+            }
+            ask.attachments.push(uploaded);
+          }
+        }
       });
       output.attachments = attachments;
       output.sourceAttachments = uniqueAttachments(request.files || []);
@@ -1171,7 +1186,7 @@ export class BotNode {
         await this.acceptResult(item, controlResult);
         return true;
       }
-      if ((request.event.hop ?? 0) > 4) throw new Error('Collaboration hop limit reached');
+      if ((request.event.hop ?? 0) > MAX_ASK_DEPTH) throw new Error('Collaboration hop limit reached');
       if (this.parentCancelled(item)) {
         await this.acceptResult(item, { status: 'cancelled', summary: '协作任务已取消' });
         return true;

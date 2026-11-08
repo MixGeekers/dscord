@@ -276,6 +276,20 @@ test('ask_bot is the one way to ask another Bot: it names a contact and goes out
   assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: 'x' }), /没有要回复的消息/);
 });
 
+test('ask_bot hands local files over as attachments and stops passing work after four Bot-to-Bot hops', async t => {
+  const f = await fixture(t, { origin: { requestId: 'req-2', roomId: '!r2', eventId: '$g8', senderId: '@tang', hop: 3 } });
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.contacts.seeRoom('!r2', [{ id: '@native:dsh.test', kind: 'bot' }, { id: '@qa:a.test', name: 'QA', kind: 'bot' }]);
+  const summary = path.join(f.directory, 'bug-summary.md');
+  await writeFile(summary, '# 未修致命 bug\n');
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: '核对未修致命 bug 数', files: [path.join(f.directory, 'missing.md')] }), /读不到文件/);
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: '核对未修致命 bug 数', files: [summary] }), /这一轮结束后发给 QA/);
+  assert.deepEqual(f.core.takeAsks('req-2')[0].files, [{ path: summary, name: 'bug-summary.md' }]);
+  f.core.origin = { ...f.core.origin, hop: 4 };
+  assert.match(await run(f, 'front', 'ask_bot', { to: 'QA', body: '再转一次' }), /已经在 Bot 之间转了 4 次/);
+  assert.deepEqual(f.core.takeAsks('req-2'), []);
+});
+
 test('a plain-language task cannot hand stack traces or raw logs to the person who asked', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));

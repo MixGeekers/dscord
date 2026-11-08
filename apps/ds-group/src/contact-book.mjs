@@ -8,6 +8,9 @@
  * person's memory profile. What someone is like, prefers or can do lives only in
  * memory, so nothing about a contact is recorded twice.
  */
+// How many times one piece of work may be passed from Bot to Bot; results going back do not count.
+export const MAX_ASK_DEPTH = 4;
+
 export const EXCHANGE_STATUSES = ['received', 'dispatched', 'sending', 'sent', 'returned', 'delivered', 'failed'];
 
 const json = value => value === undefined || value === null ? null : JSON.stringify(value);

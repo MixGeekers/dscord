@@ -1,6 +1,7 @@
 import path from 'node:path';
-import { mkdir, readdir, readFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
+import { MAX_ASK_DEPTH } from '../src/contact-book.mjs';
 import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-plugin/work-files.mjs';
 
 /*
@@ -33,6 +34,7 @@ export const NATIVE_TEAM_TOOLS = new Set(['message_bot', 'list_bots', 'post_to_g
   'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal']);
 export const NATIVE_TEAM_REFUSAL = 'DSCord 里不用这个工具：找别的 Bot 办事用 ask_bot（工作者用 work_ask 交给前台），有哪些 Bot 看 contacts，群就是 Matrix 房间，Bot 由管理后台创建和设置。';
 const ASKS_PER_TURN = 3;
+const ASK_FILES = 10;
 export const FRONT_REFUSAL = '前台不直接做这件事。用 dispatch_work 把它交给工作者，然后告诉对方已经开始。';
 
 const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] };
@@ -187,12 +189,13 @@ export class WorkCore {
         parameters: { id: { type: 'string', required: true, description: '任务编号' }, text: { type: 'string', required: true, description: '要转给工作者的内容' } },
         execute: args => this.note(args.id, args.text) },
       { name: 'ask_bot', output,
-        description: '请通讯录里的另一个 Bot 做一件事，这是找别的 Bot 的唯一方式，不管这一轮是在替人还是替另一个 Bot 办事。这一轮结束后，核心把请求发到你们共同所在的房间（没有就开一个私聊房间），附上这条消息带的文件。对方的结果会作为新消息回到你这里，再由你回复请求者。',
+        description: '请通讯录里的另一个 Bot 做一件事，这是找别的 Bot 的唯一方式，不管这一轮是在替人还是替另一个 Bot 办事。这一轮结束后，核心把请求发到你们共同所在的房间（没有就开一个私聊房间），附上这条消息带的文件。对方读不到你这边的文件路径：要给它别的文件，把路径放进 files。对方的结果会作为新消息回到你这里，再由你回复请求者。',
         parameters: {
           to: { type: 'string', required: true, description: '对方的完整 ID，或通讯录里只对应一个 Bot 的名字' },
           body: { type: 'string', required: true, description: '完整、自足的请求：对方看不到这里的对话，写清要什么、依据哪些原话或文件、为谁而问' },
           audience: { type: 'string', description: '结果最终给谁、按什么口径，例如“玩家小满：通俗说明”' },
           plain: { type: 'boolean', description: '最终读者不该看到技术内部信息（堆栈、日志原文、源码位置）时为 true' },
+          files: { type: 'array', items: { type: 'string' }, description: '要一起交给对方的本地文件路径，会作为附件发过去；这条消息带的附件不用列' },
         },
         execute: args => this.askBot(args) },
     ];
@@ -237,9 +240,10 @@ export class WorkCore {
   }
 
   /** A request to another Bot, sent by the node when this turn ends: the turn's reply says who was asked. */
-  askBot({ to, body, audience, plain }) {
+  async askBot({ to, body, audience, plain, files = [] }) {
     const origin = this.origin;
     if (!origin?.requestId) return '现在没有要回复的消息，不能找别的 Bot。';
+    if ((origin.hop || 0) >= MAX_ASK_DEPTH) return `这件事已经在 Bot 之间转了 ${MAX_ASK_DEPTH} 次，不能再转。用手上的信息回复请求者，说清还缺什么。`;
     body = String(body || '').trim();
     if (!body) return '需要 body：写清请对方做什么。';
     const contact = this.contacts?.resolve(to);
@@ -251,7 +255,16 @@ export class WorkCore {
     const text = [body, audience ? `结果给谁、什么口径：${String(audience).trim()}` : '',
       plain === true ? '最终读者不该看到技术内部信息：不贴堆栈、异常类型、源码位置和日志原文。' : ''].filter(Boolean).join('\n\n');
     if (text.length > 16000) return '请求太长，压缩到 16000 字以内。';
-    asks.push({ to: contact.id, body: text });
+    if (!Array.isArray(files)) files = [files];
+    if (files.length > ASK_FILES) return `一次最多带 ${ASK_FILES} 个文件。`;
+    const attached = [];
+    for (const file of files) {
+      const filename = path.resolve(String(file || ''));
+      const info = await stat(filename).catch(() => null);
+      if (!info?.isFile()) return `读不到文件 ${file}；只能带你这边真实存在的文件。`;
+      attached.push({ path: filename, name: path.basename(filename) });
+    }
+    asks.push({ to: contact.id, body: text, ...(attached.length ? { files: attached } : {}) });
     this.asks.set(origin.requestId, asks);
     return `已记下：这一轮结束后发给 ${contact.name}。它的结果会作为新消息回到你这里，那时再回复请求者。现在这一轮的回复简短告诉对方你去问了谁，不要编结果。`;
   }
