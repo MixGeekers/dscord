@@ -276,6 +276,19 @@ try {
     maxUploadBytes: 2097152,
   });
   checks.push("Deployment controls persist the upload policy");
+  await page.getByRole("button", { name: "Server directory", exact: true }).click();
+  await page.getByRole("checkbox", { name: "Show this server in central search", exact: true }).click();
+  await page.getByLabel("Name", { exact: true }).fill("Robotics club");
+  await page.getByLabel("Tags (comma-separated, up to 10)", { exact: true }).fill("Robots, arms");
+  assert.equal(await page.getByRole("button", { name: "List in central", exact: true }).isDisabled(), true);
+  await page.getByRole("button", { name: "Save policy", exact: true }).click();
+  await page.getByText("Saved revision 7", { exact: true }).waitFor();
+  assert.deepEqual((await admin.governance.read()).directory, {
+    listed: true, name: "Robotics club", description: "", tags: ["robots", "arms"], challenge: "",
+  });
+  await page.getByText("Not listed in a central server yet.", { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, "admin-directory-desktop.png"), animations: "disabled" });
+  checks.push("Directory controls persist the public listing and wait for a saved policy before listing in central");
   await page.getByRole("button", { name: "Prepare and apply", exact: true }).click();
   await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
   await page.getByRole("button", { name: "概览", exact: true }).click();

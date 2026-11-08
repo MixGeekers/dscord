@@ -200,7 +200,7 @@ test('first start seeds the saved configuration from the environment and the fil
 
 const serverPage = (origin, challenge, extra = {}) => ({ schemaVersion: 1, central: 'https://id.example.org', origin, challenge, listed: true,
   name: 'Chat A', description: 'A place for robotics', tags: ['Robotics', 'hardware'], join: 'central-account',
-  members: { people: 12, bots: 3 }, rooms: [{ name: 'general' }], ...extra });
+  members: { people: 12, bots: 3 }, ...extra });
 
 test('a person lists a chat server by publishing its challenge on the server origin; the index reads the page from there', async t => {
   const { call, register, pages, fetched } = await fixture(t);

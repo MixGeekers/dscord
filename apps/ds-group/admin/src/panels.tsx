@@ -1,9 +1,15 @@
 import { useState } from "react";
 import { AlertCircle } from "lucide-react";
-import { Button, Checkbox, Input, NativeSelect } from "../../ui/controls";
-import { Field } from "./fields";
+import {
+  Button,
+  Checkbox,
+  Input,
+  NativeSelect,
+  Textarea,
+} from "../../ui/controls";
+import { Field, lines } from "./fields";
 import type { AdminState } from "./useAdmin";
-import type { Administrator } from "./types";
+import type { Administrator, Policy } from "./types";
 
 type Props = { admin: AdminState };
 
@@ -202,6 +208,147 @@ export function DeploymentPanel({ admin }: Props) {
               }
             />
           </Field>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function DirectoryPanel({ admin }: Props) {
+  const {
+    t,
+    policy,
+    setPolicy,
+    readOnly,
+    busy,
+    dirty,
+    api,
+    action,
+    acceptPolicy,
+    application,
+    setNotice,
+  } = admin;
+  const [tags, setTags] = useState(
+    () => policy?.directory.tags.join(", ") || "",
+  );
+  if (!policy) return null;
+  const directory = policy.directory;
+  const change = (patch: Partial<Policy["directory"]>) =>
+    setPolicy({ ...policy, directory: { ...directory, ...patch } });
+  return (
+    <section className="admin-panel admin-deployment-panel">
+      <div className="admin-panel-heading">
+        <div>
+          <h2>{t("directory")}</h2>
+          <p>{t("directoryHint")}</p>
+        </div>
+      </div>
+      <div className="admin-settings-grid">
+        <div className="admin-settings-group">
+          <h3>{t("directoryPublic")}</h3>
+          <label className="admin-checkbox-row">
+            <Checkbox
+              checked={directory.listed}
+              disabled={readOnly}
+              onCheckedChange={(checked) => change({ listed: checked })}
+            />
+            {t("directoryListed")}
+          </label>
+          <Field label={t("directoryName")}>
+            <Input
+              maxLength={80}
+              disabled={readOnly}
+              placeholder={policy.serverName}
+              value={directory.name}
+              onChange={(event) => change({ name: event.target.value })}
+            />
+          </Field>
+          <Field label={t("directoryDescription")}>
+            <Textarea
+              maxLength={500}
+              rows={4}
+              disabled={readOnly}
+              value={directory.description}
+              onChange={(event) => change({ description: event.target.value })}
+            />
+          </Field>
+          <Field label={t("directoryTags")}>
+            <Input
+              disabled={readOnly}
+              value={tags}
+              onChange={(event) => {
+                setTags(event.target.value);
+                change({
+                  tags: lines(event.target.value)
+                    .map((tag) => tag.toLowerCase())
+                    .slice(0, 10),
+                });
+              }}
+            />
+          </Field>
+        </div>
+        <div className="admin-settings-group">
+          <h3>{t("directoryCentral")}</h3>
+          <p className="admin-muted">{t("directoryCentralHint")}</p>
+          <p className="admin-muted">
+            {directory.challenge
+              ? t("directoryChallengeSet", { challenge: directory.challenge })
+              : t("directoryNotListed")}
+          </p>
+          <form
+            onSubmit={(event) => {
+              event.preventDefault();
+              const form = event.currentTarget;
+              const input = new FormData(form);
+              void action(async () => {
+                const result = await api<{
+                  central: string;
+                  server: { listed: boolean };
+                  policy: Policy;
+                }>("directory/list", "POST", {
+                  username: input.get("username"),
+                  password: input.get("password"),
+                });
+                form.reset();
+                if (application)
+                  acceptPolicy({ policy: result.policy, application });
+                setNotice(
+                  t(
+                    result.server.listed
+                      ? "directoryDone"
+                      : "directoryDoneHidden",
+                    { central: result.central },
+                  ),
+                );
+              });
+            }}
+          >
+            <Field label={t("directoryCentralUsername")}>
+              <Input
+                name="username"
+                autoComplete="off"
+                required
+                disabled={readOnly}
+              />
+            </Field>
+            <Field label={t("directoryCentralPassword")}>
+              <Input
+                name="password"
+                type="password"
+                autoComplete="off"
+                required
+                disabled={readOnly}
+              />
+            </Field>
+            {dirty && <p className="admin-muted">{t("directorySaveFirst")}</p>}
+            <Button
+              variant="default"
+              type="submit"
+              disabled={readOnly || busy || dirty}
+            >
+              {t("directoryListAction")}
+            </Button>
+          </form>
         </div>
       </div>
     </section>

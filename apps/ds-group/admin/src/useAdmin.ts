@@ -23,6 +23,12 @@ const knownErrorKeys = {
   "Invalid management origin": "invalidManagementOrigin",
   "Use this instance’s management origin": "wrongManagementOrigin",
   "Keep at least one active owner": "keepOwner",
+  "This server does not trust a central server": "directoryNoCentral",
+  "Central server is unreachable": "directoryUnreachable",
+  "Central server refused: LOGIN_FAILED": "directoryLoginFailed",
+  "Central server refused: CHALLENGE_MISMATCH": "directoryPageUnseen",
+  "Central server refused: SERVER_PAGE_MISSING": "directoryPageUnseen",
+  "Central server refused: SERVER_UNREACHABLE": "directoryPageUnseen",
 } as const;
 const storedSession = () => {
   try {

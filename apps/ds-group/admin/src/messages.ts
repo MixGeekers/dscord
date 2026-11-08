@@ -117,6 +117,34 @@ export const adminMessages = {
     existingLimit: "Empty uses the existing limit",
     deploymentHint:
       "Registration and upload limits apply to Core requests after saving. Network identity and storage settings remain in deployment configuration. Federation changes require Synapse restart.",
+    directory: "Server directory",
+    directoryHint:
+      "How this server appears in its central server's index. Save the policy to publish changes; the central server reads them within an hour.",
+    directoryPublic: "Public listing",
+    directoryListed: "Show this server in central search",
+    directoryName: "Name",
+    directoryDescription: "Description",
+    directoryTags: "Tags (comma-separated, up to 10)",
+    directoryCentral: "List in the central server",
+    directoryCentralHint:
+      "Sign in with your central account. The central server checks that this server publishes its challenge, then lists you as its owner. Your central password is used for this request only.",
+    directoryNotListed: "Not listed in a central server yet.",
+    directoryChallengeSet:
+      "Listed with challenge {challenge}. Listing again updates the central index right away.",
+    directoryCentralUsername: "Central username",
+    directoryCentralPassword: "Central password",
+    directoryListAction: "List in central",
+    directorySaveFirst: "Save the policy before listing.",
+    directoryDone: "Listed in {central}.",
+    directoryDoneHidden:
+      "Listed in {central}. The server stays out of search until the public listing is turned on.",
+    directoryNoCentral:
+      "This server does not trust a central server, or its public URL is not set.",
+    directoryUnreachable:
+      "The central server cannot be reached from this server.",
+    directoryLoginFailed: "Wrong central username or password.",
+    directoryPageUnseen:
+      "The central server could not read this server's public page. Check that the public URL reaches Core.",
     role: "Role",
     newPassword: "New password (12+ characters; leave empty to keep)",
     updateAdmin: "Save administrator",
@@ -256,6 +284,32 @@ export const adminMessages = {
     existingLimit: "留空沿用现有上限",
     deploymentHint:
       "注册与上传限制保存后应用于 Core 请求。网络身份和存储继续由部署配置管理。联邦网络变更需重启 Synapse。",
+    directory: "服务器目录",
+    directoryHint:
+      "本服务器在中央服务器索引里的样子。保存策略后生效，中央服务器一小时内会重新读取。",
+    directoryPublic: "公开信息",
+    directoryListed: "在中央搜索里显示本服务器",
+    directoryName: "名称",
+    directoryDescription: "简介",
+    directoryTags: "标签（逗号分隔，最多 10 个）",
+    directoryCentral: "登记到中央服务器",
+    directoryCentralHint:
+      "用你的中央账号登录。中央服务器确认本服务器公开了它给的挑战码后，把你记为本服务器的所属人。中央密码只用于这一次请求。",
+    directoryNotListed: "还没有在中央服务器登记。",
+    directoryChallengeSet:
+      "已登记，挑战码 {challenge}。再登记一次会立即更新中央索引。",
+    directoryCentralUsername: "中央用户名",
+    directoryCentralPassword: "中央密码",
+    directoryListAction: "登记到中央",
+    directorySaveFirst: "请先保存策略再登记。",
+    directoryDone: "已登记到 {central}。",
+    directoryDoneHidden:
+      "已登记到 {central}。打开“在中央搜索里显示本服务器”之前，搜索里看不到本服务器。",
+    directoryNoCentral: "本服务器没有接入中央服务器，或者没有设置公开地址。",
+    directoryUnreachable: "本服务器连不上中央服务器。",
+    directoryLoginFailed: "中央用户名或密码不对。",
+    directoryPageUnseen:
+      "中央服务器读不到本服务器的公开页面。请确认公开地址能访问到 Core。",
     role: "角色",
     newPassword: "新密码（至少 12 字符；留空保留）",
     updateAdmin: "保存管理员",

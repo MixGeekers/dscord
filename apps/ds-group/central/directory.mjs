@@ -26,8 +26,6 @@ export function readServerPage(value, origin) {
   if (value.origin !== origin) throw failure(502, 'SERVER_PAGE_INVALID', 'The page names a different origin');
   const tags = Array.isArray(value.tags) ? value.tags : [];
   if (tags.length > 10) throw failure(502, 'SERVER_PAGE_INVALID', 'At most 10 tags');
-  const rooms = Array.isArray(value.rooms) ? value.rooms : [];
-  if (rooms.length > 50) throw failure(502, 'SERVER_PAGE_INVALID', 'At most 50 public rooms');
   return {
     central: typeof value.central === 'string' ? value.central : '',
     challenge: typeof value.challenge === 'string' ? value.challenge : '',
@@ -37,7 +35,6 @@ export function readServerPage(value, origin) {
       description: text(value.description, 500, 'description'),
       tags: [...new Set(tags.map(tag => text(tag, 32, 'tag').toLowerCase()).filter(Boolean))],
       members: { people: count(value.members?.people), bots: count(value.members?.bots) },
-      rooms: rooms.map(room => ({ name: text(room?.name, 80, 'room name') })).filter(room => room.name),
       join: value.join === 'central-account' ? 'central-account' : 'unknown',
     },
   };

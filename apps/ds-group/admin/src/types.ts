@@ -39,6 +39,14 @@ export interface Policy {
   settings: {
     maxUploadBytes: number | null;
   };
+  directory: Directory;
+}
+export interface Directory {
+  listed: boolean;
+  name: string;
+  description: string;
+  tags: string[];
+  challenge: string;
 }
 export interface Administrator {
   username: string;

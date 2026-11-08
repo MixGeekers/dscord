@@ -677,6 +677,20 @@ dl {
   color: var(--color-text-secondary);
   background: var(--color-bg-tertiary);
 }
+.admin-settings-group form {
+  display: grid;
+  gap: var(--space-8);
+}
+.admin-muted {
+  color: var(--color-text-secondary);
+  overflow-wrap: anywhere;
+}
+.admin-checkbox-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  color: var(--color-text-primary);
+}
 
 .admin-audit .admin-list-row {
   display: grid;

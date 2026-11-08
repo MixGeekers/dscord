@@ -29,6 +29,7 @@ import { botRoutes } from './core/bot-routes.mjs';
 import { attachmentRoutes } from './core/attachment-routes.mjs';
 import { roomRoutes } from './core/room-routes.mjs';
 import { nodeRoutes, pushRoutes, NODE_OFFLINE_MS } from './core/node-routes.mjs';
+import { serverPage } from './core/server-page.mjs';
 export { readJsonBody } from './http-json.mjs';
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -127,6 +128,12 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
       response.writeHead(204, { 'Cache-Control': 'no-store' }); response.end(); return;
     }
     if (request.method === 'GET' && (pathname === '/.well-known/dscord/client' || pathname === '/api/client-config')) return send(200, identity.discovery());
+    if (request.method === 'GET' && pathname === '/.well-known/dscord/server') {
+      // The page the central server's index reads; it only exists once an operator has started listing this server.
+      const page = serverPage({ policy: await governance.read(), identity, participants: accounts.publicParticipants() });
+      if (!page) return send(404, { error: 'This server is not in a directory', code: 'NOT_LISTED' });
+      return send(200, page);
+    }
     if (request.method === 'GET' && pathname === '/.well-known/matrix/client') return send(200, {
       'm.homeserver': { base_url: identity.home.matrixUrl }, 'org.dscord.client': { base_url: identity.home.coreUrl },
     });

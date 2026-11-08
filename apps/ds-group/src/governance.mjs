@@ -1,4 +1,11 @@
-import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -82,6 +89,49 @@ export function emptyPolicy(domain) {
     rooms: [],
     botPolicies: [],
     settings: { maxUploadBytes: null },
+    directory: emptyDirectory(),
+  };
+}
+
+/** How this server shows up in its central server's index. Nothing is published until a challenge is set. */
+export function emptyDirectory() {
+  return { listed: false, name: "", description: "", tags: [], challenge: "" };
+}
+
+function directoryText(value, name, max) {
+  if (value === undefined) return "";
+  if (
+    typeof value !== "string" ||
+    value.length > max ||
+    /[\x00-\x08\x0b-\x1f\x7f]/.test(value)
+  )
+    throw policyError(400, `Invalid directory ${name}`);
+  return value.trim();
+}
+
+function validateDirectory(value = emptyDirectory()) {
+  if (!value || typeof value !== "object")
+    throw policyError(400, "Invalid directory");
+  if (typeof value.listed !== "boolean")
+    throw policyError(400, "listed must be a boolean");
+  const tags = value.tags ?? [];
+  if (!Array.isArray(tags) || tags.length > 10)
+    throw policyError(400, "Use at most 10 directory tags");
+  const challenge = directoryText(value.challenge, "challenge", 128);
+  if (challenge && !/^dscord-server-[A-Za-z0-9_-]+$/.test(challenge))
+    throw policyError(400, "Invalid directory challenge");
+  return {
+    listed: value.listed,
+    name: directoryText(value.name, "name", 80),
+    description: directoryText(value.description, "description", 500),
+    tags: [
+      ...new Set(
+        tags
+          .map((tag) => directoryText(tag, "tag", 32).toLowerCase())
+          .filter(Boolean),
+      ),
+    ],
+    challenge,
   };
 }
 
@@ -196,6 +246,7 @@ export function validatePolicy(value, domain) {
     settings: {
       maxUploadBytes: settings.maxUploadBytes,
     },
+    directory: validateDirectory(value.directory),
   };
 }
 
