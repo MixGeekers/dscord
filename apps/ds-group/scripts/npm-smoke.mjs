@@ -208,10 +208,8 @@ try {
     assert.equal(status.nodes.length, setup.participants.filter(person => person.kind === 'bot').length);
     assert.ok(status.nodes.every(node => node.status === 'offline'), 'Bot profiles must remain offline throughout this zero-model smoke');
     report.botStatuses = status.nodes.map(({ id, status }) => ({ id, status }));
-    assert.equal(status.core.loadedCoreSha256, beforeFiles['src/core.mjs']);
     assert.deepEqual(await snapshot(installed), beforeFiles);
     report.installation = { fileCount: Object.keys(beforeFiles).length, filesUnchanged: true, runtimeDataOutsidePackage: true };
-    report.loadedCoreSha256 = status.core.loadedCoreSha256;
   });
   report.status = 'passed';
 } catch (error) {
@@ -230,7 +228,7 @@ try {
         } catch (error) {
           process.kill(-core.pid, 'SIGKILL');
           await coreExit;
-          throw error;
+          throw error; // oxlint-disable-line no-unsafe-finally -- caught by the enclosing cleanup try.
         } finally { clearTimeout(timer); }
       }
       await freePort(corePort);

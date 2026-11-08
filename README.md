@@ -150,7 +150,7 @@ Bot 所在机器必须能访问 Core 和 Matrix 的公开地址。已有 `ds-bot
 | **DSCord Core + Matrix / Synapse** | 成员、房间、消息、附件和节点连接。 |
 | **DSH + DSCord 自有内核** | 每个 Bot 的会话、工具执行、任务协作和成果回传。 |
 
-同一个 Bot 按顺序处理任务，不同 Bot 可以并行工作。更多组件关系见 [框架设计](架构与设计/DS-Group首个框架与实施路线.md)。
+同一个 Bot 按顺序处理任务，不同 Bot 可以并行工作。
 
 <a id="documentation"></a>
 

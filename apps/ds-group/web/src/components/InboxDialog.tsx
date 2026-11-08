@@ -4,6 +4,7 @@ import { formatTime } from "../../i18n.js";
 import { parseMentionTokens } from "../../mention-tokens.js";
 import { messageOf } from "../api";
 import { useTranslation } from "../locale";
+import { markdownPreview } from "../markdown";
 import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
 import type { Api, ChatEvent, Participant, Room } from "../types";
@@ -44,7 +45,7 @@ function readableBody(
     text += body.slice(offset, token.start) + label;
     offset = token.end;
   }
-  return text + body.slice(offset);
+  return markdownPreview(text + body.slice(offset));
 }
 
 export function InboxDialog({
@@ -213,7 +214,11 @@ export function InboxDialog({
           {t("markAllRead")}
         </Button>
       </div>
-      <div id="inbox-list" className="inbox-list dialog-scroll-region" aria-live="polite">
+      <div
+        id="inbox-list"
+        className="inbox-list dialog-scroll-region"
+        aria-live="polite"
+      >
         {loading ? (
           <p className="muted">{t("loading")}</p>
         ) : error ? (

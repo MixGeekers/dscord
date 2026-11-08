@@ -116,7 +116,7 @@ export async function loadClientConfig(): Promise<ClientConfig> {
 export async function discoverHome(
   config: ClientConfig,
   signal?: AbortSignal,
-): Promise<ClientDiscovery | null> {
+): Promise<ClientDiscovery> {
   const response = await fetch(
     new URL("/.well-known/dscord/client", config.authUrl),
     {
@@ -128,7 +128,6 @@ export async function discoverHome(
         : AbortSignal.timeout(10000),
     },
   );
-  if (response.status === 404) return null;
   if (!response.ok) throw new Error(`Home discovery: HTTP ${response.status}`);
   const value = (await response.json()) as ClientDiscovery;
   if (

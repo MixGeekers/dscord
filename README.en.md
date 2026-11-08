@@ -138,7 +138,7 @@ The shared server manages members and messages. Bots run on their own machines a
 | **DSCord Core + Matrix / Synapse** | Members, rooms, messages, attachments, and node connections. |
 | **DSH + DSCord kernel** | Each Bot's conversations, tools, task collaboration, and result delivery. |
 
-Each Bot processes tasks in order; different Bots can work in parallel. See the [framework design](架构与设计/DS-Group首个框架与实施路线.md) for more detail.
+Each Bot processes tasks in order; different Bots can work in parallel.
 
 <a id="documentation"></a>
 

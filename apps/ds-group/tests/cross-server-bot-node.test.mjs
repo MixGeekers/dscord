@@ -39,7 +39,7 @@ async function fixture(t, { meta = {}, sender = humanId } = {}) {
   const sent = [];
   const client = {};
   const bridge = {
-    turn: async (request) => {
+    turn: async () => {
       calls++;
       return {
         status: 'completed',

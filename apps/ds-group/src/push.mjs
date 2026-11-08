@@ -180,7 +180,7 @@ export class PushService {
     let recipients = recipientIds;
     if (!recipients) {
       recipients = [];
-      for (const [userId, client] of this.clients) {
+      for (const client of this.clients.values()) {
         try {
           const members = await client.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(event.room_id)}/joined_members`, undefined, { signal: this.controller.signal });
           recipients = Object.keys(members.joined || {});

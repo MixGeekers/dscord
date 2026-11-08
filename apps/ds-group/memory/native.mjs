@@ -2,11 +2,10 @@ import { BlockAssembler, createUserMessage } from '@deepseek-ai/dsh-llm';
 import { createSnapshotContext, snapshotRequestMessages } from './snapshot-context.mjs';
 import { projectNativeRequestMessage } from '../src/native-request.mjs';
 import { defineTool } from '@deepseek-ai/dsh-tools';
-import { join, basename } from 'node:path';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { join } from 'node:path';
+import { existsSync, readFileSync } from 'node:fs';
 import { setTimeout as delay } from 'node:timers/promises';
 import { MemoryService } from './service.mjs';
-import { sha, sourceId } from './store.mjs';
 import { createMemoryPanel } from './panel.mjs';
 import { generateReviewWithBudget, prepareReviewBatch, prepareReviewProposal } from './review.mjs';
 import { isModelQuotaFailure } from '../src/model-failure.mjs';
@@ -105,7 +104,7 @@ export function installNativeMemory(rt) {
       revision: { type: 'integer', required: true } } }, description: 'Current memory revisions used to derive a draft, understanding or plan; later changes invalidate this derived record' },
     sourceIds: { type: 'array', items: { type: 'string' }, description: 'Source IDs from current context/recall, or unambiguous original event IDs such as $event in the current room; defaults to current message' },
     scope: string('group (current room), own, team or room:<full room ID>'), topic: string('Optional topic'),
-    replaceId: string('Exact existing memory ID to correct, from recall'), replace: string('Legacy unique text match to replace'),
+    replaceId: string('Exact existing memory ID to correct, from recall'),
     reclassify: { type: 'boolean', description: 'Repair subject metadata only; requires identical original text and source IDs' },
     expectedRevision: { type: 'number', description: 'Revision read before replacing' },
     validFrom: { type: 'number', description: 'Optional UTC epoch milliseconds when fact begins to apply' },
@@ -117,8 +116,8 @@ export function installNativeMemory(rt) {
     parameters: { query: string('Natural-language search'), scope: string('own, team, group, room:<ID> or all'), topic: string('Topic'), subjectId: string('Exact identity to filter'),
       history: { type: 'boolean', description: 'Include old records with explicit status, never treat these as current facts' }, limit: { type: 'number', description: 'Maximum records (1–30)' } }, output,
     async execute(args, exec) { const id = caller(exec); return stringify(await memory.recall(id, args, memory.current(id, exec.agent?.id) || null)); } }));
-  rt.teamTools.push(defineTool({ name: 'forget', description: 'Withdraw one memory by its exact ID or unique text; history is retained and current recall excludes it.',
-    parameters: { id: string('Memory ID'), entry: string('Legacy unique text match'), scope: string('Current room by default; own, team, all or room:<ID>'), expectedRevision: { type: 'number' } }, output,
+  rt.teamTools.push(defineTool({ name: 'forget', description: 'Withdraw one memory by its exact ID; history is retained and current recall excludes it.',
+    parameters: { id: string('Memory ID'), scope: string('Current room by default; own, team, all or room:<ID>'), expectedRevision: { type: 'number' } }, output,
     async execute(args, exec) { const id = caller(exec); const result = memory.forget(id, args, memory.current(id, exec.agent?.id) || null); news.set(id, Date.now()); return stringify(result); } }));
   rt.teamTools.push(defineTool({ name: 'contacts', description: 'Find stable people/Bot/group identities and names known through this Bot’s observations or source-backed memories. Equal names stay separate accounts.',
     parameters: { query: string('Full account ID or display-name fragment; omit to list'),
@@ -297,8 +296,8 @@ export function installNativeMemory(rt) {
     // DSH also writes runtime snapshots, instructions, skill catalogues and
     // compaction notes as user/message events. They are not new human statements.
     if (!isSourceMessage(message)) return;
-    const heldKey = heldIngressKey(botId, nativeSource), legacyKey = heldIngressKey(session.id, nativeSource);
-    const held = heldKey && store.getMeta(heldKey) || legacyKey && store.getMeta(legacyKey);
+    const heldKey = heldIngressKey(botId, nativeSource);
+    const held = heldKey && store.getMeta(heldKey);
     if (held) { memory.ingest(botId, held, { sessionId: session.id }); return; }
     const prepared = message.id && store.getMeta(`prepared-source:${session.id}:${message.id}`);
     if (prepared) { memory.ingest(botId, prepared, { sessionId: session.id }); return; }
@@ -341,35 +340,6 @@ export function installNativeMemory(rt) {
     const result = await panelEndpoint(endpoint, body, { signal });
     signal.throwIfAborted(); ensureOpen(); return result;
   });
-  // Import legacy Markdown once, preserving exact source text and leaving the original files untouched.
-  async function migrateLegacy(parseMemory) {
-    if (!parseMemory) return;
-    const bots = Object.values(rt.state.bots);
-    const targets = bots.map(bot => ({ botId: bot.id, scope: 'own', directory: join(home, 'memory/bots', bot.id) }));
-    if (bots[0]) targets.push({ botId: bots[0].id, scope: 'team', directory: join(home, 'memory/team') });
-    for (const room of Object.values(rt.state.rooms)) {
-      const safe = /^[\w-]{1,128}$/.test(room.id) ? room.id : sha(room.id).slice(0, 32);
-      for (const botId of room.members || []) targets.push({ botId, scope: `room:${room.id}`, directory: join(home, 'memory/groups', safe) });
-    }
-    for (const { botId, scope, directory } of targets) {
-      const key = `legacy:${botId}:${scope}`;
-      if (!existsSync(directory) || store.getMeta(key)) continue;
-      for (const filename of readdirSync(directory).filter(name => name.endsWith('.md'))) {
-        ensureOpen();
-        const content = readFileSync(join(directory, filename), 'utf8');
-        const entries = parseMemory(content).entries;
-        for (const entry of entries) {
-          ensureOpen();
-          const source = store.observe({ id: sourceId('legacy', directory, `${filename}:${entry.line}`), body: entry.text,
-            authorId: scope === 'own' ? `native:${botId}` : `legacy:${scope}`, authorKind: 'bot', timestamp: Date.now(), legacyMetadata: entry.meta });
-          await memory.remember(botId, { text: entry.text, scope, subjectId: `native:${botId}`, kind: 'legacy',
-            topic: filename === 'MEMORY.md' ? null : basename(filename, '.md'), sourceRefs: [{ id: source.id, revision: 1 }] },
-          { botId, scope, authorId: source.authorId, sourceRefs: [{ id: source.id, revision: 1 }] });
-        }
-      }
-      store.setMeta(key, true);
-    }
-  }
   Object.assign(rt, { knowledge: memory, memoryEnabled: true, memoryBackend: 'source-aware-v1', memoryLifecycleSignal: reviewStop.signal, botShot,
     memoryObserve: (botId, input, options) => {
       ensureOpen();
@@ -392,7 +362,7 @@ export function installNativeMemory(rt) {
     },
     memoryRelay: (botId, sessionId) => { ensureOpen(); const current = memory.current(botId, sessionId || rt.chatOf(botId)); return current ? { memoryOrigin: current } : {}; },
     memoryCarry: (botId, before, after) => { ensureOpen(); return memory.carry(botId, before, after); },
-    memoryFlush: flush, memoryMigrate: migrateLegacy, memoryEndpoint, renewMemory: () => {},
+    memoryFlush: flush, memoryEndpoint, renewMemory: () => {},
     archiveBotMemory: async () => {}, archiveGroupMemory: async () => {}, memoryNews: () => Object.fromEntries(news), memoryReviews: () => timers.size + reviewing.size + sideTasks.size });
   ctx.effect(() => () => {
     if (closing) return closing;

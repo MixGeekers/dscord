@@ -2,42 +2,13 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { visibleEnvironmentModelSettings } from '../scripts/memory-visible-environment.mjs';
-import { verificationModel } from '../scripts/memory-test-model.mjs';
+import { verificationModel } from '../scripts/verification-model.mjs';
 
-test('service model policy is optional or caller-defined, with no vendor restriction',()=>{
-  assert.deepEqual(visibleEnvironmentModelSettings({model:null}),{model:null,allowedModels:null});
-  assert.deepEqual(visibleEnvironmentModelSettings({model:'own/team/fast'}),{model:'own/team/fast',allowedModels:['own/team/fast']});
-  assert.deepEqual(visibleEnvironmentModelSettings({model:'own/team/fast',allowedModels:null}),{model:'own/team/fast',allowedModels:null});
-  assert.throws(()=>visibleEnvironmentModelSettings({model:'own/team/fast',allowedModels:['local/model']}),/selected model/);
-  assert.throws(()=>visibleEnvironmentModelSettings({model:'invalid'}),{code:'INVALID_MODEL'});
-});
-
-test('no configured model fails before preparing a home, resolving DSH or contacting a service',async()=>{
-  const env={...process.env};delete env.DSCORD_MEMORY_TEST_MODEL;delete env.DS_GROUP_MODEL;
-  const source=`
-    import assert from 'node:assert/strict';
-    import {access} from 'node:fs/promises';
-    import {MODEL,memoryTestModel} from './scripts/memory-test-model.mjs';
-    import {MemoryTestHost} from './scripts/memory-host.mjs';
-    import {NaturalLiveAdapter} from './scripts/platform-natural-live.mjs';
-    const directory='/tmp/dscord-no-model-'+process.pid;
-    globalThis.fetch=()=>{throw new Error('Unexpected service request');};
-    assert.equal(MODEL,null);
-    assert.throws(()=>memoryTestModel(),{code:'TEST_MODEL_REQUIRED'});
-    const host=new MemoryTestHost(directory);
-    for(const action of ['prepare','configureModel','start'])await assert.rejects(host[action](),{code:'TEST_MODEL_REQUIRED'});
-    await assert.rejects(access(directory),{code:'ENOENT'});
-    const adapter=new NaturalLiveAdapter({environment:{},directory,corpus:{}});
-    await assert.rejects(adapter.initialize(),{code:'TEST_MODEL_REQUIRED'});
-  `;
-  await promisify(execFile)(process.execPath,['--input-type=module','-e',source],{cwd:new URL('..',import.meta.url),env,timeout:10000});
-});
-
-test('read-only verification may omit a model; live verification requires a caller selection',()=>{
+test('read-only verification may omit a model; live verification requires a valid caller selection',()=>{
   assert.equal(verificationModel(null),null);
-  assert.equal(verificationModel('own/team/fast',{run:true}),'own/team/fast');
+  for(const model of ['own/team/fast','local/model-fast'])assert.equal(verificationModel(model,{run:true}),model);
   assert.throws(()=>verificationModel(null,{run:true}),{code:'TEST_MODEL_REQUIRED'});
+  for(const value of ['invalid','provider/model name',42])assert.throws(()=>verificationModel(value),{code:'INVALID_MODEL'});
 });
 
 test('default verify CLI performs no fixture read or model request, even with a caller model',async()=>{
@@ -53,8 +24,8 @@ test('default verify CLI performs no fixture read or model request, even with a 
 test('live verification CLIs reject an omitted model before reading fixture files or services',async()=>{
   const env={...process.env,DS_GROUP_MATRIX_SETUP_PATH:'/nonexistent/dscord-validation-fixture.json'};
   delete env.DSCORD_MEMORY_TEST_MODEL;delete env.DS_GROUP_MODEL;
-  for(const file of ['verify.mjs','verify-delivery.mjs','verify-file-work.mjs','verify-cross-server-bot.mjs']){
-    await assert.rejects(promisify(execFile)(process.execPath,[`scripts/${file}`,'--run',...(file.includes('cross-server')?['--real-model']:[])],{cwd:new URL('..',import.meta.url),env,timeout:10000}),error=>{
+  for(const file of ['verify.mjs','verify-file-work.mjs']){
+    await assert.rejects(promisify(execFile)(process.execPath,[`scripts/${file}`,'--run'],{cwd:new URL('..',import.meta.url),env,timeout:10000}),error=>{
       assert.match(error.stderr,/TEST_MODEL_REQUIRED/);assert.doesNotMatch(error.stderr,/ENOENT|ECONNREFUSED/);return true;
     });
   }

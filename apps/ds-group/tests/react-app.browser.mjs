@@ -44,6 +44,21 @@ const bobOneDraft = {
   attachments: [],
   replyMention: true,
 };
+const discovery = {
+  schemaVersion: 1,
+  authorityId: 'urn:uuid:fixture-home',
+  home: { serverName: 'test', coreUrl: null, matrixUrl: 'http://127.0.0.1:1' },
+  auth: { mode: 'matrix-password', cookieCredentials: false },
+};
+const spacesFor = userId => ({
+  homeServer: 'test',
+  userId,
+  spaces: [{
+    serverName: 'test', name: 'DSCord', home: true, status: 'connected', invitations: [],
+    rooms: rooms.map(room => ({ roomId: room.roomId, name: room.name, status: 'joined', canSend: true })),
+  }],
+});
+// Readable aliases resolved by readStorage() to the client's scoped keys.
 const alicePendingKey = `ds-group.pending.${sessions.alice.user_id}.${rooms[0].roomId}`;
 const aliceTwoDraftKey = `ds-group.draft.${sessions.alice.user_id}.${rooms[1].roomId}`;
 const bobOneDraftKey = `ds-group.draft.${sessions.bob.user_id}.${rooms[0].roomId}`;
@@ -117,20 +132,26 @@ try {
     viewport: { width: 1440, height: 900 },
   });
   context.setDefaultTimeout(15000);
+  // Seed storage with the keys the client itself derives for this origin.
+  const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+  const { parseClientConfig } = await import('../web/src/client-config.ts');
+  const { bindSession, sessionStorageKey, storageKey } = await import('../web/src/session.ts');
+  const clientConfig = parseClientConfig({ schemaVersion: 1 }, origin);
+  const bound = account => bindSession(account, clientConfig, discovery);
+  const stored = {
+    [sessionStorageKey(clientConfig)]: bound(sessions.alice),
+    [storageKey(clientConfig, 'bootstrap')]: bootstrap,
+    [storageKey(clientConfig, 'rooms', bound(sessions.alice))]: rooms,
+    [storageKey(clientConfig, 'rooms', bound(sessions.bob))]: rooms,
+    [storageKey(clientConfig, 'room', bound(sessions.alice), 'test')]: rooms[0].roomId,
+    [storageKey(clientConfig, 'pending', bound(sessions.alice), 'test', rooms[0].roomId)]: pendingMessage,
+    [storageKey(clientConfig, 'draft', bound(sessions.alice), 'test', rooms[1].roomId)]: aliceTwoDraft,
+    [storageKey(clientConfig, 'draft', bound(sessions.bob), 'test', rooms[0].roomId)]: bobOneDraft,
+  };
   await context.addInitScript((seed) => {
     localStorage.setItem('ds-group.language', 'en');
     localStorage.setItem('ds-group.theme', 'dark');
-    const stored = {
-      'ds-group.session': seed.sessions.alice,
-      'ds-group.workspace': seed.bootstrap,
-      [`ds-group.rooms.${seed.sessions.alice.user_id}`]: seed.rooms,
-      [`ds-group.rooms.${seed.sessions.bob.user_id}`]: seed.rooms,
-      [`ds-group.room.${seed.sessions.alice.user_id}`]: seed.rooms[0].roomId,
-      [seed.alicePendingKey]: seed.pendingMessage,
-      [seed.aliceTwoDraftKey]: seed.aliceTwoDraft,
-      [seed.bobOneDraftKey]: seed.bobOneDraft,
-    };
-    for (const [key, value] of Object.entries(stored)) {
+    for (const [key, value] of Object.entries(seed.stored)) {
       sessionStorage.setItem(key, JSON.stringify(value));
     }
     if ('serviceWorker' in navigator) {
@@ -142,10 +163,7 @@ try {
         }),
       });
     }
-  }, {
-    sessions, bootstrap, rooms, pendingMessage, aliceTwoDraft, bobOneDraft,
-    alicePendingKey, aliceTwoDraftKey, bobOneDraftKey,
-  });
+  }, { stored });
 
   const responses = new Map([
     ['GET /api/bootstrap', bootstrap],
@@ -173,7 +191,7 @@ try {
 
   page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
-  await page.route('**/.well-known/dscord/client', route => route.fulfill({ status: 404, contentType: 'application/json', body: '{}' }));
+  await page.route('**/.well-known/dscord/client', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(discovery) }));
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -187,8 +205,11 @@ try {
       : token === sessions.alice.access_token ? people[0]
         : token === sessions.bob.access_token ? people[1]
           : ['registered-fixture', 'registered-login-fixture'].includes(token) ? registeredUser : null;
-    if (['GET /api/spaces', 'GET /api/directory'].includes(key)) {
-      status = 404; body = { error: 'Legacy fixture Core' };
+    if (key === 'GET /api/spaces') {
+      body = user ? spacesFor(user.id) : { error: 'Session expired' };
+      status = user ? 200 : 401;
+    } else if (key === 'GET /api/directory') {
+      body = { participants: registeredUser ? [...people, registeredUser] : people };
     } else if (key === 'GET /api/me') {
       status = user ? 200 : 401;
       body = user ? { user, ownedBots: ownedBots.get(user.id) ?? [] } : { error: 'Session expired' };
@@ -265,7 +286,7 @@ try {
       const prefix = 'ds-group.v2.' + configModule.bindingKey(config) + '.';
       for (const key of Object.keys(sessionStorage)) {
         if (!key.startsWith(prefix)) continue;
-        const [kind, authority, subject, userId, space, roomId] = JSON.parse(decodeURIComponent(key.slice(prefix.length)));
+        const [kind, , , userId, , roomId] = JSON.parse(decodeURIComponent(key.slice(prefix.length)));
         if (legacy === 'ds-group.' + kind + '.' + userId + (roomId ? '.' + roomId : '')) return JSON.parse(sessionStorage.getItem(key));
       }
       return JSON.parse(sessionStorage.getItem(legacy) ?? 'null');

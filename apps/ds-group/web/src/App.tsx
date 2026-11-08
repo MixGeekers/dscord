@@ -10,18 +10,12 @@ import { defaultClientConfig, discoverHome } from "./client-config";
 import type { ClientConfig, ClientDiscovery } from "./client-config";
 import {
   bindSession,
-  migrateIdentityStorage,
   readScoped,
   restoreSession,
   sessionStorageKey,
   storageKey,
 } from "./session";
-import {
-  legacySpaces,
-  matrixServer,
-  roomsInSpace,
-  validateSpaces,
-} from "./spaces";
+import { matrixServer, roomsInSpace } from "./spaces";
 import type { SpacesResult } from "./spaces";
 import { useTranslation } from "./locale";
 import { appMessages } from "./locales/app";
@@ -39,12 +33,26 @@ import { SpacesDialog } from "./components/SpacesDialog";
 import { MyBotsDialog } from "./components/MyBotsDialog";
 import { InboxDialog } from "./components/InboxDialog";
 import { NotificationDialog } from "./components/NotificationDialog";
+import {
+  emptyMentions,
+  isOwnedBotRoom,
+  ownedBotCacheKey,
+  restoredOwnedBots,
+} from "./app/workspace";
+import {
+  lastVisible,
+  mergeEvents,
+  visibleEvents,
+  withdrawnEvent,
+} from "./app/timeline-events";
+import { useWorkspaceSync } from "./app/useWorkspaceSync";
+import { useTimelineHistory } from "./app/useTimelineHistory";
+import { newRequestId } from "./identifiers";
+import type { MentionValue } from "../mention-editor.js";
 import type {
-  AccountProfile,
   Bootstrap,
   ChatEvent,
   ComposerHandle,
-  InboxResult,
   Mentionables,
   OutgoingMessage,
   Participant,
@@ -58,68 +66,7 @@ import type {
   WorkTask,
 } from "./types";
 
-const emptyMentions: Mentionables = {
-  members: [],
-  roles: [],
-  canMentionEveryone: false,
-  canMentionHere: false,
-};
 const defaultConfig = () => defaultClientConfig();
-
-function mergeEvents(
-  previous: ChatEvent[],
-  incoming: ChatEvent[],
-  roomId: string,
-): ChatEvent[] {
-  const known = new Map(previous.map((event) => [event.event_id, event]));
-  for (const event of incoming) {
-    if (
-      !event.event_id ||
-      event.type !== "m.room.message" ||
-      typeof event.content?.body !== "string" ||
-      (event.room_id && event.room_id !== roomId)
-    )
-      continue;
-    const current = known.get(event.event_id);
-    const normalized = event.room_id ? event : { ...event, room_id: roomId };
-    if (!current || JSON.stringify(current) !== JSON.stringify(normalized))
-      known.set(event.event_id, normalized);
-  }
-  const result = [...known.values()].sort(
-    (left, right) => left.origin_server_ts - right.origin_server_ts,
-  );
-  return result.length === previous.length &&
-    result.every((event, index) => event === previous[index])
-    ? previous
-    : result;
-}
-
-function ownedBotCacheKey(config: ClientConfig, account: Session | null): string | null {
-  if (
-    !account?.identity?.subjectId ||
-    account.identity.kind !== "human" ||
-    account.identity.matrixUserId !== account.user_id ||
-    !account.binding?.authorityId ||
-    account.binding.authorityId !== account.identity.authorityId
-  ) return null;
-  return storageKey(config, "owned-bots", account);
-}
-
-function validOwnedBots(value: unknown, ownerId: string): value is Participant[] {
-  return Array.isArray(value) && value.every((bot) =>
-    bot && typeof bot === "object" &&
-    typeof bot.id === "string" && bot.id.startsWith("@") &&
-    typeof bot.name === "string" &&
-    bot.kind === "bot" && bot.ownerId === ownerId
-  ) && new Set(value.map((bot) => bot.id)).size === value.length;
-}
-
-function restoredOwnedBots(config: ClientConfig, account: Session | null): Participant[] | null {
-  const key = ownedBotCacheKey(config, account);
-  if (!key || !account) return null;
-  const value = readStored<unknown>(key);
-  return validOwnedBots(value, account.user_id) ? value : null;
-}
 
 export default function App({
   config: suppliedConfig,
@@ -130,19 +77,10 @@ export default function App({
     restoreSession(config),
   );
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(() =>
-    readScoped(config, "bootstrap", null, null, null, "ds-group.workspace"),
+    readScoped(config, "bootstrap"),
   );
   const [allRooms, setAllRooms] = useState<Room[]>(() =>
-    session
-      ? (readScoped(
-          config,
-          "rooms",
-          session,
-          null,
-          null,
-          `ds-group.rooms.${session.user_id}`,
-        ) ?? [])
-      : [],
+    session ? (readScoped(config, "rooms", session) ?? []) : [],
   );
   const [spacesResult, setSpacesResult] = useState<SpacesResult | null>(() =>
     session ? readScoped(config, "spaces", session) : null,
@@ -153,37 +91,28 @@ export default function App({
         matrixServer(session.user_id))
       : null,
   );
-  const [roomId, setRoomId] = useState<string | null>(() => {
-    if (!session) return null;
-    const home = matrixServer(session.user_id);
-    return (
-      new URL(location.href).searchParams.get("roomId") ||
-      readScoped<string>(
-        config,
-        "room",
-        session,
-        serverName,
-        null,
-        serverName === home ? `ds-group.room.${session.user_id}` : undefined,
-      )
-    );
-  });
+  const [roomId, setRoomId] = useState<string | null>(() =>
+    session
+      ? new URL(location.href).searchParams.get("roomId") ||
+        readScoped<string>(config, "room", session, serverName)
+      : null,
+  );
   const [homeDiscovery, setHomeDiscovery] = useState<
-    ClientDiscovery | null | undefined
+    ClientDiscovery | undefined
   >(undefined);
   const [verified, setVerified] = useState(false);
-  const [allowLegacyMedia, setAllowLegacyMedia] = useState(false);
   const [connection, setConnection] = useState<
     "connecting" | "connected" | "offline"
   >("connecting");
   const [directory, setDirectory] = useState<Participant[]>([]);
-  const [ownedBotsState, setOwnedBotsState] = useState<Participant[] | null>(() =>
-    restoredOwnedBots(config, session),
+  const [ownedBotsState, setOwnedBotsState] = useState<Participant[] | null>(
+    () => restoredOwnedBots(config, session),
   );
   const ownedBots = ownedBotsState ?? [];
   const ownedBotsKnown = ownedBotsState !== null;
   const [currentUser, setCurrentUser] = useState<Participant | null>(null);
   const [events, setEvents] = useState<ChatEvent[]>([]);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [tasks, setTasks] = useState<WorkTask[]>([]);
   const [roles, setRoles] = useState<Role[]>([]);
   const [mentionables, setMentionables] = useState<Mentionables>(emptyMentions);
@@ -232,7 +161,6 @@ export default function App({
   const directRequestRef = useRef(0);
   const spacesRef = useRef(spacesResult);
   const roomsRef = useRef(allRooms);
-  const bootstrapRef = useRef(bootstrap);
   const verifiedRef = useRef(verified);
   const authBusyRef = useRef(false);
   const suppressReadUntil = useRef(0);
@@ -244,7 +172,6 @@ export default function App({
   viewRef.current = view;
   spacesRef.current = spacesResult;
   roomsRef.current = allRooms;
-  bootstrapRef.current = bootstrap;
   verifiedRef.current = verified;
   const api = useMemo(
     () => createApi(() => sessionRef.current, config),
@@ -268,10 +195,17 @@ export default function App({
     for (const bot of ownedBots) members.set(bot.id, bot);
     for (const label of mentionables.members) {
       const person = members.get(label.id);
-      if (person && label.name) members.set(label.id, { ...person, name: label.name });
+      if (person && label.name)
+        members.set(label.id, { ...person, name: label.name });
     }
     return [...members.values()];
-  }, [bootstrap?.participants, directory, currentUser, ownedBots, mentionables.members]);
+  }, [
+    bootstrap?.participants,
+    directory,
+    currentUser,
+    ownedBots,
+    mentionables.members,
+  ]);
   const workspace = useMemo(
     () => bootstrap && { ...bootstrap, participants },
     [bootstrap, participants],
@@ -303,9 +237,6 @@ export default function App({
       session,
       serverName,
       roomId,
-      serverName === matrixServer(session.user_id)
-        ? `ds-group.pending.${session.user_id}.${roomId}`
-        : undefined,
     );
   }, [config, session, serverName, roomId, pendingNonce]);
   const sending = sendingKeys.has(currentPendingKey);
@@ -323,6 +254,7 @@ export default function App({
 
   const resetConversation = useCallback(() => {
     setEvents([]);
+    setEditingId(null);
     setTasks([]);
     setRoles([]);
     setMentionables(emptyMentions);
@@ -355,7 +287,6 @@ export default function App({
     setMentionCount(0);
     resetConversation();
     setVerified(false);
-    setAllowLegacyMedia(false);
     setSettingsTab(null);
     setCreateBotOpen(false);
     setBotsOpen(false);
@@ -378,16 +309,11 @@ export default function App({
   useEffect(() => {
     const controller = new AbortController();
     setHomeDiscovery(undefined);
-    setAllowLegacyMedia(false);
     void discoverHome(config, controller.signal)
       .then((discovery) => {
         if (controller.signal.aborted) return;
         const account = sessionRef.current;
-        if (
-          discovery &&
-          account?.binding?.authorityId &&
-          account.binding.authorityId !== discovery.authorityId
-        ) {
+        if (account && account.binding?.authorityId !== discovery.authorityId) {
           clearSession();
           setLoginError(t("homeChanged"));
         }
@@ -410,13 +336,6 @@ export default function App({
     })
       .then((value) => {
         if (controller.signal.aborted) return;
-        if (
-          (value.roomId !== null &&
-            (typeof value.roomId !== "string" ||
-              !value.roomId.startsWith("!"))) ||
-          !Array.isArray(value.participants)
-        )
-          throw new Error(t("invalidWorkspace"));
         setBootstrap(value);
         sessionStorage.setItem(
           storageKey(config, "bootstrap"),
@@ -501,15 +420,14 @@ export default function App({
         ? readScoped<string>(config, "room", account, name)
         : null;
       const savedRoom = joined.find((value) => value.roomId === saved);
-      const savedOwnedBotDm = savedRoom?.kind === "direct" &&
-        ownedBots.some((bot) => bot.ownerId === account?.user_id &&
-          savedRoom.participantIds.includes(bot.id));
       navigate(
-        (savedOwnedBotDm ? null : savedRoom) ??
+        (isOwnedBotRoom(savedRoom, ownedBots, account?.user_id)
+          ? null
+          : savedRoom) ??
           joined.find((value) => value.kind === "group") ??
-          joined.find((value) => value.kind !== "direct" ||
-            !ownedBots.some((bot) => bot.ownerId === account?.user_id &&
-              value.participantIds.includes(bot.id))) ??
+          joined.find(
+            (value) => !isOwnedBotRoom(value, ownedBots, account?.user_id),
+          ) ??
           null,
         name,
       );
@@ -517,275 +435,15 @@ export default function App({
     [config, navigate, ownedBots],
   );
 
-  useEffect(() => {
-    if (homeDiscovery === undefined) return;
-    const controller = new AbortController();
-    let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
-    const account = session;
-    const targetRoom = roomId;
-    const targetServer = serverName;
-    const active = () =>
-      !stopped &&
-      sessionRef.current === account &&
-      roomRef.current === targetRoom &&
-      serverRef.current === targetServer;
-    const options = { signal: controller.signal };
-    const optional = async <T,>(route: string): Promise<T | null> => {
-      try {
-        return await api<T>(route, options);
-      } catch (reason) {
-        if (reason instanceof ApiError && reason.status === 404) return null;
-        throw reason;
-      }
-    };
-    async function poll() {
-      try {
-        if (!account) {
-          const value = await api<ServerStatus>("/api/status", {
-            ...options,
-            auth: false,
-          });
-          if (active()) {
-            setStatus(value);
-            setConnection("connected");
-          }
-          return;
-        }
-        const results = await Promise.allSettled([
-          authApi<AccountProfile>("/api/me", options),
-          api<{ rooms: Room[] }>("/api/rooms", options),
-          optional<SpacesResult>("/api/spaces"),
-          optional<{ participants: Participant[] }>("/api/directory"),
-          api<InboxResult>("/api/inbox?filter=mentions&limit=1", options),
-          api<ServerStatus>("/api/status", { ...options, auth: false }),
-        ] as const);
-        if (!active()) return;
-        const failure =
-          results.find(
-            (result) =>
-              result.status === "rejected" &&
-              result.reason instanceof ApiError &&
-              result.reason.status === 401,
-          ) ?? results.find((result) => result.status === "rejected");
-        if (failure?.status === "rejected") throw failure.reason;
-        const [profile, listed, collaboration, roster, inbox, runtime] =
-          results.map(
-            (result) => (result as PromiseFulfilledResult<unknown>).value,
-          ) as [
-            AccountProfile,
-            { rooms: Room[] },
-            SpacesResult | null,
-            { participants: Participant[] } | null,
-            InboxResult,
-            ServerStatus,
-          ];
-        if (
-          profile.user.id !== account.user_id ||
-          (homeDiscovery &&
-            (profile.identity?.authorityId !== homeDiscovery.authorityId ||
-              profile.identity.matrixUserId !== account.user_id ||
-              (account.identity &&
-                profile.identity.subjectId !== account.identity.subjectId)))
-        )
-          throw new ApiError(t("invalidLogin"), 401);
-        if (!validOwnedBots(profile.ownedBots, account.user_id))
-          throw new Error(t("invalidWorkspace"));
-        if (homeDiscovery && !account.binding?.authorityId) {
-          const upgraded = bindSession(
-            { ...account, identity: profile.identity, home: profile.home },
-            config,
-            homeDiscovery,
-          );
-          migrateIdentityStorage(config, account, upgraded);
-          sessionStorage.setItem(
-            sessionStorageKey(config),
-            JSON.stringify(upgraded),
-          );
-          sessionRef.current = upgraded;
-          setSession(upgraded);
-          return;
-        }
-        if (
-          !Array.isArray(listed.rooms) ||
-          listed.rooms.some(
-            (value) =>
-              !value.roomId?.startsWith("!") ||
-              !Array.isArray(value.participantIds),
-          )
-        )
-          throw new Error(t("invalidWorkspace"));
-        const facts = collaboration
-          ? validateSpaces(collaboration, account.user_id)
-          : legacySpaces(account.user_id, listed.rooms, bootstrapRef.current);
-        setAllRooms(listed.rooms);
-        roomsRef.current = listed.rooms;
-        setSpacesResult(facts);
-        spacesRef.current = facts;
-        sessionStorage.setItem(
-          storageKey(config, "rooms", account),
-          JSON.stringify(listed.rooms),
-        );
-        sessionStorage.setItem(
-          storageKey(config, "spaces", account),
-          JSON.stringify(facts),
-        );
-        setCurrentUser(profile.user);
-        setOwnedBotsState(profile.ownedBots);
-        const botCache = ownedBotCacheKey(config, account);
-        if (botCache) {
-          if (
-            profile.identity?.authorityId === account.identity?.authorityId &&
-            profile.identity?.subjectId === account.identity?.subjectId &&
-            profile.identity?.matrixUserId === account.user_id
-          ) sessionStorage.setItem(botCache, JSON.stringify(profile.ownedBots));
-          else sessionStorage.removeItem(botCache);
-        }
-        setDirectory(
-          roster?.participants ?? bootstrapRef.current?.participants ?? [],
-        );
-        setMentionCount(inbox.mentionCount);
-        setStatus(runtime);
-        setConnection("connected");
-        setVerified(true);
-        setAllowLegacyMedia(collaboration === null && homeDiscovery === null);
-        setError("");
-        let space =
-          facts.spaces.find((value) => value.serverName === targetServer) ??
-          facts.spaces.find((value) => value.home) ??
-          null;
-        const navigation = new URL(location.href).searchParams;
-        const navigationMatches =
-          (!navigation.has("userId") ||
-            navigation.get("userId") === account.user_id) &&
-          (!navigation.has("homeCoreUrl") ||
-            navigation.get("homeCoreUrl") === config.homeCoreUrl) &&
-          (!navigation.has("authorityId") ||
-            navigation.get("authorityId") === account.binding?.authorityId);
-        if (
-          initialNavigation.current &&
-          navigationMatches &&
-          navigation.get("roomId")
-        ) {
-          space =
-            facts.spaces.find((value) =>
-              value.rooms.some(
-                (item) =>
-                  item.roomId === navigation.get("roomId") &&
-                  item.status === "joined",
-              ),
-            ) ?? space;
-        }
-        const available = roomsInSpace(listed.rooms, space);
-        const nextRoom =
-          available.find((value) => value.roomId === targetRoom) ??
-          available.find((value) => value.kind === "group") ??
-          available[0] ??
-          null;
-        if (
-          initialNavigation.current &&
-          navigationMatches &&
-          nextRoom?.roomId === navigation.get("roomId") &&
-          navigation.get("eventId")
-        ) {
-          setJump({
-            roomId: nextRoom.roomId,
-            eventId: navigation.get("eventId")!,
-          });
-        }
-        initialNavigation.current = false;
-        if (
-          space?.serverName !== targetServer ||
-          nextRoom?.roomId !== (targetRoom ?? undefined)
-        ) {
-          navigate(
-            nextRoom,
-            space?.serverName ?? null,
-            navigationMatches && nextRoom?.roomId === navigation.get("roomId")
-              ? (navigation.get("eventId") ?? undefined)
-              : undefined,
-          );
-          return;
-        }
-        if (!targetRoom || !nextRoom) {
-          setEvents([]);
-          setTasks([]);
-          return;
-        }
-        const base = `/api/rooms/${encodeURIComponent(targetRoom)}`;
-        const roomResults = await Promise.allSettled([
-          api<{ events: ChatEvent[] }>(`${base}/messages?limit=200`, options),
-          api<{ tasks: WorkTask[] }>(`${base}/tasks`, options),
-          api<Mentionables>(`${base}/mentionables`, options),
-          space?.home
-            ? api<{ roles: Role[] }>("/api/roles", options)
-            : Promise.resolve({ roles: [] }),
-          api("/api/presence", {
-            ...options,
-            method: "POST",
-            body: { status: document.hidden ? "idle" : "online" },
-          }),
-        ] as const);
-        if (!active()) return;
-        const roomFailure = roomResults.find(
-          (result) => result.status === "rejected",
-        );
-        if (roomFailure?.status === "rejected") throw roomFailure.reason;
-        const [messages, work, mentions, roleList] = roomResults.map(
-          (result) => (result as PromiseFulfilledResult<unknown>).value,
-        ) as [
-          { events: ChatEvent[] },
-          { tasks: WorkTask[] },
-          Mentionables,
-          { roles: Role[] },
-        ];
-        setEvents((previous) =>
-          mergeEvents(previous, messages.events, targetRoom),
-        );
-        setTasks(work.tasks.filter((task) => task.roomId === targetRoom));
-        setMentionables(mentions);
-        setRoles(roleList.roles);
-      } catch (reason) {
-        if (!active()) return;
-        if (reason instanceof ApiError && reason.status === 401) {
-          clearSession();
-          return;
-        }
-        if (reason instanceof ApiError && reason.status === 403) {
-          setEvents([]);
-          setTasks([]);
-          setMentionables(emptyMentions);
-          setVerified(false);
-        }
-        setError(messageOf(reason));
-        setConnection("offline");
-      } finally {
-        if (active())
-          timer = setTimeout(() => void poll(), document.hidden ? 12000 : 2500);
-      }
-    }
-    void poll();
-    const resume = () => {
-      stopped = true;
-      controller.abort();
-      clearTimeout(timer);
-      refresh();
-    };
-    const offline = () => {
-      setConnection("offline");
-    };
-    window.addEventListener("online", resume);
-    window.addEventListener("offline", offline);
-    document.addEventListener("visibilitychange", resume);
-    return () => {
-      stopped = true;
-      controller.abort();
-      clearTimeout(timer);
-      window.removeEventListener("online", resume);
-      window.removeEventListener("offline", offline);
-      document.removeEventListener("visibilitychange", resume);
-    };
-  }, [
+  const timelineHistory = useTimelineHistory({
+    api,
+    roomId,
+    room,
+    setEvents,
+    onError: notify,
+  });
+
+  useWorkspaceSync({
     api,
     authApi,
     config,
@@ -797,7 +455,33 @@ export default function App({
     refresh,
     clearSession,
     navigate,
-  ]);
+    refs: {
+      session: sessionRef,
+      room: roomRef,
+      server: serverRef,
+      rooms: roomsRef,
+      spaces: spacesRef,
+      initialNavigation,
+    },
+    set: {
+      status: setStatus,
+      connection: setConnection,
+      allRooms: setAllRooms,
+      spaces: setSpacesResult,
+      currentUser: setCurrentUser,
+      ownedBots: setOwnedBotsState,
+      directory: setDirectory,
+      mentionCount: setMentionCount,
+      verified: setVerified,
+      error: setError,
+      jump: setJump,
+      events: setEvents,
+      tasks: setTasks,
+      mentionables: setMentionables,
+      roles: setRoles,
+      historyCursor: timelineHistory.seed,
+    },
+  });
 
   useEffect(() => {
     const recover = () => {
@@ -850,8 +534,12 @@ export default function App({
           : spacesRef.current?.spaces.find((value) =>
               value.rooms.some((item) => item.roomId === next.roomId),
             );
-        navigate(next, ownBot ? matrixServer(account.user_id) :
-          (space?.serverName ?? matrixServer(account.user_id)));
+        navigate(
+          next,
+          ownBot
+            ? matrixServer(account.user_id)
+            : (space?.serverName ?? matrixServer(account.user_id)),
+        );
         refresh();
       } catch (reason) {
         if (
@@ -860,10 +548,10 @@ export default function App({
           roomRef.current === sourceRoom &&
           viewRef.current === sourceView &&
           directRequestRef.current === requestId
-        ) notify(messageOf(reason));
+        )
+          notify(messageOf(reason));
       } finally {
-        if (directRequestRef.current === requestId)
-          setOpeningDirectId(null);
+        if (directRequestRef.current === requestId) setOpeningDirectId(null);
       }
     },
     [api, displayName, notify, openLogin, navigate, ownedBots, refresh, t],
@@ -878,17 +566,6 @@ export default function App({
     setLoginRateLimitUntil(null);
     try {
       const { username, password } = input;
-      if (
-        input.mode === "register" &&
-        (!bootstrap?.registration?.enabled ||
-          bootstrap.registration.mode !== "open")
-      )
-        throw new Error(t("registrationClosed"));
-      if (
-        (input.mode === "register" || bootstrap?.demoLogin !== true) &&
-        !password
-      )
-        throw new Error(t("passwordRequired"));
       await pwa.current?.beforeIdentityChange("");
       const receipt =
         input.mode === "register"
@@ -925,14 +602,7 @@ export default function App({
       const savedServer = readScoped<string>(config, "server", next) ?? home;
       serverRef.current = savedServer;
       setServerName(savedServer);
-      const savedRoom = readScoped<string>(
-        config,
-        "room",
-        next,
-        savedServer,
-        null,
-        savedServer === home ? `ds-group.room.${next.user_id}` : undefined,
-      );
+      const savedRoom = readScoped<string>(config, "room", next, savedServer);
       roomRef.current = savedRoom;
       setRoomId(savedRoom);
       initialNavigation.current = true;
@@ -1043,6 +713,94 @@ export default function App({
     [api, keyFor, notify, refresh, t],
   );
 
+  const editMessage = useCallback(
+    async (eventId: string, value: MentionValue): Promise<boolean> => {
+      const account = sessionRef.current;
+      const targetRoom = roomRef.current;
+      if (!account || !targetRoom) return false;
+      try {
+        const receipt = await api<{ event_id: string }>(
+          `/api/rooms/${encodeURIComponent(targetRoom)}/messages/${encodeURIComponent(eventId)}`,
+          {
+            method: "PUT",
+            body: {
+              body: value.body,
+              mentions: value.mentions,
+              transactionId: newRequestId(),
+            },
+            timeout: 30000,
+          },
+        );
+        if (sessionRef.current !== account || roomRef.current !== targetRoom)
+          return true;
+        // Show the edit at once; the next poll brings the same event from Matrix.
+        setEvents((previous) =>
+          mergeEvents(
+            previous,
+            [
+              {
+                event_id: receipt.event_id,
+                room_id: targetRoom,
+                sender: account.user_id,
+                type: "m.room.message",
+                origin_server_ts: Date.now(),
+                content: {
+                  body: `* ${value.body}`,
+                  "m.new_content": {
+                    body: value.body,
+                    "org.ds_group": { mentions: value.mentions },
+                  },
+                  "m.relates_to": { rel_type: "m.replace", event_id: eventId },
+                },
+              },
+            ],
+            targetRoom,
+          ),
+        );
+        refresh();
+        return true;
+      } catch (reason) {
+        if (sessionRef.current === account) notify(messageOf(reason));
+        return false;
+      }
+    },
+    [api, notify, refresh],
+  );
+
+  const withdrawMessage = useCallback(
+    async (eventId: string): Promise<boolean> => {
+      const account = sessionRef.current;
+      const targetRoom = roomRef.current;
+      if (!account || !targetRoom) return false;
+      try {
+        const receipt = await api<{ event_id: string; cancelledTasks: number }>(
+          `/api/rooms/${encodeURIComponent(targetRoom)}/messages/${encodeURIComponent(eventId)}`,
+          { method: "DELETE", timeout: 30000 },
+        );
+        if (sessionRef.current !== account || roomRef.current !== targetRoom)
+          return true;
+        setEvents((previous) =>
+          previous.map((event) =>
+            event.event_id === eventId
+              ? withdrawnEvent(event, { event_id: receipt.event_id })
+              : event,
+          ),
+        );
+        notify(
+          receipt.cancelledTasks
+            ? t("withdrawnTasks", { count: receipt.cancelledTasks })
+            : t("withdrawn"),
+        );
+        refresh();
+        return true;
+      } catch (reason) {
+        if (sessionRef.current === account) notify(messageOf(reason));
+        return false;
+      }
+    },
+    [api, notify, refresh, t],
+  );
+
   const markRead = useCallback(
     async (eventId: string) => {
       const id = roomRef.current;
@@ -1094,13 +852,9 @@ export default function App({
         return;
       }
       try {
-        const [listed, collaboration] = await Promise.all([
+        const [listed, facts] = await Promise.all([
           api<{ rooms: Room[] }>("/api/rooms"),
-          api<SpacesResult>("/api/spaces").catch((reason) => {
-            if (reason instanceof ApiError && reason.status === 404)
-              return null;
-            throw reason;
-          }),
+          api<SpacesResult>("/api/spaces"),
         ]);
         if (
           sessionRef.current !== account ||
@@ -1108,9 +862,6 @@ export default function App({
           serverRef.current !== sourceServer
         )
           return;
-        const facts = collaboration
-          ? validateSpaces(collaboration, account.user_id)
-          : legacySpaces(account.user_id, listed.rooms, bootstrapRef.current);
         const target = listed.rooms.find(
           (value) => value.roomId === targetRoomId,
         );
@@ -1223,11 +974,7 @@ export default function App({
     [mentionables, participants, room],
   );
   useEffect(() => {
-    if (
-      session && room?.kind === "direct" &&
-      ownedBots.some((bot) => bot.ownerId === session.user_id &&
-        room.participantIds.includes(bot.id))
-    )
+    if (session && room && isOwnedBotRoom(room, ownedBots, session.user_id))
       sessionStorage.setItem(
         storageKey(config, "owned-bot-room", session),
         JSON.stringify(room.roomId),
@@ -1271,17 +1018,21 @@ export default function App({
         }}
         onBots={() => {
           const account = sessionRef.current;
-          const saved = account && readScoped<string>(
-            config, "owned-bot-room", account,
-          );
+          const saved =
+            account && readScoped<string>(config, "owned-bot-room", account);
           const home = spacesRef.current?.spaces.find((space) => space.home);
-          const recent = roomsRef.current.find((candidate) =>
-            candidate.roomId === saved && candidate.kind === "direct" &&
-            ownedBots.some((bot) => bot.ownerId === account?.user_id &&
-              candidate.participantIds.includes(bot.id)),
+          const recent = roomsRef.current.find(
+            (candidate) =>
+              candidate.roomId === saved &&
+              isOwnedBotRoom(candidate, ownedBots, account?.user_id),
           );
-          if (recent && home?.rooms.some((item) =>
-            item.roomId === recent.roomId && item.status === "joined"))
+          if (
+            recent &&
+            home?.rooms.some(
+              (item) =>
+                item.roomId === recent.roomId && item.status === "joined",
+            )
+          )
             navigate(recent, home.serverName);
           else {
             viewRef.current = "bots";
@@ -1294,7 +1045,11 @@ export default function App({
         onLogin={openLogin}
         onCreateRoom={() => (session ? setRoomDialog("create") : openLogin())}
         onCreateBot={() => (session ? setCreateBotOpen(true) : openLogin())}
-        onManageBots={() => { setBotsSelection(null); if (session) setBotsOpen(true); else openLogin(); }}
+        onManageBots={() => {
+          setBotsSelection(null);
+          if (session) setBotsOpen(true);
+          else openLogin();
+        }}
         onInvite={() => (session ? setRoomDialog("invite") : openLogin())}
         onInbox={() => (session ? setInboxOpen(true) : openLogin())}
         onNotifications={() =>
@@ -1329,7 +1084,6 @@ export default function App({
           participants={participants}
           session={session}
           request={rawRequest}
-          allowLegacyMedia={allowLegacyMedia}
           mentionables={joinedMentionables}
           roles={roles}
           onReply={(event) => {
@@ -1353,6 +1107,11 @@ export default function App({
           }}
           onRead={(id) => void markRead(id)}
           onRole={homeSelected ? () => setRolesOpen(true) : undefined}
+          history={timelineHistory}
+          editingId={editingId}
+          onEditing={setEditingId}
+          onEdit={session ? editMessage : undefined}
+          onWithdraw={session ? withdrawMessage : undefined}
         />
         <Composer
           ref={composer}
@@ -1363,11 +1122,6 @@ export default function App({
             session && room
               ? keyFor("draft", session, serverName, room.roomId)
               : ""
-          }
-          legacyDraftKey={
-            session && roomId && homeSelected
-              ? `ds-group.draft.${session.user_id}.${roomId}`
-              : undefined
           }
           requestScope={
             session ? storageKey(config, "transport", session, serverName) : ""
@@ -1393,6 +1147,14 @@ export default function App({
           )}
           pending={pending}
           onSend={sendMessage}
+          onEditLast={() => {
+            const own = lastVisible(
+              visibleEvents(events),
+              (event) => event.sender === session?.user_id,
+            );
+            if (own) setEditingId(own.event_id);
+            return Boolean(own);
+          }}
           limits={bootstrap?.attachments}
           onError={notify}
         />
@@ -1430,10 +1192,11 @@ export default function App({
           session ? storageKey(config, "pending-bot", session) : ""
         }
         onCreated={(bot) => {
-          setOwnedBotsState((previous) => previous === null ? null : [
-            ...previous.filter((value) => value.id !== bot.id),
-            bot,
-          ]);
+          setOwnedBotsState((previous) =>
+            previous === null
+              ? null
+              : [...previous.filter((value) => value.id !== bot.id), bot],
+          );
           refresh();
         }}
         onClose={() => setCreateBotOpen(false)}
@@ -1465,8 +1228,12 @@ export default function App({
         botStatus={
           status?.nodes.find((node) => node.botId === member?.id)?.status
         }
-        owner={participants.find(person => person.id === member?.ownerId)}
-        onManageBot={(id) => { setMember(null); setBotsSelection(id); setBotsOpen(true); }}
+        owner={participants.find((person) => person.id === member?.ownerId)}
+        onManageBot={(id) => {
+          setMember(null);
+          setBotsSelection(id);
+          setBotsOpen(true);
+        }}
         onClose={() => setMember(null)}
         onDirect={(id) => {
           setMember(null);

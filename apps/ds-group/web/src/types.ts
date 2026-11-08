@@ -45,6 +45,8 @@ export interface Room {
   participantIds: string[];
   topic?: string;
   unreadCount?: number;
+  /** First message from someone else after the reader's marker, when Core has observed it. */
+  firstUnreadEventId?: string | null;
   mentionCount?: number;
   status?: string;
   joinResults?: { participantId: string; status: string }[];
@@ -102,16 +104,21 @@ export interface ChatEvent {
     msgtype?: string;
     "org.ds_group"?: MessageMetadata;
     "m.mentions"?: { user_ids?: string[]; room?: boolean };
-    "m.relates_to"?: { "m.in_reply_to"?: { event_id: string } };
+    "m.relates_to"?: {
+      "m.in_reply_to"?: { event_id: string };
+      rel_type?: string;
+      event_id?: string;
+    };
+    "m.new_content"?: { body: string; "org.ds_group"?: MessageMetadata };
   };
+  unsigned?: { redacted_because?: unknown };
+  /** Client view: when the sender last edited this message. */
+  edited?: number;
+  /** Client view: the sender withdrew this message. */
+  withdrawn?: boolean;
 }
 export type TaskStatus =
-  | "queued"
-  | "running"
-  | "completed"
-  | "failed"
-  | "cancelled"
-  | "unknown";
+  "queued" | "running" | "completed" | "failed" | "cancelled" | "unknown";
 export interface WorkTask {
   requestId: string;
   taskId?: string;

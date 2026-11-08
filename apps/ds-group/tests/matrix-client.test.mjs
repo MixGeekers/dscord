@@ -110,6 +110,26 @@ test('timeline returns events in chronological order and sync keeps its cursor',
   assert.equal((await client.sync({ since: 'cursor/one', timeout: 1500 })).next_batch, 'cursor-two');
 });
 
+test('timeline pages walk backwards with the Matrix cursor and stop at the start of the room', async t => {
+  const pages = new Map([
+    ['', { chunk: [{ event_id: '$4' }, { event_id: '$3' }], end: 'page/2' }],
+    ['page/2', { chunk: [{ event_id: '$2' }, { event_id: '$1' }], end: 'page/3' }],
+    ['page/3', { chunk: [], end: 'page/4' }],
+  ]);
+  const baseUrl = await mockServer(t, (request, response) => {
+    const url = new URL(request.url, 'http://matrix.test');
+    assert.equal(url.searchParams.get('dir'), 'b');
+    assert.equal(url.searchParams.get('limit'), '2');
+    response.setHeader('Content-Type', 'application/json');
+    response.end(JSON.stringify(pages.get(url.searchParams.get('from') ?? '')));
+  });
+  const client = new MatrixClient({ baseUrl });
+  assert.deepEqual(await client.timelinePage('!room:local', { limit: 2 }), { events: [{ event_id: '$3' }, { event_id: '$4' }], end: 'page/2' });
+  assert.deepEqual(await client.timelinePage('!room:local', { limit: 2, from: 'page/2' }), { events: [{ event_id: '$1' }, { event_id: '$2' }], end: 'page/3' });
+  assert.deepEqual(await client.timelinePage('!room:local', { limit: 2, from: 'page/3' }), { events: [], end: null });
+  await assert.rejects(client.timelinePage('!room:local', { from: '' }), /non-empty string/);
+});
+
 test('login uses an explicit user identity and returns the native Matrix receipt', async t => {
   const baseUrl = await mockServer(t, (request, response, body) => {
     assert.equal(request.url, '/_matrix/client/v3/login');

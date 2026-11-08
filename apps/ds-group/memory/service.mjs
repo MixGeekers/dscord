@@ -269,12 +269,7 @@ export class MemoryService {
     const saidBy = observers.length ? (observers.find(item => item.authorId === requestedAuthor) || observers[0]).authorId
       : requestedAuthor || source?.authorId;
     const scope = this.scope(context, args.scope);
-    let replaces = args.replaces || args.replaceId;
-    if (!replaces && args.replace) {
-      const matches = this.store.list({ botId, scopes: [scope], history: true }).filter(row => row.status === 'active'
-        && (row.id === args.replace || row.text.includes(args.replace)));
-      if (matches.length !== 1) throw new Error('MEMORY_REPLACE_AMBIGUOUS'); replaces = matches[0].id;
-    }
+    const replaces = args.replaces || args.replaceId;
     const previous = replaces ? this.store.get(replaces) : null;
     const subjectId = canonicalIdentity(args.subjectId || previous?.subjectId || source?.authorId || context.authorId);
     this.assertUsable(botId, { sourceRefs: refs, basisRefs: args.basisRefs || [] }, context);
@@ -426,8 +421,7 @@ export class MemoryService {
   }
   forget(botId, args, context = this.current(botId)) {
     const scopes = args.scope === 'all' ? undefined : [this.scope(context, args.scope)];
-    const matches = this.store.list({ botId, scopes, history: true }).filter(row => row.status === 'active'
-      && (row.id === args.id || args.entry && row.text.includes(args.entry)));
+    const matches = this.store.list({ botId, scopes, history: true }).filter(row => row.status === 'active' && row.id === args.id);
     if (matches.length !== 1) throw new Error('MEMORY_FORGET_AMBIGUOUS');
     return this.describe(this.store.forget(matches[0].id, args.expectedRevision ?? matches[0].revision));
   }

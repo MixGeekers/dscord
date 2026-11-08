@@ -134,11 +134,12 @@ test('unreads deduplicate replay, preserve read markers and keep here under the 
   const two = event('$two', { hereUsers: [bob] }, 2000);
   const three = event('$three', { roleUsers: [bob] }, 3000);
   feature.recordEvents(bob, [one, two, three, one]);
-  assert.deepEqual(feature.unreadFor(bob, roomId), { unreadCount: 3, mentionCount: 3, lastEventId: '$three' });
+  assert.deepEqual(feature.unreadFor(bob, roomId), { unreadCount: 3, mentionCount: 3, lastEventId: '$three', firstUnreadEventId: '$one' });
   assert.deepEqual(feature.inbox(bob, [roomId]).events.map(item => item.event_id), ['$three', '$one']);
   assert.deepEqual(feature.inbox(bob, [roomId], { includeRoles: false }).events.map(item => item.event_id), ['$one']);
   feature.markRead(bob, roomId, '$two');
   assert.equal(feature.unreadFor(bob, roomId).unreadCount, 1);
+  assert.equal(feature.unreadFor(bob, roomId).firstUnreadEventId, '$three');
   assert.equal(feature.inbox(bob, [roomId], { filter: 'unread' }).events[0].event_id, '$three');
   feature.markRead(bob, roomId, '$one');
   assert.equal(feature.unreadFor(bob, roomId).unreadCount, 1);
@@ -148,5 +149,20 @@ test('unreads deduplicate replay, preserve read markers and keep here under the 
   feature.close();
   const restored = open();
   assert.equal(restored.unreadFor(bob, roomId).unreadCount, 1);
+  restored.markRead(bob, roomId, '$three');
+  assert.equal(restored.unreadFor(bob, roomId).firstUnreadEventId, null);
   assert.deepEqual(mentionKindsFor(one, bob), ['user']);
+});
+
+test('edits are not new unreads and withdrawn messages leave unreads and the inbox', async t => {
+  const { feature } = await fixture(t);
+  const original = event('$original', { users: [bob] }, 1000);
+  const edit = { ...event('$edit', { users: [bob] }, 2000), content: { body: '* changed', 'm.relates_to': { rel_type: 'm.replace', event_id: '$original' } } };
+  feature.recordEvents(bob, [original, edit, event('$kept', { users: [bob] }, 3000)]);
+  assert.equal(feature.unreadFor(bob, roomId).unreadCount, 2);
+  feature.recordEvents(bob, [{ type: 'm.room.redaction', event_id: '$redaction', room_id: roomId, sender: alice, redacts: '$original', content: {} }]);
+  assert.deepEqual(feature.unreadFor(bob, roomId), { unreadCount: 1, mentionCount: 1, lastEventId: '$kept', firstUnreadEventId: '$kept' });
+  feature.recordEvents(bob, [{ ...event('$kept', {}, 3000), content: {}, unsigned: { redacted_because: { event_id: '$r2', type: 'm.room.redaction' } } }]);
+  assert.equal(feature.unreadFor(bob, roomId).unreadCount, 0);
+  assert.equal(feature.inbox(bob, [roomId]).events.length, 0);
 });

@@ -62,7 +62,7 @@ export function translateMessage(key, parameters = {}, language = locale) {
 
 export const t = translateMessage;
 
-export function translateDom(root = globalThis.document) {
+function translateDom(root = globalThis.document) {
   if (!root?.querySelectorAll) return;
   const attributes = [
     ['data-i18n', null], ['data-i18n-aria-label', 'aria-label'],

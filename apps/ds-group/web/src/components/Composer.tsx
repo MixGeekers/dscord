@@ -14,6 +14,7 @@ import { readStored } from "../api";
 import { newRequestId } from "../identifiers";
 import { useTranslation } from "../locale";
 import { chatMessages } from "../locales/chat";
+import { markdownPreview } from "../markdown";
 import { Icon } from "./Icons";
 import type {
   Attachment,
@@ -44,7 +45,6 @@ export interface ComposerProps {
   request?: RawRequest;
   requestScope?: string;
   contextKey?: string;
-  legacyDraftKey?: string;
   canSend?: boolean;
   room: Room | null;
   mentionables: Mentionables;
@@ -57,6 +57,8 @@ export interface ComposerProps {
   isWorking?: boolean;
   pending: OutgoingMessage | null;
   onSend(message: OutgoingMessage): Promise<boolean>;
+  /** ↑ in an empty composer edits the sender's latest message; returns whether one was found. */
+  onEditLast?(): boolean;
   limits?: { maxBytes: number; maxPerMessage: number };
   onError(message: string): void;
 }
@@ -305,14 +307,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       const editor = editorRef.current;
       if (!manager || !editor) return;
       saveDraft();
-      let draft = contextKey ? readStored<Draft>(contextKey) : null;
-      if (!draft && contextKey && props.legacyDraftKey) {
-        draft = readStored<Draft>(props.legacyDraftKey);
-        if (draft) {
-          sessionStorage.setItem(contextKey, JSON.stringify(draft));
-          sessionStorage.removeItem(props.legacyDraftKey);
-        }
-      }
+      const draft = contextKey ? readStored<Draft>(contextKey) : null;
       contextRef.current = contextKey;
       restoringRef.current = true;
       manager.setContext(contextKey);
@@ -494,7 +489,9 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             <div className="reply-copy">
               <span>{t("replying", { name: "" })}</span>
               <strong id="reply-preview-name">{props.reply?.senderName}</strong>
-              <span id="reply-preview-body">{props.reply?.body}</span>
+              <span id="reply-preview-body">
+                {markdownPreview(props.reply?.body ?? "")}
+              </span>
             </div>
             <Button
               variant="ghost"
@@ -585,6 +582,19 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
                 suppressContentEditableWarning
                 spellCheck
                 aria-label={t("message", { room: props.room?.name ?? "" })}
+                onKeyDown={(event) => {
+                  if (
+                    event.key === "ArrowUp" &&
+                    !event.shiftKey &&
+                    !event.altKey &&
+                    !event.ctrlKey &&
+                    !event.metaKey &&
+                    !body.trim() &&
+                    !uploads.length &&
+                    props.onEditLast?.()
+                  )
+                    event.preventDefault();
+                }}
               />
               {props.isWorking && (
                 <span

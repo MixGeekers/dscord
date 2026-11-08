@@ -9,7 +9,7 @@ import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { canonical, sha } from './store.mjs';
 
-export const HARRIER = { model: 'shiyu-harrier-0.6b-q8_0', dimensions: 1024,
+const HARRIER = { model: 'shiyu-harrier-0.6b-q8_0', dimensions: 1024,
   sha256: 'b017b8fceae7c77864652c63d07af51480088b078771a89cafe1a467b069ea75' };
 const service = fileURLToPath(new URL('../service/ombre/service.py', import.meta.url));
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -19,7 +19,7 @@ async function stop(child) {
   await Promise.race([ended, delay(3000)]);
   if (child.exitCode === null && child.signalCode === null) { child.kill('SIGKILL'); await ended; }
 }
-export async function startHarrier({ serverBinary, modelArtifact, directory }) {
+async function startHarrier({ serverBinary, modelArtifact, directory }) {
   const hash = createHash('sha256'); for await (const chunk of createReadStream(modelArtifact)) hash.update(chunk);
   if (hash.digest('hex') !== HARRIER.sha256) throw new Error('HARRIER_ARTIFACT_MISMATCH');
   await mkdir(directory, { recursive: true });

@@ -91,3 +91,10 @@ export interface Overview {
     backup: string;
   };
 }
+export interface AuditEvent {
+  sequence: number;
+  at: number;
+  actor: string;
+  action: string;
+  detail: Record<string, unknown>;
+}

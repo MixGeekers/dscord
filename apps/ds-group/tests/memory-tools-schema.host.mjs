@@ -73,6 +73,7 @@ test('review input and the actual contacts tool omit a stranger and aliases know
     resolveAgent: async () => ({ whenIdle: async () => {} }), warn() {},
     ctx: { on() {}, systemPrompt: { section: () => () => {} },
       effect(setup) { const cleanup = setup(); if (typeof cleanup === 'function') cleanups.push(cleanup); },
+      // oxlint-disable-next-line require-yield -- the stub records the request and ends before streaming.
       llm: { resolveModelInfo: async () => ({}), async *stream(options) {
         // Capture the actual prepared request, then stop before any provider.
         captured.push(JSON.parse(options.messages[0].content[0].text));

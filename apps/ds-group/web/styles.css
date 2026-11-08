@@ -591,3 +591,33 @@ legend { color: var(--color-text-secondary); font-weight: var(--font-weight-semi
   .bot-memory-entity > small { display: none; }
   .bot-overview-grid { gap: var(--space-8) var(--space-6); }
 }
+.unread-separator { scroll-margin-top: var(--space-8); display: flex; gap: var(--space-4); align-items: center; margin: var(--space-6) 0 var(--space-3); color: var(--color-status-danger); font-size: var(--font-size-2xs); font-weight: var(--font-weight-semibold); }
+.unread-separator::before { content: ''; height: 1px; flex: 1; background: var(--color-status-danger); }
+.unread-separator span { padding: 0 var(--space-3); border-radius: var(--radius-xs); background: var(--color-status-danger); color: var(--color-text-on-accent); line-height: 1.6; }
+.unread-banner-dock { position: sticky; top: 0; z-index: var(--z-floating); height: 0; }
+.unread-banner { display: flex; align-items: stretch; margin: 0 calc(var(--content-gutter) * -1) var(--space-2); border-radius: 0 0 var(--radius-md) var(--radius-md); background: var(--color-accent); color: var(--color-text-on-accent); font-size: var(--font-size-compact); box-shadow: var(--shadow-float); }
+.unread-banner button { border: 0; background: transparent; color: inherit; font: inherit; }
+.unread-banner-jump { display: flex; flex: 1; justify-content: space-between; gap: var(--space-4); min-width: 0; padding: var(--space-3) var(--space-6); text-align: left; }
+.unread-banner-action { font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.unread-banner-read { padding: var(--space-3) var(--space-6); border-left: 1px solid color-mix(in srgb, var(--color-text-on-accent) 30%, transparent) !important; font-weight: var(--font-weight-semibold); white-space: nowrap; }
+.unread-banner button:hover { background: var(--color-accent-hover); }
+.unread-banner button:focus-visible { outline: var(--focus-width) solid var(--color-text-on-accent); outline-offset: -4px; }
+.history-status { padding: var(--space-8) 0 var(--space-2); text-align: center; color: var(--color-text-muted); font-size: var(--font-size-xs); }
+.timeline { overflow-anchor: none; }
+.message-edited { display: inline-block; margin-top: var(--space-1); color: var(--color-text-muted); font-size: var(--font-size-2xs); }
+.message-withdrawn { color: var(--color-text-muted); font-size: var(--font-size-body); font-style: italic; line-height: var(--line-height-body); }
+.message-editor { margin: var(--space-2) 0; }
+.message-editor-box { padding: 0 var(--space-4); }
+.message-editor-actions,.message-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); margin-top: var(--space-3); color: var(--color-text-muted); font-size: var(--font-size-xs); }
+.message-editor-actions > span { margin-right: auto; }
+.message-confirm { padding: var(--space-4) var(--space-6); border: 1px solid var(--color-border-danger); border-radius: var(--radius-md); background: var(--color-bg-danger); color: var(--color-text-danger-soft); }
+.message-confirm > span { margin-right: auto; }
+.message-editor-button { min-height: 28px; padding: 0 var(--space-6); border: 1px solid var(--color-border-normal); border-radius: var(--radius-control); background: var(--color-bg-input); color: var(--color-text-normal); font-size: var(--font-size-xs); font-weight: var(--font-weight-medium); }
+.message-editor-button:hover:not(:disabled) { background: var(--color-bg-selected); }
+.message-editor-button.primary { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-text-on-accent); }
+.message-editor-button.primary:hover:not(:disabled) { background: var(--color-accent-hover); }
+.message-editor-button.danger { border-color: var(--color-danger-action); background: var(--color-danger-action); color: var(--color-text-on-accent); }
+.message-editor-button:disabled { opacity: var(--opacity-disabled); }
+.message-editor-button:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: 1px; }
+.message-action.danger:hover { color: var(--color-text-danger); }
+.message-actions[hidden] { display: none; }
