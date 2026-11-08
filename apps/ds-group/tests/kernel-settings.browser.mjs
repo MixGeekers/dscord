@@ -206,7 +206,7 @@ try {
   } }).initialize();
   await controller.restoring;
   controller.state.user = nativeState.user;
-  controller.state.serverUrl = nativeState.serverUrl;
+  controller.state.servers = { [nativeState.serverUrl]: { url: nativeState.serverUrl, serverName: 'chat.example.test' } };
   await page.route('**/api/dscord', async route => {
     const body = route.request().postDataJSON(); nativeRequests.push({ ...body, ...(body.apiKey ? { apiKey: '[redacted synthetic test key]' } : {}) });
     try {
