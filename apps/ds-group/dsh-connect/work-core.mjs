@@ -224,6 +224,9 @@ export class WorkCore {
     mark(task, 'running', 'core', { sessionId, dir, startedAt: new Date().toISOString() });
     await this.save();
     const agent = await this.native.agent(sessionId);
+    // Nobody answers a worker's approval prompts, so one would leave the task running
+    // with no word to anyone. Every ask is rejected at once and the worker carries on.
+    this.ctx.get?.('approval')?.setPolicy(agent, 'never');
     await this.ctx.sessionTitle?.rename?.(agent.session, `${bot.name} · ${task.title}`).catch?.(() => {});
     await this.selectModel(sessionId, bot.workerModel || bot.model);
     for (const def of await compileTools(this.workerTools(task))) agent.ctx.tools.register(def);
@@ -252,6 +255,7 @@ export class WorkCore {
       '你看不到原来的对话，以下是前台交给你的全部说明。完成后必须调用 work_report 汇报：reply 会原样发给提出请求的人（见下方原始请求的发送者），按对方身份和说明要求的口径写；技术细节、日志、堆栈写进 summary，只有前台能看到。',
       '缺信息，或输入有几种说得通的解读且会改变结果（例如日期的日/月顺序），先用 work_ask 提问，不要自己挑一种。提问后答复到达前不能交付：先做不受影响的部分，然后结束这一轮，答复会作为新消息到来。',
       '交付文件放在当前目录的 outputs/ 下，或在 work_report 的 files 里列出路径；这些文件都会交给提出请求的人，不该给对方看的材料（原始日志、分析草稿）放在 outputs/ 以外，也不要列进 files。只写已核实的事实，不把输入里没有的推断写成结论。',
+      '没有人会回应权限申请，申请扩大权限会被直接拒绝。要改当前目录以外的文件时，把改好的版本放进 outputs/ 交付，不要原地修改。',
       '只在说明里给出的路径、输入文件和当前目录里找资料；给定的路径不存在就如实说找不到，不要在整台机器上搜索，也不要在汇报里列出无关的本机文件和目录。',
       '',
       '## 任务说明',

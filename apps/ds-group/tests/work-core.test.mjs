@@ -15,7 +15,9 @@ async function fixture(t, options = {}) {
     cancel() { this.cancelled++; },
     ctx: { tools: { register(def) { sessions.get(id).tools.set(def.name, def); }, restrict({ deny }) { sessions.get(id).restricted.push(...deny); },
       schemas: () => ['bash', 'write', 'recall', 'message_bot'].map(name => ({ name })) } } }).get(id);
+  const policies = [];
   const ctx = {
+    get: name => name === 'approval' ? { setPolicy: (agent, policy) => policies.push([agent.session.id, policy]) } : undefined,
     tools: { guard(fn) { guard = fn; return () => { guard = undefined; }; } },
     sessionController: {
       create: async ({ cwd }) => ({ sessionId: `worker-${++created}`, cwd }),
@@ -36,7 +38,7 @@ async function fixture(t, options = {}) {
   const results = [];
   core.onResult = async (task, message) => { results.push({ task: structuredClone(task), message, text: core.resultText(task, message) }); };
   t.after(() => core.dispose());
-  return { core, state, prompts, results, agentFor, guard: exec => guard(exec), directory, saves: () => saves };
+  return { core, state, prompts, results, policies, agentFor, guard: exec => guard(exec), directory, saves: () => saves };
 }
 
 const run = (f, sessionId, name, args = {}) => f.agentFor(sessionId).tools.get(name).execute(args, { agent: f.agentFor(sessionId) });
@@ -62,6 +64,8 @@ test('dispatch starts a worker with the brief and origin, and a verified report 
   const task = Object.values(f.state.tasks)[0];
   assert.match(reply, new RegExp(task.id));
   assert.equal(task.status, 'running'); assert.equal(task.sessionId, 'worker-1');
+  // No one answers a worker's approval prompts, so the worker never waits on one.
+  assert.deepEqual(f.policies, [['worker-1', 'never']]);
   assert.match(f.prompts[0].text, /把 a\.xlsx 转成 CSV/); assert.match(f.prompts[0].text, /帮我整理成 CSV/); assert.match(f.prompts[0].text, /\/in\/a\.xlsx/);
   assert.equal(f.guard({ agent: f.agentFor('worker-1'), name: 'message_bot' }) !== undefined, true);
   assert.equal(f.guard({ agent: f.agentFor('worker-1'), name: 'bash' }), undefined);

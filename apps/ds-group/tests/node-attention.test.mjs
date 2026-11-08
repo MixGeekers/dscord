@@ -240,6 +240,12 @@ test('reply relationships and native Matrix mentions are reliable but an explici
   assert.equal(f.store.item('$matrix').attention.reason, 'matrix_mention');
   assert.equal(f.store.item('$reply').attention.reason, 'reply_to_conversation');
   assert.equal(f.store.item('$other-target'), undefined);
+  // "@雨禾 …" quoting this Bot's line: Matrix notifies the quoted sender, but the message is for 雨禾.
+  const named = message('$named-other', '帮忙核对一下公告。', { replyTo: '$own', to: [peer.id] });
+  named.content['org.ds_group'].mentions = { users: [peer.id], replyUserId: self.id };
+  named.content['m.mentions'] = { user_ids: [peer.id, self.id] };
+  await f.node.ingestEvents([named]);
+  assert.equal(f.store.item('$named-other'), undefined);
 });
 
 test('consecutive Bot chatter is bounded without suppressing real directed delegation and result chains', async t => {

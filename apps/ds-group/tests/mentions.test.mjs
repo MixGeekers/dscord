@@ -97,6 +97,11 @@ test('reply mention uses the actual replied sender and can be disabled', async t
   assert.equal(quiet.mentions.replyUserId, undefined);
   assert.deepEqual(quiet.to, []);
   assert.equal(calls.length, 1);
+  // Naming someone else makes the replied Bot a quote, not a recipient; it is still notified.
+  const named = await feature.resolveMessage({ userId: alice, roomId, members, client, input: { body: `<@${bob}> 看看这个`, replyTo: '$prior' } });
+  assert.deepEqual(named.to, []);
+  assert.equal(named.mentions.replyUserId, bot);
+  assert.ok(named.mMentions.user_ids.includes(bot));
 });
 
 test('presence expires and here recipients remain the send-time snapshot', async t => {

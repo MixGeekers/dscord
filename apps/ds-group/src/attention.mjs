@@ -58,8 +58,10 @@ export function reliableAttentionRoute(event, { botId, store, participants = [] 
   const isHuman = participants.some(person => person.id === event.sender && person.kind === 'human');
   const isBot = participants.some(person => person.id === event.sender && person.kind === 'bot');
   const targeted = Array.isArray(meta.to) && meta.to.includes(botId);
-  const replyNotification = isBot && meta.kind === 'reply' && meta.mentions?.replyUserId === botId
-    && !meta.mentions.users?.includes(botId);
+  // Quoting this Bot's message notifies it, but does not address it when the reply came
+  // from a Bot or named someone else.
+  const replyNotification = meta.mentions?.replyUserId === botId && !meta.mentions.users?.includes(botId)
+    && (isBot && meta.kind === 'reply' || Boolean(meta.mentions.users?.length || meta.mentions.roles?.length));
   const mentioned = !replyNotification && event.content?.['m.mentions']?.user_ids?.includes(botId);
   // An explicit recipient for another member wins over an incidental reply quote.
   if (!targeted && !mentioned && (meta.to?.length || event.content?.['m.mentions']?.user_ids?.length)) return undefined;
