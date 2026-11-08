@@ -306,6 +306,17 @@ export class ConnectController {
     return this.status({ refresh: false });
   }
 
+  /** Search the central server's index for chat servers to add. */
+  async searchServers({ query }) {
+    if (!this.state.centralUrl) throw new Error('请先登录');
+    const q = typeof query === 'string' ? query.trim().slice(0, 200) : '';
+    const { servers } = await this.remote(this.state.centralUrl, `/api/servers?${new URLSearchParams({ q })}`);
+    if (!Array.isArray(servers)) throw new Error('中央服务器没有返回服务器列表');
+    const added = new Set(this.servers().map(server => new URL(server.url).origin));
+    return { servers: servers.map(server => ({ origin: server.origin, name: server.name, description: server.description, tags: server.tags,
+      members: server.members, added: added.has(server.origin) })) };
+  }
+
   /** Remove a chat server: its Bot connections stop and the owner's session there ends. */
   async removeServer({ serverUrl }) {
     const server = this.state.servers[serverUrl];
@@ -568,6 +579,7 @@ export class ConnectController {
         botId: body.nativeBotId, kind: body.kind, ...(body.id ? { id: body.id } : {}),
         ...(body.roomId ? { roomId: body.roomId } : {}), ...(body.query ? { query: body.query } : {}) });
     }
+    if (body.action === 'search-servers') return this.searchServers(body);
     return this.serial(async () => {
       if (this.closed) throw new Error('连接插件正在关闭');
       switch (body.action) {

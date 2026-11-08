@@ -58,6 +58,9 @@ async function fixture(t, options = {}) {
       if (pathname === '/api/device/token') return Response.json({ token: `synthetic-bot-central-${body.deviceCode}` });
       if (pathname === '/api/identity-tokens') return Response.json({ token: `identity:${init.headers.Authorization.slice(7)}` });
       if (pathname === '/api/logout') return Response.json({ loggedOut: true });
+      if (pathname === '/api/servers') return Response.json({ servers: [
+        { origin: serverUrl, name: 'Chat', description: '', tags: [], members: { people: 3, bots: 1 }, owner: 'carol@id.example' },
+        { origin: 'https://two.example', name: 'Two', description: 'Robots', tags: ['robots'], members: { people: 9, bots: 0 }, owner: 'carol@id.example' }] });
     }
     const serverName = serverNames[origin];
     if (pathname === '/.well-known/dscord/client') return Response.json({ home: { serverName },
@@ -398,6 +401,11 @@ test('the owner signs in once and a Bot joins several chat servers, one node per
   // The central server is signed in to once; each server gets the owner's own session.
   assert.equal(calls.filter(call => call.pathname === '/api/login').length, 1);
   await assert.rejects(controller.handle({ action: 'add-server', serverUrl: 'https://elsewhere.example' }), /另一个中央服务器/);
+  // The central index lists servers to add; ones already added are marked.
+  const found = await controller.handle({ action: 'search-servers', query: ' robots ' });
+  assert.deepEqual(found.servers.map(server => [server.origin, server.added]), [[serverUrl, true], ['https://two.example', true]]);
+  const search = calls.find(call => call.pathname === '/api/servers');
+  assert.equal(search.init.headers.Authorization, undefined, 'the index is searched without a credential');
   const removed = await controller.handle({ action: 'remove-server', serverUrl: 'https://two.example' });
   assert.deepEqual(removed.servers.map(server => server.serverName), ['chat.example']);
   assert.deepEqual(effects.at(-1), ['stop', '@alice-helper:two.example']);

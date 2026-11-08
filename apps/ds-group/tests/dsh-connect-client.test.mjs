@@ -86,7 +86,7 @@ function harness(oracle = () => loggedOut, language = 'zh') {
   });
   const main = entries.find(entry => entry.options.name === 'main');
   return {
-    descriptor, plugin, requests, entries, intervals, timeouts, main, locale, dictionaries,
+    descriptor, plugin, requests, entries, intervals, timeouts, main, locale, dictionaries, react,
     connection: main.options.inject().connection,
     dispose: () => disposers.forEach(dispose => dispose()),
   };
@@ -327,4 +327,30 @@ test('the page lists each chat server with its own Bots and adds or removes serv
   find(tree, element => element.props['aria-label'] === '移除 two.example.test').props.onClick();
   assert.deepEqual(sent, [['add', 'https://three.example.test'], ['remove', two.url]]);
   assert.equal(input.value, '');
+});
+
+test('the add-server area searches the central index and adds a listed server', async t => {
+  const listed = [{ origin: 'https://robots.example.test', name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'],
+    members: { people: 12, bots: 2 }, added: false }, { origin: loggedIn.servers[0].url, name: 'Home', description: '', tags: [],
+    members: { people: 3, bots: 1 }, added: true }];
+  const fixture = harness(payload => payload.action === 'search-servers' ? { servers: listed } : loggedIn);
+  t.after(fixture.dispose);
+  await fixture.connection.refresh();
+  let tree = render(fixture.main.component(fixture.main.options.inject()));
+  const form = find(tree, element => element.type === 'form' && element.props['aria-label'] === '搜索服务器');
+  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: () => ({ value: 'robot' }) } } });
+  await new Promise(resolve => setImmediate(resolve));
+  const search = fixture.requests.find(request => request.payload.action === 'search-servers');
+  assert.deepEqual(search.payload, { action: 'search-servers', query: 'robot' });
+
+  // Render with the results the search returned.
+  fixture.react.useState = value => [value === null ? listed : value, () => {}];
+  tree = render(fixture.main.component(fixture.main.options.inject()));
+  const sent = [];
+  fixture.connection.addServer = url => sent.push(url);
+  const add = find(tree, element => element.props['aria-label'] === '添加 Robotics club');
+  assert.ok(find(tree, element => element.type === 'p' && element.children.includes('12 人 · 2 个 Bot · #robots')));
+  add.props.onClick();
+  assert.deepEqual(sent, ['https://robots.example.test']);
+  assert.equal(find(tree, element => element.props['aria-label'] === '添加 Home').props.disabled, true, 'an added server cannot be added again');
 });

@@ -47,7 +47,9 @@ window.__ModuleLoader__.load({
       openWeb: '打开网页', refresh: '刷新', readStatus: '正在读取连接状态…',
       loginHelp: '填写任意一台接入你中央账号的聊天服务器，用中央账号登录；之后可以再添加其他服务器。',
       servers: '聊天服务器', serversHelp: '一个中央账号可以加入多台聊天服务器，Bot 在每台服务器上分别上线。',
-      addServer: '添加服务器', addingServer: '正在添加…', removeServer: '移除', removeServerLabel: '移除 {server}',
+      addServer: '添加服务器', addingServer: '正在添加…', searchServers: '搜索服务器', searchServersHelp: '在中央服务器的索引里按名称、主题或标签找服务器。',
+      searchQuery: '搜索', searchingServers: '正在搜索…', noServerResults: '没有符合的服务器', serverAdded: '已添加', addThisServer: '添加',
+      serverMembers: '{people} 人 · {bots} 个 Bot', addServerLabel: '添加 {server}', removeServer: '移除', removeServerLabel: '移除 {server}',
       chooseServer: '选择服务器', noServerBots: '这台服务器上还没有你的 Bot。',
       runtimeUnavailable: 'Bot 运行环境暂不可用', account: '当前账号',
       logout: '退出登录', loggingOut: '正在退出…', myBots: '我的 Bot',
@@ -103,7 +105,9 @@ window.__ModuleLoader__.load({
       openWeb: 'Open website', refresh: 'Refresh', readStatus: 'Loading connection status…',
       loginHelp: 'Enter any chat server that trusts your central account and sign in with that account. You can add more servers afterwards.',
       servers: 'Chat servers', serversHelp: 'One central account can join several chat servers. Each Bot goes online on each server separately.',
-      addServer: 'Add server', addingServer: 'Adding…', removeServer: 'Remove', removeServerLabel: 'Remove {server}',
+      addServer: 'Add server', addingServer: 'Adding…', searchServers: 'Search servers', searchServersHelp: 'Find servers in the central index by name, topic or tag.',
+      searchQuery: 'Search', searchingServers: 'Searching…', noServerResults: 'No listed server matches', serverAdded: 'Added', addThisServer: 'Add',
+      serverMembers: '{people} people · {bots} Bots', addServerLabel: 'Add {server}', removeServer: 'Remove', removeServerLabel: 'Remove {server}',
       chooseServer: 'Choose a server', noServerBots: 'You have no Bots on this server yet.',
       runtimeUnavailable: 'The Bot runtime is currently unavailable', account: 'Current account',
       logout: 'Sign out', loggingOut: 'Signing out…', myBots: 'My Bots',
@@ -384,6 +388,7 @@ body[data-ds-dark-theme] .dscord-connect {
         refresh,
         login: (serverUrl, user, password) => mutate('login', { serverUrl, user, password }),
         addServer: serverUrl => mutate('add-server', { serverUrl }),
+        searchServers: query => request('search-servers', { query }, new AbortController(), false),
         removeServer: serverUrl => mutate('remove-server', { serverUrl }),
         logout: () => mutate('logout'),
         saveModel: (botId, selection) => mutate('save-model', { botId, selection }),
@@ -745,6 +750,36 @@ body[data-ds-dark-theme] .dscord-connect {
         !needsBinding && state.value?.models?.available && h(ModelForm, { key: JSON.stringify(bot.modelSelection), bot, connection, state, t }));
     }
 
+    function ServerSearch({ connection, state, t }) {
+      const [results, setResults] = React.useState(null);
+      const [searching, setSearching] = React.useState(false);
+      const [error, setError] = React.useState('');
+      const added = new Set((state.value.servers || []).map(server => { try { return new URL(server.url).origin; } catch { return server.url; } }));
+      return h('div', { className: 'dc-server-search' },
+        h('form', { className: 'dc-model-form', role: 'search', 'aria-label': t('searchServers'), onSubmit(event) {
+          event.preventDefault();
+          const query = event.currentTarget.elements.namedItem('query').value;
+          setSearching(true);
+          setError('');
+          connection.searchServers(query).then(value => setResults(value.servers), reason => { setResults(null); setError(reason.message); })
+            .finally(() => setSearching(false));
+        } },
+        h('label', { className: 'dc-field' }, t('searchServers'), h(Input, { name: 'query', type: 'search', maxLength: 200, autoComplete: 'off' })),
+        h(Button, { type: 'submit', variant: 'outline', disabled: searching }, t(searching ? 'searchingServers' : 'searchQuery'))),
+        h('p', { className: 'dc-muted' }, error || (results && !results.length ? t('noServerResults') : t('searchServersHelp'))),
+        results?.length > 0 && h('ul', { className: 'dc-bots dc-server-list', 'aria-label': t('searchServers') }, results.map(server => {
+          const isAdded = server.added || added.has(server.origin);
+          return h('li', { key: server.origin, className: 'dc-bot' },
+            h('div', { className: 'dc-bot-copy' }, h('strong', null, server.name),
+              h('p', { className: 'dc-server' }, server.origin),
+              h('p', { className: 'dc-muted' }, t('serverMembers', { people: server.members?.people ?? 0, bots: server.members?.bots ?? 0 })
+                + (server.tags?.length ? ` · ${server.tags.map(tag => `#${tag}`).join(' ')}` : '')),
+              server.description && h('p', { className: 'dc-muted' }, server.description)),
+            h(Button, { variant: 'outline', type: 'button', disabled: isAdded || Boolean(state.busy), 'aria-label': t('addServerLabel', { server: server.name }),
+              onClick: () => void connection.addServer(server.origin) }, t(isAdded ? 'serverAdded' : 'addThisServer')));
+        })));
+    }
+
     function ServersPanel({ connection, state, t }) {
       const servers = state.value.servers || [];
       return h('section', { className: 'dc-panel', 'aria-label': t('servers') },
@@ -758,6 +793,7 @@ body[data-ds-dark-theme] .dscord-connect {
               h(Button, { variant: 'outline', type: 'button', disabled: Boolean(state.busy), onClick: () => void connection.removeServer(server.url),
                 'aria-label': t('removeServerLabel', { server: server.serverName }) }, t('removeServer'))));
         })),
+        h(ServerSearch, { connection, state, t }),
         h('form', { className: 'dc-model-form', 'aria-label': t('addServer'), onSubmit(event) {
           event.preventDefault();
           const input = event.currentTarget.elements.namedItem('serverUrl');
