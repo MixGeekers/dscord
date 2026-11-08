@@ -57,13 +57,44 @@ async function attentionCall(operation, timeoutMs, parentSignal) {
   } finally { clearTimeout(timer); signal.removeEventListener('abort', interrupted); }
 }
 
+const STRUCTURED = /^\{\s*"(?:text|delegate|delivery|artifacts)"\s*:/;
+
+/** Escape quotes and raw line breaks inside JSON strings: a quote ends a string only before , : } ] or the end. */
+export function repairJsonStrings(source) {
+  let out = '';
+  let inString = false;
+  for (let index = 0; index < source.length; index++) {
+    const char = source[index];
+    if (!inString) { out += char; if (char === '"') inString = true; continue; }
+    if (char === '\\') { out += char + (source[index + 1] ?? ''); index++; continue; }
+    if (char === '\n') { out += '\\n'; continue; }
+    if (char === '\r') { out += '\\r'; continue; }
+    if (char === '"') {
+      let ahead = index + 1;
+      while (/\s/.test(source[ahead] ?? '')) ahead++;
+      const next = source[ahead];
+      if (!next || ',:}]'.includes(next)) { out += char; inString = false; } else out += '\\"';
+      continue;
+    }
+    out += char;
+  }
+  return out;
+}
+
 export function parseBotOutput(raw, botId, participants, { ignoreDelivery = false } = {}) {
   if (typeof raw !== 'string' || !raw.trim()) throw new Error('Bot returned an empty response');
   const text = raw.trim();
   const fenced = text.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  const source = fenced ? fenced[1] : text;
   let parsed;
-  try { parsed = JSON.parse(fenced ? fenced[1] : text); }
-  catch { return { text }; }
+  try { parsed = JSON.parse(source); }
+  catch {
+    // Models often leave quotes inside a string unescaped. A reply that is plainly the
+    // delivery protocol must not reach the room as raw JSON with its delegation dropped.
+    if (!STRUCTURED.test(source)) return { text };
+    try { parsed = JSON.parse(repairJsonStrings(source)); }
+    catch { throw new Error('Structured Bot response is not valid JSON'); }
+  }
   // Plain JSON data and scalar answers are chat content. Only explicit delivery
   // fields opt into the text/delegation protocol.
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)

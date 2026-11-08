@@ -75,6 +75,13 @@ test('synthetic response protocol accepts text/JSON and validates explicit deleg
   assert.throws(() => parseBotOutput('{"text":"x","delegate":{"to":"@finance:ds-group.local","body":"x"}}', finance.id, participants), /delegation/);
   assert.throws(() => parseBotOutput('{"text":"x","delegate":{"to":"@alice:ds-group.local","body":"x"}}', finance.id, participants), /delegation/);
   assert.throws(() => parseBotOutput('{"delegate":{"to":"@hr:ds-group.local","body":"x"}}', finance.id, participants), /non-empty text/);
+  // Script 02 G18: an unescaped quote inside the delegation body must not drop the
+  // delegation and post the raw JSON to the room.
+  assert.deepEqual(parseBotOutput('{"text":"收到，我去找人事","delegate":{"to":"@hr:ds-group.local","body":"不能拿"氛围词"顶上,\n要具体"}}', finance.id, participants),
+    { text: '收到，我去找人事', delegate: { to: hr.id, body: '不能拿"氛围词"顶上,\n要具体' } });
+  assert.throws(() => parseBotOutput('{"text":"收到","delegate":{"to":"@hr:ds-group.local","body":"a", "b"}}', finance.id, participants), /not valid JSON/);
+  // Ordinary text that merely starts with a brace is still chat content.
+  assert.deepEqual(parseBotOutput('{a, b} 是两个元素', finance.id, participants), { text: '{a, b} 是两个元素' });
 });
 
 test('synthetic delegation produces stable transactions and result routing returns once to the requesting Bot', () => {
