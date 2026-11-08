@@ -1,11 +1,13 @@
 import path from 'node:path';
 import { mkdir } from 'node:fs/promises';
+import { DatabaseSync } from 'node:sqlite';
 import { BotNode, createTaskClient, createRosterClient, acquireNodeLock } from '../src/bot-node.mjs';
 import { createDeliveryClient } from '../src/node-delivery.mjs';
 import { createNodeWorkClient } from '../src/node-work.mjs';
 import { NodeStore } from '../src/node-store.mjs';
 import { NodeFiles } from '../src/node-files.mjs';
 import { MatrixClient } from '../src/matrix-client.mjs';
+import { ContactBook } from '../src/contact-book.mjs';
 import { readOptionalJson } from '../scripts/server-init.mjs';
 import { savePrivateJson } from '../scripts/server-init.mjs';
 import { NativeBridge } from './native-bridge.mjs';
@@ -18,6 +20,28 @@ export class NativeConnections {
   constructor({ ctx, native, decisionSettings, updates, enableKernelControl = true, introduce = hello }) {
     Object.assign(this, { ctx, native, decisionSettings, updates, enableKernelControl, introduce });
     this.connections = new Map();
+    // Each native Bot's contact book, open while any of its server connections is.
+    this.books = new Map();
+  }
+
+  async openBook(nativeBotId, botId) {
+    let entry = this.books.get(nativeBotId);
+    if (!entry) {
+      const directory = path.join(this.directory, 'bots', nativeBotId);
+      await mkdir(directory, { recursive: true, mode: 0o700 });
+      const db = new DatabaseSync(path.join(directory, 'contacts.sqlite'));
+      entry = { db, book: new ContactBook({ db }), users: new Set() };
+      this.books.set(nativeBotId, entry);
+    }
+    entry.users.add(botId);
+    return entry.book;
+  }
+
+  closeBook(nativeBotId, botId) {
+    const entry = this.books.get(nativeBotId);
+    if (!entry?.users.delete(botId) || entry.users.size) return;
+    this.books.delete(nativeBotId);
+    entry.db.close();
   }
 
   async configure({ directory }) {
@@ -74,10 +98,13 @@ export class NativeConnections {
       Object.assign(entry, { protocol: session.protocol, capabilities: session.capabilities });
       const work = createNodeWorkClient(node.serverUrl, config.nodeSecret, node.id);
       const matrix = new MatrixClient({ baseUrl: setup.homeserverUrl, accessToken: participant.accessToken });
-      bridge = await new NativeBridge({ ctx: this.ctx, native: this.native, node }).initialize();
+      // One program core per native Bot, however many chat servers it is connected to.
+      bridge = await new NativeBridge({ ctx: this.ctx, native: this.native, node,
+        botDirectory: path.join(this.directory, 'bots', node.nativeBotId) }).initialize();
       store = new NodeStore(path.join(directory, 'node.sqlite'), node.id);
       const savedAttention = await readOptionalJson(path.join(node.directory, 'attention.json'));
-      const botNode = new BotNode({ participant, participants: setup.participants, roomId: setup.roomId, matrix, store, bridge, work,
+      const contactBook = await this.openBook(node.nativeBotId, node.id);
+      const botNode = new BotNode({ contactBook, participant, participants: setup.participants, roomId: setup.roomId, matrix, store, bridge, work,
         executionMode: 'native', localBots: localBot, attention: savedAttention || node.attention || { mode: 'mention' },
         decisionProvider: this.decisionSettings?.provider,
         observe: input => this.observe(entry, input),
@@ -105,7 +132,7 @@ export class NativeConnections {
         },
       });
       Object.assign(entry, { bridge, botNode });
-      bridge.core.contacts = botNode.contacts;
+      bridge.core.seat(node.id).contacts = botNode.contacts;
       await botNode.start();
       await bridge.serveFront();
       await bridge.onWorkerResult((task, message, text) => botNode.acceptWorkerResult(task, message, text));
@@ -123,7 +150,7 @@ export class NativeConnections {
       this.connections.set(node.id, entry);
     } catch (error) {
       // Each cleanup step runs, and none of them replaces the original failure.
-      for (const cleanup of [() => entry.control?.stop(), () => entry.botNode?.stop(), () => bridge?.detach(), () => store?.close(), release]) {
+      for (const cleanup of [() => entry.control?.stop(), () => entry.botNode?.stop(), () => bridge?.detach(), () => store?.close(), () => this.closeBook(node.nativeBotId, node.id), release]) {
         await Promise.resolve().then(cleanup).catch(() => {});
       }
       throw error;
@@ -142,6 +169,7 @@ export class NativeConnections {
     await entry.control?.stop();
     await entry.bridge.detach();
     await entry.botNode.stop();
+    this.closeBook(node.nativeBotId, node.id);
     await entry.release();
   }
 

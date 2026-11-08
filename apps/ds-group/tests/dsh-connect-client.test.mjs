@@ -5,11 +5,11 @@ import vm from 'node:vm';
 
 const source = await readFile(new URL('../dsh-connect/client.js', import.meta.url), 'utf8');
 const loggedOut = {
-  serverUrl: '', user: null, bots: [], runtime: { available: true, message: null },
+  servers: [], user: null, bots: [], runtime: { available: true, message: null },
 };
 const loggedIn = {
-  serverUrl: 'https://chat.example.test', user: { id: '@alice:test', name: 'Alice' },
-  bots: [{ id: 'finance', name: '财务', localpart: 'finance', status: 'offline', lastError: null }],
+  servers: [{ url: 'https://chat.example.test', serverName: 'chat.example.test' }], user: { id: 'alice@id.test', name: 'Alice', globalId: 'alice@id.test' },
+  bots: [{ id: '@finance:chat.example.test', name: '财务', localpart: 'finance', serverUrl: 'https://chat.example.test', serverName: 'chat.example.test', status: 'offline', lastError: null }],
   runtime: { available: true, message: null }, dataDirectory: '/synthetic/profile/dscord',
 };
 
@@ -223,7 +223,7 @@ test('an older status response cannot replace a completed login', async t => {
   await fixture.connection.login('https://chat.example.test', 'alice', 'synthetic-password');
   resolveStatus(loggedOut);
   await staleRead;
-  assert.equal(fixture.connection.getSnapshot().value.user.id, '@alice:test');
+  assert.equal(fixture.connection.getSnapshot().value.user.id, 'alice@id.test');
   assert.equal(fixture.connection.getSnapshot().error, null);
 });
 
@@ -274,7 +274,8 @@ test('the login form clears its password before dispatching the login request', 
 });
 
 test('page exposes only safe server links and disables unavailable bot execution', async t => {
-  const fixture = harness(() => ({ ...loggedIn, serverUrl: 'javascript:alert(1)', lastError: '登录已失效', runtime: { available: false, message: 'DS-Bot 未就绪' } }));
+  const fixture = harness(() => ({ ...loggedIn, servers: [{ url: 'javascript:alert(1)', serverName: 'chat.example.test' }],
+    bots: loggedIn.bots.map(bot => ({ ...bot, serverUrl: 'javascript:alert(1)' })), lastError: '登录已失效', runtime: { available: false, message: 'DS-Bot 未就绪' } }));
   t.after(fixture.dispose);
   await fixture.connection.refresh();
   const tree = render(fixture.main.component(fixture.main.options.inject()));
@@ -302,4 +303,28 @@ test('shared page subscriptions own one polling timer and plugin disposal stops 
   assert.equal(abortSignal.aborted, true);
   await fixture.connection.refresh();
   assert.equal(fixture.requests.length, 1);
+});
+
+test('the page lists each chat server with its own Bots and adds or removes servers', async t => {
+  const two = { url: 'https://two.example.test', serverName: 'two.example.test' };
+  const fixture = harness(() => ({ ...loggedIn, servers: [...loggedIn.servers, two],
+    bots: [...loggedIn.bots, { ...loggedIn.bots[0], id: '@finance:two.example.test', serverUrl: two.url, serverName: two.serverName, status: 'online' }] }));
+  t.after(fixture.dispose);
+  await fixture.connection.refresh();
+  const tree = render(fixture.main.component(fixture.main.options.inject()));
+  for (const server of ['chat.example.test', 'two.example.test']) {
+    const section = find(tree, element => element.type === 'section' && element.props['aria-label'] === server);
+    assert.ok(section, server);
+    assert.equal(find(section, element => element.props['data-status'])?.props['data-status'], server === 'chat.example.test' ? 'offline' : 'online');
+  }
+  assert.ok(find(tree, element => element.props['aria-label'] === '移除 two.example.test'));
+  const sent = [];
+  fixture.connection.addServer = url => sent.push(['add', url]);
+  fixture.connection.removeServer = url => sent.push(['remove', url]);
+  const form = find(tree, element => element.type === 'form' && element.props['aria-label'] === '添加服务器');
+  const input = { value: ' https://three.example.test ' };
+  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: () => input } } });
+  find(tree, element => element.props['aria-label'] === '移除 two.example.test').props.onClick();
+  assert.deepEqual(sent, [['add', 'https://three.example.test'], ['remove', two.url]]);
+  assert.equal(input.value, '');
 });

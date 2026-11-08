@@ -45,6 +45,10 @@ window.__ModuleLoader__.load({
       reconnect: '重连', reconnecting: '正在重连…', reconnectBot: '重新连接 {name}',
       statusOffline: '已断开', statusConnecting: '正在连接', statusOnline: '已上线', statusError: '连接失败',
       openWeb: '打开网页', refresh: '刷新', readStatus: '正在读取连接状态…',
+      loginHelp: '填写任意一台接入你中央账号的聊天服务器，用中央账号登录；之后可以再添加其他服务器。',
+      servers: '聊天服务器', serversHelp: '一个中央账号可以加入多台聊天服务器，Bot 在每台服务器上分别上线。',
+      addServer: '添加服务器', addingServer: '正在添加…', removeServer: '移除', removeServerLabel: '移除 {server}',
+      chooseServer: '选择服务器', noServerBots: '这台服务器上还没有你的 Bot。',
       runtimeUnavailable: 'Bot 运行环境暂不可用', account: '当前账号',
       logout: '退出登录', loggingOut: '正在退出…', myBots: '我的 Bot',
       emptyBots: '尚未连接 Bot，请从此节点的 Bot 中选择。', configDirectory: '本机配置目录',
@@ -97,6 +101,10 @@ window.__ModuleLoader__.load({
       reconnect: 'Reconnect', reconnecting: 'Reconnecting…', reconnectBot: 'Reconnect {name}',
       statusOffline: 'Disconnected', statusConnecting: 'Connecting', statusOnline: 'Online', statusError: 'Connection failed',
       openWeb: 'Open website', refresh: 'Refresh', readStatus: 'Loading connection status…',
+      loginHelp: 'Enter any chat server that trusts your central account and sign in with that account. You can add more servers afterwards.',
+      servers: 'Chat servers', serversHelp: 'One central account can join several chat servers. Each Bot goes online on each server separately.',
+      addServer: 'Add server', addingServer: 'Adding…', removeServer: 'Remove', removeServerLabel: 'Remove {server}',
+      chooseServer: 'Choose a server', noServerBots: 'You have no Bots on this server yet.',
       runtimeUnavailable: 'The Bot runtime is currently unavailable', account: 'Current account',
       logout: 'Sign out', loggingOut: 'Signing out…', myBots: 'My Bots',
       emptyBots: 'No connected Bots. Choose from the Bots on this node.', configDirectory: 'Local configuration directory',
@@ -169,6 +177,9 @@ body[data-ds-dark-theme] .dscord-connect {
 .dscord-connect .dc-account-name { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
 .dscord-connect .dc-server, .dscord-connect .dc-directory { overflow-wrap: anywhere; color: var(--dc-muted); }
 .dscord-connect .dc-bots { list-style: none; margin: 0; padding: 0; }
+.dscord-connect .dc-server-bots + .dc-server-bots { margin-top: 16px; }
+.dscord-connect .dc-server-list { margin: 12px 0; }
+.dscord-connect .dc-server-bots h3 { font-size: 13px; margin: 0 0 8px; color: var(--dc-muted); }
 .dscord-connect .dc-bot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 0; border-top: 1px solid var(--dc-line); }
 .dscord-connect .dc-bot:first-child { border-top: 0; padding-top: 0; }
 .dscord-connect .dc-bot:last-child { padding-bottom: 0; }
@@ -372,11 +383,13 @@ body[data-ds-dark-theme] .dscord-connect {
         subscribe,
         refresh,
         login: (serverUrl, user, password) => mutate('login', { serverUrl, user, password }),
+        addServer: serverUrl => mutate('add-server', { serverUrl }),
+        removeServer: serverUrl => mutate('remove-server', { serverUrl }),
         logout: () => mutate('logout'),
         saveModel: (botId, selection) => mutate('save-model', { botId, selection }),
         createNative: payload => mutate('create-native', payload),
         kernel: (action, payload = {}, controller = new AbortController()) => request(action, payload, controller, false),
-        attach: (nativeBotId, botId) => mutate('attach', { nativeBotId, ...(botId ? { botId } : {}) }),
+        attach: (nativeBotId, botId, serverUrl) => mutate('attach', { nativeBotId, ...(botId ? { botId } : {}), ...(serverUrl ? { serverUrl } : {}) }),
         connect: botId => mutate('connect', { botId }),
         disconnect: botId => mutate('disconnect', { botId }),
         reconnect: botId => mutate('reconnect', { botId }),
@@ -415,8 +428,9 @@ body[data-ds-dark-theme] .dscord-connect {
         },
       },
       h('h2', null, t('loginTitle')),
+      h('p', { className: 'dc-muted' }, t('loginHelp')),
       h('label', { className: 'dc-field' }, t('serverUrl'), h(Input, {
-        name: 'serverUrl', type: 'url', required: true, defaultValue: state.value?.serverUrl || '',
+        name: 'serverUrl', type: 'url', required: true, defaultValue: state.value?.servers?.[0]?.url || '',
         placeholder: 'https://chat.example.com', autoComplete: 'url', disabled: Boolean(state.busy),
       })),
       h('label', { className: 'dc-field' }, t('username'), h(Input, {
@@ -620,6 +634,9 @@ body[data-ds-dark-theme] .dscord-connect {
         return () => controller.abort();
       }, [connection]);
       const value = state.value;
+      const servers = value.servers || [];
+      const [serverUrl, setServerUrl] = React.useState('');
+      const target = servers.length === 1 ? servers[0].url : serverUrl;
       const detail = value.nativeBots?.find(bot => bot.id === selected);
       return h('section', { className: 'dc-panel', 'aria-label': t('nativeBots') },
         h('h2', null, t('nativeBots')), h('p', { className: 'dc-muted' }, t('nativeHelp')),
@@ -630,9 +647,13 @@ body[data-ds-dark-theme] .dscord-connect {
             return h('li', { key: bot.id, className: 'dc-bot' },
               h('div', { className: 'dc-bot-copy' }, h('strong', null, bot.name), h('p', { className: 'dc-bot-id' }, bot.id), bot.role && h('p', { className: 'dc-muted' }, bot.role)),
               h('div', { className: 'dc-toolbar' }, h(Button, { variant: 'outline', disabled: Boolean(state.busy), onClick: () => setSelected(bot.id) }, t('settings')),
-                h(Button, { variant: 'outline', disabled: Boolean(state.busy) || bound || !bot.model || !value.user,
-                  onClick: () => void connection.attach(bot.id) }, t(bound ? 'nativeBound' : 'attach'))));
+                h(Button, { variant: 'outline', disabled: Boolean(state.busy) || bound || !bot.model || !value.user || !target,
+                  onClick: () => void connection.attach(bot.id, undefined, target) }, t(bound ? 'nativeBound' : 'attach'))));
           })),
+          servers.length > 1 && h('label', { className: 'dc-field' }, t('attach'), h('select', { value: serverUrl,
+            onChange: event => setServerUrl(event.target.value), disabled: Boolean(state.busy) },
+            h('option', { value: '' }, t('chooseServer')),
+            ...servers.map(server => h('option', { key: server.url, value: server.url }, server.serverName)))),
           !value.nativeBots?.length && h('p', { className: 'dc-muted dc-model-info' }, t('nativeEmpty')),
           !value.user && h('p', { className: 'dc-muted dc-model-info' }, t('signInToAttach')),
           h(CreateLocalBot, { connection, state, t })),
@@ -724,10 +745,33 @@ body[data-ds-dark-theme] .dscord-connect {
         !needsBinding && state.value?.models?.available && h(ModelForm, { key: JSON.stringify(bot.modelSelection), bot, connection, state, t }));
     }
 
+    function ServersPanel({ connection, state, t }) {
+      const servers = state.value.servers || [];
+      return h('section', { className: 'dc-panel', 'aria-label': t('servers') },
+        h('h2', null, t('servers')), h('p', { className: 'dc-muted' }, t('serversHelp')),
+        h('ul', { className: 'dc-bots dc-server-list' }, servers.map(server => {
+          const href = webUrl(server.url);
+          return h('li', { key: server.url, className: 'dc-bot' },
+            h('div', { className: 'dc-bot-copy' }, h('strong', null, server.serverName), h('p', { className: 'dc-server' }, server.url)),
+            h('div', { className: 'dc-toolbar' },
+              href && h('a', { className: 'dc-link', href, target: '_blank', rel: 'noopener noreferrer' }, t('openWeb')),
+              h(Button, { variant: 'outline', type: 'button', disabled: Boolean(state.busy), onClick: () => void connection.removeServer(server.url),
+                'aria-label': t('removeServerLabel', { server: server.serverName }) }, t('removeServer'))));
+        })),
+        h('form', { className: 'dc-model-form', 'aria-label': t('addServer'), onSubmit(event) {
+          event.preventDefault();
+          const input = event.currentTarget.elements.namedItem('serverUrl');
+          const url = input.value.trim();
+          if (url) { input.value = ''; void connection.addServer(url); }
+        } },
+        h('label', { className: 'dc-field' }, t('serverUrl'), h(Input, { name: 'serverUrl', type: 'url', required: true,
+          placeholder: 'https://chat.example.com', autoComplete: 'url', disabled: Boolean(state.busy) })),
+        h(Button, { type: 'submit', variant: 'outline', disabled: Boolean(state.busy) }, t(state.busy?.action === 'add-server' ? 'addingServer' : 'addServer'))));
+    }
+
     function ConnectionPage({ connection, t }) {
       const state = React.useSyncExternalStore(connection.subscribe, connection.getSnapshot, connection.getSnapshot);
       const value = state.value;
-      const href = webUrl(value?.serverUrl);
       const runtimeError = value?.runtime?.available === false;
       const errorMessage = state.errorTranslation ? t(state.errorTranslation.key, state.errorTranslation.params) : state.error;
       return h('section', { className: 'dscord-connect', 'aria-label': t('pageLabel'), 'aria-busy': state.loading || Boolean(state.busy) },
@@ -736,26 +780,32 @@ body[data-ds-dark-theme] .dscord-connect {
           h('header', { className: 'dc-header' },
             h('h1', null, t('title')),
             h('div', { className: 'dc-toolbar' },
-              href && h('a', { className: 'dc-link', href, target: '_blank', rel: 'noopener noreferrer' }, t('openWeb')),
               h(Button, { variant: 'outline', type: 'button', disabled: state.loading || Boolean(state.busy), onClick: () => void connection.refresh() }, t('refresh')))),
           state.notice && h('p', { role: 'status', className: 'dc-notice' }, t(state.notice)),
           errorMessage && h('p', { role: 'alert', className: 'dc-notice dc-error' }, errorMessage),
           value?.lastError && value.lastError !== errorMessage && h('p', { role: 'alert', className: 'dc-notice dc-error' }, value.lastError),
           state.loading && h('p', { role: 'status', className: 'dc-muted' }, t('readStatus')),
           runtimeError && h('p', { role: 'status', className: 'dc-notice dc-error' }, value.runtime.message || t('runtimeUnavailable')),
-          !state.loading && !value?.user && h(LoginForm, { key: value?.serverUrl || 'login', connection, state, t }),
+          !state.loading && !value?.user && h(LoginForm, { key: value?.servers?.[0]?.url || 'login', connection, state, t }),
           value?.nativeMode && h(LocalKernelPanel, { key: `${value.hostId || 'local'}/${value.user?.id || 'local-owner'}`, connection, state, t }),
           value?.user && h(React.Fragment, null,
             h('section', { className: 'dc-panel dc-account', 'aria-label': t('account') },
               h('div', null,
                 h('p', { className: 'dc-account-name' }, value.user.name || value.user.id),
-                h('p', { className: 'dc-server' }, value.serverUrl)),
+                h('p', { className: 'dc-server' }, value.user.globalId || value.user.id)),
               h(Button, { variant: 'outline', type: 'button', disabled: Boolean(state.busy), onClick: () => void connection.logout() }, t(state.busy?.action === 'logout' ? 'loggingOut' : 'logout'))),
+            h(ServersPanel, { connection, state, t }),
             h('section', { className: 'dc-panel', 'aria-label': t('myBots') },
               h('h2', null, t('myBots')),
               value.bots.length === 0
                 ? h('p', { className: 'dc-muted' }, t('emptyBots'))
-                : h('ul', { className: 'dc-bots' }, value.bots.map(bot => h(BotRow, { key: bot.id, bot, connection, state, t }))))),
+                : (value.servers || []).map(server => {
+                  const bots = value.bots.filter(bot => bot.serverUrl === server.url);
+                  return h('section', { key: server.url, className: 'dc-server-bots', 'aria-label': server.serverName },
+                    h('h3', null, server.serverName),
+                    bots.length === 0 ? h('p', { className: 'dc-muted' }, t('noServerBots'))
+                      : h('ul', { className: 'dc-bots' }, bots.map(bot => h(BotRow, { key: bot.id, bot, connection, state, t }))));
+                }))),
           value?.kernelUpdates && h(KernelUpdatePanel, { connection, initial: value.kernelUpdates, t }),
           value?.dataDirectory && h('details', { className: 'dc-directory' },
             h('summary', null, t('configDirectory')),

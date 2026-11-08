@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
@@ -26,19 +26,22 @@ async function fixture(t, options = {}) {
     },
   };
   const native = { bot: async () => ({ id: 'native', name: 'Lin', sessionId: 'front', model: 'p/m' }), agent: async id => agentFor(id) };
-  const state = { tasks: {} }; let saves = 0;
   const { nativeBotId = 'native', origin = { roomId: '!room', eventId: '$ask', senderId: '@ann' }, ...rest } = options;
   const id = `@${nativeBotId}:dsh.test`;
-  const core = new WorkCore({ ctx, native, node: { id, nativeBotId, directory }, state, save: async () => { saves++; }, ...rest });
+  const core = await new WorkCore({ ctx, native, nativeBotId, directory, ...rest }).initialize();
+  // Every request in these tests comes in through the Bot's one server account.
+  let current = null;
+  Object.defineProperty(core, 'origin', { get: () => current, set: value => { current = value && { botId: id, ...value }; } });
   const db = new DatabaseSync(':memory:');
-  core.contacts = new ContactBook({ db, self: { id }, local: localBot });
+  const seat = core.seat(id);
+  seat.contacts = new ContactBook({ db }).on({ self: { id }, local: localBot });
   // The room message the front is answering; null for a Bot that is only asked by another Bot.
   core.origin = origin;
   t.after(() => db.close());
   const results = [];
-  core.onResult = async (task, message) => { results.push({ task: structuredClone(task), message, text: core.resultText(task, message) }); };
+  seat.onResult = async (task, message, text) => { results.push({ task: structuredClone(task), message, text }); };
   t.after(() => core.dispose());
-  return { core, state, prompts, results, policies, agentFor, guard: exec => guard(exec), directory, saves: () => saves };
+  return { core, state: core.state, prompts, results, policies, agentFor, guard: exec => guard(exec), directory, id };
 }
 
 const run = (f, sessionId, name, args = {}) => f.agentFor(sessionId).tools.get(name).execute(args, { agent: f.agentFor(sessionId) });
@@ -160,9 +163,13 @@ test('timeouts stop the worker and report failure; restarts turn open work into 
   await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'slow', brief: 's' });
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.equal(f.results[0].task.status, 'failed'); assert.equal(f.agentFor('worker-1').cancelled, 1);
-  const state = { tasks: { 'T-x': { id: 'T-x', title: 'old', status: 'running', createdAt: 'x', origin: { roomId: '!r' } } } };
-  const restarted = new WorkCore({ ctx: {}, native: {}, node: {}, state, save: async () => {} });
-  const seen = []; restarted.onResult = async task => { seen.push(task.status); };
+  const directory = path.join(f.directory, 'restarted');
+  await mkdir(directory);
+  await writeFile(path.join(directory, 'work.json'), JSON.stringify({ version: 1, nativeBotId: 'other', frontNotes: [],
+    tasks: { 'T-x': { id: 'T-x', title: 'old', status: 'running', createdAt: 'x', origin: { roomId: '!r', botId: '@other:dsh.test' } } } }));
+  const restarted = await new WorkCore({ ctx: {}, native: {}, nativeBotId: 'other', directory }).initialize();
+  t.after(() => restarted.dispose());
+  const seen = []; restarted.seat('@other:dsh.test').onResult = async task => { seen.push(task.status); };
   await restarted.flush();
   assert.deepEqual(seen, ['unknown']);
 });
@@ -335,10 +342,29 @@ test('a turn with no message to answer cannot dispatch, so work a restart left u
   assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '写简介', brief: '按 facts.md 写' }), /不能派工/);
   // A message_bot request whose work ended unknown is not taken up again by a resumed turn.
   f.core.state.tasks['T-old'] = { id: 'T-old', title: '写简介', status: 'unknown', origin: { roomId: '!r2', eventId: '$g18' } };
-  f.core.contacts.open({ id: 'x9', direction: 'in', peer: '@promo:b.test', via: 'message_bot', status: 'received', origin: { roomId: '!r2', eventId: '$g18' } });
+  f.core.seat(f.id).contacts.open({ id: 'x9', direction: 'in', peer: '@promo:b.test', via: 'message_bot', status: 'received', origin: { roomId: '!r2', eventId: '$g18' } });
   assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: '写简介（重做）', brief: '按 facts.md 写' }), /不能派工/);
   // A Matrix request is answered through the bridge's own origin, never picked up from the book.
-  f.core.contacts.open({ id: 'in:$g19', direction: 'in', peer: '@promo:b.test', via: 'matrix', status: 'received', origin: { roomId: '!r2', eventId: '$g19' } });
+  f.core.seat(f.id).contacts.open({ id: 'in:$g19', direction: 'in', peer: '@promo:b.test', via: 'matrix', status: 'received', origin: { roomId: '!r2', eventId: '$g19' } });
   assert.match(await run(f, 'front', 'dispatch_work', { audience: '唐', title: 'x', brief: 'y' }), /不能派工/);
   assert.equal(Object.keys(f.state.tasks).length, 1);
+});
+
+test('a Bot on two chat servers has one core, and each result goes back through the server its request came in on', async t => {
+  const f = await fixture(t);
+  assert.equal(await WorkCore.acquire({ nativeBotId: 'native' }), f.core);
+  const elsewhere = '@native:other.test'; const there = [];
+  f.core.seat(elsewhere).onResult = async (task, message, text) => { there.push(text); };
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.origin = { requestId: 'here', roomId: '!home', eventId: '$here', senderId: '@ann:dsh.test' };
+  await run(f, 'front', 'dispatch_work', { audience: 'Ann', title: '本服务器的事', brief: 'a' });
+  f.core.origin = { botId: elsewhere, requestId: 'there', roomId: '!other', eventId: '$there', senderId: '@bob:other.test' };
+  await run(f, 'front', 'dispatch_work', { audience: 'Bob', title: '另一台服务器的事', brief: 'b' });
+  await run(f, 'worker-2', 'work_report', { status: 'done', reply: '给 Bob', summary: 'ok' });
+  await run(f, 'worker-1', 'work_report', { status: 'done', reply: '给 Ann', summary: 'ok' });
+  assert.deepEqual(there, ['「另一台服务器的事」完成了。\n\n给 Bob']);
+  assert.deepEqual(f.results.map(result => result.task.origin.eventId), ['$here']);
+  // A server that disconnects leaves the core to the others; a result for it waits until it is back.
+  await f.core.release(elsewhere);
+  assert.equal(await WorkCore.acquire({ nativeBotId: 'native' }), f.core);
 });
