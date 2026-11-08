@@ -62,6 +62,8 @@ const INTERNALS = [
   ['日志原文', /^\[?\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}|\b(?:FATAL|ERROR|WARN)\b[\]:]/m],
 ];
 const internalsIn = text => INTERNALS.filter(([, pattern]) => pattern.test(text)).map(([name, pattern]) => `${name}「${text.match(pattern)[0].trim().slice(0, 60)}」`);
+// A plain-language reply that explains what it left out discloses it again.
+const OMISSION = /取舍|没有?写[入进]|未写[入进]|(?:删掉|删去|去掉|省略|筛掉|过滤掉|略去)了|不对外/;
 const TEXT_FILE = /\.(?:md|txt|log|csv|json|html?)$/i;
 const coreOf = matrixId => [...cores.values()].find(core => core.node.id === matrixId);
 /** A Bot in this DSH by its full identity ID, with the name message_bot calls it by. */
@@ -176,7 +178,7 @@ export class WorkCore {
         description: '汇报结果。做完时 status=done，做不了时 status=failed，中途需要同步进度时 status=progress。done 和 failed 时 reply 会原样发给提出请求的人，summary 只给前台看。done 时把交付文件的路径写进 files；没写时取工作目录下 outputs/ 里的文件，这些文件都会交给对方。',
         parameters: {
           status: { type: 'string', required: true, enum: ['done', 'failed', 'progress'] },
-          reply: { type: 'string', description: 'done/failed 必填。原样发给提出请求的人：按对方身份和任务说明要求的口径，用对方的语言说结果和结论。不写堆栈、日志原文、源码位置、内部路径和过程' },
+          reply: { type: 'string', description: 'done/failed 必填。原样发给提出请求的人：按对方身份和任务说明要求的口径，用对方的语言说结果和结论。不写堆栈、日志原文、源码位置、内部路径和过程；按要求删掉、省略或筛掉的内容不在 reply 里列出或解释，写进 summary' },
           summary: { type: 'string', required: true, description: '给前台的完整记录：结论、依据和技术细节。不发给提出请求的人；progress 时写当前进度' },
           files: { type: 'array', items: { type: 'string' }, description: '交付文件的路径（绝对路径或相对工作目录）' },
         },
@@ -276,6 +278,7 @@ export class WorkCore {
     return [
       `你是一个工作者，负责任务 ${task.id}：${task.title}。`,
       '你看不到原来的对话，以下是前台交给你的全部说明。完成后必须调用 work_report 汇报：reply 会原样发给提出请求的人（见下方原始请求的发送者），按对方身份和说明要求的口径写；技术细节、日志、堆栈写进 summary，只有前台能看到。',
+      '交付内容有边界时（例如只写玩家能感知的变化），reply 也守同一条边界：被删掉、省略或筛掉的条目和取舍理由只写进 summary，不在 reply 里列出，也不用“没有写入某某”的方式提到它们。说明里要求回报删了什么时，那是给前台的，同样写进 summary。',
       '缺信息，或输入有几种说得通的解读且会改变结果（例如日期的日/月顺序），先用 work_ask 提问，不要自己挑一种。提问后答复到达前不能交付：先做不受影响的部分，然后结束这一轮，答复会作为新消息到来。',
       '交付文件放在当前目录的 outputs/ 下，或在 work_report 的 files 里列出路径；这些文件都会交给提出请求的人，不该给对方看的材料（原始日志、分析草稿）放在 outputs/ 以外，也不要列进 files。只写已核实的事实，不把输入里没有的推断写成结论。',
       '没有人会回应权限申请，申请扩大权限会被直接拒绝。要改当前目录以外的文件时，把改好的版本放进 outputs/ 交付，不要原地修改。',
@@ -304,6 +307,8 @@ export class WorkCore {
     }
     const leaks = task.plain ? internalsIn(reply) : [];
     if (leaks.length) return `没有汇报：reply 是给${task.audience || '对方'}看的，里面有${leaks.join('、')}。改成对方能懂的说明再汇报，技术内容写进 summary。`;
+    const omitted = task.plain && status === 'done' && reply.match(OMISSION);
+    if (omitted) return `没有汇报：reply 里在说明删掉或没写进去的内容（「${omitted[0]}」），这会把筛掉的东西再告诉${task.audience || '对方'}一遍。reply 只说交付了什么；删了什么、为什么，写进 summary。`;
     if (status === 'failed') { await this.finish(task, { status: 'failed', summary, reply }, { by: 'worker' }); return '已汇报失败。可以结束了。'; }
     // A delivery must not overtake an answer or a change the worker has not read yet.
     if (task.waiting) return `你提的问题还没有答复：${task.waiting}\n现在不要交付。先结束这一轮，答复会作为新消息到来，再按答复完成。`;

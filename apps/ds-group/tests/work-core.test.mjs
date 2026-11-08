@@ -302,6 +302,9 @@ test('a plain-language task cannot hand stack traces or raw logs to the person w
   assert.match(file, /交付文件 triage\.md/); assert.match(file, /日志原文/);
   assert.equal(task.status, 'running');
   await writeFile(path.join(task.dir, 'outputs', 'triage.md'), '# 处理建议\n先别读那个存档，下个补丁会修。\n');
+  // Script 02 G6: explaining what was left out discloses it again.
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'x', reply: '写好了。另外说明一下取舍：调试指令、打包脚本没有写入。' }),
+    /取舍[\s\S]*写进 summary/);
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '空引用在 SaveLoader.RestoreTowerState', reply: '这是读档时的已知问题，下个补丁会修，先别读那个存档。' }), /已汇报完成/);
   assert.equal(f.results[0].text, '「看崩溃日志」完成了。\n\n这是读档时的已知问题，下个补丁会修，先别读那个存档。');
 });
