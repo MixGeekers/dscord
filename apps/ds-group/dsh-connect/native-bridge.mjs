@@ -387,7 +387,9 @@ export class NativeBridge {
       }
       record.text = run.text;
       // Work this turn handed to workers: the reply only acknowledges it, the result follows later.
-      record.dispatched = Object.values(this.state.tasks).filter(task => task.origin?.requestId === input.requestId).map(task => task.id);
+      // Work started or joined for this message: its result comes later, so this turn's reply is an acknowledgement.
+      record.dispatched = Object.values(this.state.tasks).filter(task => !task.joined && [task.origin, ...(task.followers || [])]
+        .some(origin => origin?.requestId === input.requestId)).map(task => task.id);
       // The front writes no files; worker results carry theirs without a front turn.
       record.artifacts = [];
       record.status = 'completed'; record.stage = 'completed'; record.summary = '处理完成';

@@ -183,6 +183,10 @@ test('a delegation goes to a room the delegate is actually in, not the node home
   assert.deepEqual([exchange.direction, exchange.peerId, exchange.via, exchange.roomId, exchange.status, exchange.origin.eventId],
     ['out', '@peer:b.node.test', 'matrix', roomId, 'sent', '$node-request']);
   assert.deepEqual(f.runtime.contacts.contact('@peer:b.node.test').rooms, [roomId]);
+  // The next turn sees what this Bot is still waiting on, so a second asker can be added to it.
+  assert.deepEqual(f.runtime.contacts.pending().map(open => [open.peerId, open.detail, open.origin.eventId]), [['@peer:b.node.test', '请核对', '$node-request']]);
+  const next = f.runtime.requestFor(f.runtime.store.item('$node-request'));
+  assert.deepEqual(next.event.openRequests.map(open => [open.to, open.request, open.forEventId]), [['@peer:b.node.test', '请核对', '$node-request']]);
 });
 
 test('when the delegation cannot be sent, the requester is told it did not go out', async t => {

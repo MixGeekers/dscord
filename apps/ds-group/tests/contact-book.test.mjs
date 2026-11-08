@@ -63,3 +63,13 @@ test('exchanges record who asked whom, for which message, how it ended, and page
   assert.deepEqual(contacts.view().contacts.map(contact => contact.id), ['@planner:a.test', '@qa:a.test']);
   assert.throws(() => contacts.settle('x0', { status: 'lost' }), /Invalid exchange status/);
 });
+
+test('pending lists requests sent and not yet back, with what was asked and for whom', t => {
+  const contacts = book(t, '@community:a.test');
+  contacts.open({ id: 'T-1>@qa:b.test', direction: 'out', peer: '@qa:b.test', via: 'matrix', status: 'sending',
+    detail: '看小满的 crash.log', origin: { roomId: '!r4', eventId: '$g13', senderId: '@xiaoman:a.test' } });
+  contacts.open({ id: 'T-2>@qa:b.test', direction: 'out', peer: '@qa:b.test', via: 'matrix', status: 'sent', detail: '别的事' });
+  contacts.settle('T-1>@qa:b.test', { status: 'sent' });
+  contacts.settle('T-2>@qa:b.test', { status: 'returned' });
+  assert.deepEqual(contacts.pending().map(exchange => [exchange.id, exchange.detail, exchange.origin.eventId]), [['T-1>@qa:b.test', '看小满的 crash.log', '$g13']]);
+});

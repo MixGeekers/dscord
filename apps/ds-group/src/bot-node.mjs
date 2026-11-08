@@ -725,6 +725,9 @@ export class BotNode {
       event: { eventId: event.event_id, roomId: event.room_id, senderId: event.sender, senderName: this.senderName(event.sender, sourceRoom),
         botIdentity: { id: this.participant.id, name: this.senderName(this.participant.id, room), role: this.roleOf() },
         contacts: this.contacts.reachableBots().map(contact => ({ ...contact, name: this.senderName(contact.id, room), role: this.roleOf(this.participants.find(person => person.id === contact.id) || contact) })),
+        openRequests: this.contacts.pending().map(exchange => ({ to: exchange.peerId, name: this.senderName(exchange.peerId, room),
+          request: exchange.detail, forSenderId: exchange.origin?.senderId || null, forEventId: exchange.origin?.eventId || null,
+          since: new Date(exchange.at).toISOString() })),
         senderKind: this.participants.find(person => person.id === event.sender)?.kind,
         body: event.content['m.new_content']?.body ?? event.content.body, to: Array.isArray(meta.to) ? meta.to : [], attachments: uniqueAttachments([...ownFiles, ...referencedFiles, ...followupFiles]),
         delivery: this.delivery.publicRoute(item),
@@ -952,7 +955,7 @@ export class BotNode {
       if (handoff) {
         const { options } = handoff;
         this.contacts.open({ id: `${options.taskId}>${output.delegate.to}`, direction: 'out', peer: output.delegate.to, via: 'matrix',
-          roomId: handoff.roomId, taskId: options.taskId, status: 'sending',
+          roomId: handoff.roomId, taskId: options.taskId, status: 'sending', detail: output.delegate.body,
           origin: { roomId: options.originRoomId, eventId: options.originEventId, senderId: options.originSenderId } });
       }
       this.taskUpdate(item, { stage: 'delivering', summary: '正在发送成果', artifacts: deliveredArtifacts });

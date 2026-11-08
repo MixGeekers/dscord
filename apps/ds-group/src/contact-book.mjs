@@ -144,14 +144,15 @@ export class ContactBook {
         ...(callAs ? { callAs } : { rooms }) }));
   }
 
-  open({ id, direction, peer, via, roomId, origin, status, taskId }) {
+  open({ id, direction, peer, via, roomId, origin, status, taskId, detail }) {
     if (!['in', 'out'].includes(direction) || !EXCHANGE_STATUSES.includes(status)) throw new RangeError('Invalid exchange');
     const at = this.now();
     this.meet(peer, direction === 'in' ? { by: peer } : { by: origin?.senderId });
-    this.db.prepare(`INSERT INTO contact_exchanges(id,at,updated_at,direction,peer_id,via,room_id,origin_json,status,task_id)
-      VALUES (?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,
-      origin_json=COALESCE(contact_exchanges.origin_json,excluded.origin_json), room_id=COALESCE(excluded.room_id,contact_exchanges.room_id)`)
-      .run(id, at, at, direction, peer, via, roomId || null, json(origin), status, taskId || null);
+    this.db.prepare(`INSERT INTO contact_exchanges(id,at,updated_at,direction,peer_id,via,room_id,origin_json,status,task_id,detail)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET updated_at=excluded.updated_at,
+      origin_json=COALESCE(contact_exchanges.origin_json,excluded.origin_json), room_id=COALESCE(excluded.room_id,contact_exchanges.room_id),
+      detail=COALESCE(contact_exchanges.detail,excluded.detail)`)
+      .run(id, at, at, direction, peer, via, roomId || null, json(origin), status, taskId || null, detail ? String(detail).slice(0, 500) : null);
     this.db.prepare('UPDATE contacts SET last_exchange_at=? WHERE id=?').run(at, peer);
     return this.exchange(id);
   }
@@ -178,6 +179,12 @@ export class ContactBook {
     const row = this.db.prepare(`SELECT id FROM contact_exchanges WHERE direction='in' AND status='received' AND at>=?
       AND (? IS NULL OR via=?) ORDER BY at DESC, rowid DESC LIMIT 1`).get(this.now() - maxAgeMs, via ?? null, via ?? null);
     return row && this.exchange(row.id);
+  }
+
+  /** Requests this Bot sent that have not come back yet, newest first: what it is already waiting on. */
+  pending({ maxAgeMs = 2 * 60 * 60_000, limit = 10 } = {}) {
+    return this.db.prepare(`SELECT id FROM contact_exchanges WHERE direction='out' AND status IN ('sending','sent','dispatched')
+      AND at>=? ORDER BY at DESC, rowid DESC LIMIT ?`).all(this.now() - maxAgeMs, limit).map(row => this.exchange(row.id));
   }
 
   /** The open outbound exchange a returned task answers. */

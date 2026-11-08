@@ -308,6 +308,18 @@ test('work started from another Bot\'s result answers the message that started t
   assert.match(origin.body, /策划 交回的结果/);
 });
 
+test('a turn that joins a running task is an acknowledgement, so a Bot request is not answered by it', async t => {
+  const f = await fixture(t, { send: async ({ event, turn }) => {
+    // The front calls task_join: the current message becomes another requester of T-9.
+    f.bridge.state.tasks['T-9'].followers = [structuredClone(f.bridge.core.origin)];
+    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: '这件事已经在查，结果会一起回给你。' }] } });
+    await event('turn/end', { turn, reason: { kind: 'completed' } });
+  } });
+  f.bridge.state.tasks['T-9'] = { id: 'T-9', title: '查崩溃', status: 'running', origin: { roomId: '!r4:home.test', eventId: '$g13', requestId: 'other' } };
+  const result = await f.bridge.turn(f.request('g14-request', '!r2:home.test'));
+  assert.deepEqual(result.dispatched, ['T-9']);
+});
+
 test('the steer after a Bot reply starts the turn whose answer completes the request', async t => {
   let event;
   const f = await fixture(t, { send: async ({ event: emit, turn }) => {
