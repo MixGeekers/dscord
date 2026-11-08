@@ -33,7 +33,7 @@ DSH 内已认证、同源的 `POST /api/dscord/kernel` 接收 `{endpoint,payload
 
 ## 前台、程序核心和工作者
 
-连接到 DSCord 的每个 Bot 分成三部分。前台是 Bot 原有的原生 Session，只保留沟通、回忆和派活工具（`dispatch_work`、`task_join`、`task_status`、`task_cancel`、`task_note`），其他工具在前台被拒绝。桌面卡片工具（`ask_user`、`ask_user_question`、`show_view`）在前台和工作者里都被拒绝：聊天里没人看得到卡片，一轮停在卡片上也没有可发的回复；前台把问题直接写在回复里，工作者用 `work_ask`。程序核心是 `dsh-connect/work-core.mjs`，不调用模型：维护任务台账、并发槽位（默认 3 个）、超时（默认 60 分钟）、取消、补充说明和交付文件核对。工作者是每个任务新建的一个 Session 和目录（节点数据目录下 `workers/<任务 ID>/`），有完整工具，只能用 `work_report` 汇报、用 `work_ask` 提问。
+连接到 DSCord 的每个 Bot 分成三部分。前台是 Bot 原有的原生 Session，只保留沟通、回忆和派活工具（`dispatch_work`、`task_join`、`task_status`、`task_cancel`、`task_note`），其他工具在前台被拒绝。桌面卡片工具（`ask_user`、`ask_user_question`、`show_view`）在前台和工作者里都被拒绝：聊天里没人看得到卡片，一轮停在卡片上也没有可发的回复；前台把问题直接写在回复里，工作者用 `work_ask`。前台一轮正常结束却没有回复文字（例如停在某个工具上）时，桥接层提示它一次写出回复；再次没有回复文字就按空回复结束这次请求（记为失败），不会占住节点队列直到超时。程序核心是 `dsh-connect/work-core.mjs`，不调用模型：维护任务台账、并发槽位（默认 3 个）、超时（默认 60 分钟）、取消、补充说明和交付文件核对。工作者是每个任务新建的一个 Session 和目录（节点数据目录下 `workers/<任务 ID>/`），有完整工具，只能用 `work_report` 汇报、用 `work_ask` 提问。
 
 前台规则对 Bot 原生 Session 的每一轮都生效，包括其他 Bot 用 `message_bot` 发来的请求；连接建立时即生效，不等第一条房间消息。
 

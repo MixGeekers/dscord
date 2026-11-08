@@ -220,6 +220,20 @@ export class NativeBridge {
       // An acknowledgement is not completion while a teammate still owes a
       // reply to this Bot. Native direct-to-user work has a different destination.
       if (run.reason === 'completed' && run.text && run.exchanges.size === 0 || run.reason === 'error' || run.reason === 'cancelled') run.resolve();
+      // A turn can end on a tool with no reply (script 02 G16). Nothing will finish the request, and the node's
+      // queue waits behind it: ask once for the reply, and a second empty ending finishes it without one.
+      else if (run.reason === 'completed' && !run.text && run.exchanges.size === 0) {
+        if (run.nudged) run.resolve();
+        else {
+          run.nudged = true;
+          const ended = run.turn;
+          setTimeout(() => {
+            if (this.run !== run || terminal(run.record) || run.currentTurn !== ended || run.text) return;
+            const note = `${run.marker}\nDSCord：这一轮结束时没有回复文字，${run.sender}什么也没收到。现在写出要发给${run.sender}的回复；要问对方，就把问题直接写在回复里。`;
+            this.core.prompt(run.record.sessionId, note).catch(() => run.resolve());
+          }, 1000).unref?.();
+        }
+      }
     }
   }
 

@@ -344,3 +344,32 @@ test('the steer after a Bot reply starts the turn whose answer completes the req
   assert.equal(result.status, 'completed');
   assert.equal(result.text, '小满，宣发说下周发。');
 });
+
+test('a turn that ends on a tool without a reply is asked once for the reply, then finished', async t => {
+  let event;
+  const f = await fixture(t, { send: async ({ event: emit, turn }) => {
+    event = emit;
+    await emit('tool/call', { turn, callId: 'c1', name: 'ask_user' });
+    await emit('turn/end', { turn, reason: { kind: 'completed' } });
+  } });
+  const prompts = [];
+  let answer = '统计按语义归类可以吗？';
+  f.bridge.core.ctx.sessionController = { prompt: async request => {
+    prompts.push(request.content[0].text);
+    await event('turn/start', { turn: 2 });
+    await event('user/message', { content: request.content, source: { kind: 'user' } });
+    if (answer) await event('assistant/message', { turn: 2, message: { content: [{ type: 'text', text: answer }] } });
+    await event('turn/end', { turn: 2, reason: { kind: 'completed' } });
+  } };
+  const result = await f.bridge.turn(f.request('card'));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.text, '统计按语义归类可以吗？');
+  assert.equal(prompts.length, 1);
+  assert.match(prompts[0], /没有回复文字/);
+  // A second ending without a reply finishes the request instead of holding the queue until the timeout.
+  answer = '';
+  const empty = await f.bridge.turn(f.request('card-again'));
+  assert.equal(empty.status, 'completed');
+  assert.equal(empty.text, '');
+  assert.equal(prompts.length, 2);
+});
