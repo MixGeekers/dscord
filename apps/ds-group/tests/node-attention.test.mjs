@@ -501,3 +501,17 @@ test('Bot turn limits in another thread do not silence the current human convers
   assert.equal(f.decisions[0].threadRootId, '$thread-a');
   assert.equal(f.store.next().event_id, '$thread-question');
 });
+
+test('a room can override the Bot participation mode: natural in one room, mention elsewhere', async t => {
+  const other = '!internal:test';
+  const f = fixture(t, { attention: { mode: 'mention', rooms: { [roomId]: 'natural' } } });
+  await f.node.ingestEvents([{ ...message('$internal', '内部讨论一下排期'), room_id: other }, message('$players', '试玩什么时候出？')]);
+  await f.node.flushObservations();
+  while (await f.node.processAttentionOnce()) { /* drain both rooms */ }
+  assert.deepEqual(f.decisions.map(input => input.roomId), [roomId]);
+  assert.equal(f.node.attentionStatus().rooms[roomId], 'natural');
+  // Removing the override returns the room to the Bot mode and drops its pending proposals.
+  f.node.configureAttention({ mode: 'mention', rooms: {} });
+  assert.deepEqual(f.node.attentionStatus().rooms, {});
+  assert.throws(() => f.node.configureAttention({ rooms: { [roomId]: 'loud' } }), /Invalid room participation/);
+});

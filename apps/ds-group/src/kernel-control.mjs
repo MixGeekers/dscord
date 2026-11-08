@@ -3,6 +3,7 @@ import { chmod } from 'node:fs/promises';
 import { randomUUID, createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { requireNodeScope } from './node-auth.mjs';
+import { normalizeRoomModes, sameAttention } from './attention.mjs';
 
 const modes = new Set(['mention', 'shadow', 'natural']);
 const activities = new Set(['listening', 'waiting', 'working', 'speaking']);
@@ -38,6 +39,7 @@ export function publicKernelSummary(input) {
     runtime: { id: text(runtime?.id), version: text(runtime?.version), upstreamVersion: text(runtime?.upstreamVersion), available: boolean(runtime?.available) },
     attention: {
       mode: modes.has(attention?.mode) ? attention.mode : null,
+      rooms: object(attention?.rooms) ? Object.fromEntries(Object.entries(attention.rooms).filter(([roomId, mode]) => text(roomId) && modes.has(mode)).slice(0, 200)) : {},
       provider: { configured: boolean(provider?.configured), available: boolean(provider?.available), model: text(provider?.model) },
       activity: activities.has(attention?.activity) ? attention.activity : null,
       queue: object(queue) ? { pending: count(queue.pending), waiting: count(queue.waiting), evaluating: count(queue.evaluating), errors: count(queue.errors) } : null,
@@ -103,7 +105,7 @@ export class KernelControl {
     await chmod(this.filename, 0o600);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS kernel_attention (
-        bot_id TEXT PRIMARY KEY, mode TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+        bot_id TEXT PRIMARY KEY, mode TEXT NOT NULL, rooms_json TEXT NOT NULL DEFAULT '{}', revision INTEGER NOT NULL, updated_at INTEGER NOT NULL,
         applied_revision INTEGER, applied_node_id TEXT, applied_runtime_id TEXT, retry_at INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS kernel_commands (
         command_id TEXT PRIMARY KEY, bot_id TEXT NOT NULL, operation TEXT NOT NULL, args_json TEXT NOT NULL,
@@ -138,7 +140,7 @@ export class KernelControl {
     if (!row) return null;
     const node = this.node(botId);
     const applied = this.online(botId) && row.applied_revision === row.revision && row.applied_node_id === node?.id && row.applied_runtime_id === node?.runtimeId;
-    return { mode: row.mode, revision: row.revision, status: applied ? 'applied' : 'pending' };
+    return { mode: row.mode, rooms: JSON.parse(row.rooms_json), revision: row.revision, status: applied ? 'applied' : 'pending' };
   }
 
   snapshot(botId) {
@@ -158,17 +160,20 @@ export class KernelControl {
     }
   }
 
+  /** { mode, rooms? }: rooms maps a room ID to its own mode; rooms left out keeps the current overrides. */
   setAttention(botId, input) {
-    if (!object(input) || !modes.has(input.mode) || Object.keys(input).some(key => key !== 'mode')) {
-      throw failure(400, 'INVALID_ATTENTION_MODE', 'Choose mention, shadow or natural attention');
-    }
     const prior = this.db.prepare('SELECT * FROM kernel_attention WHERE bot_id=?').get(botId);
-    if (!prior || prior.mode !== input.mode) {
+    let rooms;
+    try { rooms = normalizeRoomModes(input?.rooms ?? (prior ? JSON.parse(prior.rooms_json) : {})); } catch { rooms = null; }
+    if (!object(input) || !modes.has(input.mode) || !rooms || Object.keys(input).some(key => !['mode', 'rooms'].includes(key))) {
+      throw failure(400, 'INVALID_ATTENTION_MODE', 'Choose mention, shadow or natural attention, optionally per room');
+    }
+    if (!prior || !sameAttention({ mode: prior.mode, rooms: JSON.parse(prior.rooms_json) }, { mode: input.mode, rooms })) {
       this.db.exec('BEGIN IMMEDIATE');
       try {
-        this.db.prepare(`INSERT INTO kernel_attention (bot_id,mode,revision,updated_at) VALUES (?,?,1,?)
-          ON CONFLICT(bot_id) DO UPDATE SET mode=excluded.mode,revision=kernel_attention.revision+1,updated_at=excluded.updated_at,retry_at=0`)
-          .run(botId, input.mode, this.now());
+        this.db.prepare(`INSERT INTO kernel_attention (bot_id,mode,rooms_json,revision,updated_at) VALUES (?,?,?,1,?)
+          ON CONFLICT(bot_id) DO UPDATE SET mode=excluded.mode,rooms_json=excluded.rooms_json,revision=kernel_attention.revision+1,updated_at=excluded.updated_at,retry_at=0`)
+          .run(botId, input.mode, JSON.stringify(rooms), this.now());
         this.db.prepare(`UPDATE kernel_commands SET status='superseded',completed_at=? WHERE bot_id=? AND operation='attention-set' AND status IN ('queued','leased')`)
           .run(this.now(), botId);
         this.db.exec('COMMIT');
@@ -213,7 +218,7 @@ export class KernelControl {
     if (!desired || desired.retry_at > this.now() || (desired.applied_revision === desired.revision && desired.applied_node_id === node.id && desired.applied_runtime_id === node.runtimeId)) return;
     const existing = this.db.prepare(`SELECT command_id FROM kernel_commands WHERE bot_id=? AND operation='attention-set' AND revision=? AND status IN ('queued','leased')`)
       .get(botId, desired.revision);
-    if (!existing) this.createCommand(botId, 'attention-set', { mode: desired.mode }, desired.revision, this.now() + 300000);
+    if (!existing) this.createCommand(botId, 'attention-set', { mode: desired.mode, rooms: JSON.parse(desired.rooms_json) }, desired.revision, this.now() + 300000);
   }
 
   poll(input, scope) {
@@ -276,10 +281,12 @@ export class KernelControl {
     let receipt;
     if (status === 'completed') {
       if (row.operation === 'attention-set') {
-        if (input.result?.mode !== args.mode || input.result?.revision !== row.revision) {
-          throw failure(400, 'INVALID_ATTENTION_RESULT', 'Confirm the applied attention mode and revision');
+        let applied = false;
+        try { applied = sameAttention(input.result, args); } catch { /* invalid rooms */ }
+        if (!applied || input.result?.revision !== row.revision) {
+          throw failure(400, 'INVALID_ATTENTION_RESULT', 'Confirm the applied attention mode, rooms and revision');
         }
-        receipt = { status, result: { mode: args.mode, revision: row.revision } };
+        receipt = { status, result: { mode: args.mode, rooms: args.rooms || {}, revision: row.revision } };
       } else receipt = { status, result: memoryResult(row.operation, args, input.result) };
     } else {
       const code = text(input.error?.code, 100);

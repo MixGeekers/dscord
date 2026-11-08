@@ -398,7 +398,7 @@ export class ConnectController {
           for (const node of Object.values(this.state.nodes).filter(node => node.nativeBotId === body.nativeBotId)) {
             if (!this.state.accessToken || node.serverUrl !== this.state.serverUrl) continue;
             result = await this.remote(node.serverUrl, `/api/bots/${encodeURIComponent(node.id)}/attention`, {
-              method: 'PATCH', token: this.state.accessToken, body: { mode: body.mode } });
+              method: 'PATCH', token: this.state.accessToken, body: { mode: body.mode, ...(body.rooms ? { rooms: body.rooms } : {}) } });
           }
           return result;
         }

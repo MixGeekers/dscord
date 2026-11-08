@@ -30,6 +30,7 @@
 | 上传附件 | `POST /api/attachments?filename=名字`，正文是文件字节，带 `Content-Type`，返回 `attachment.id` |
 | 发消息 | `POST /api/rooms/{roomId}/messages`，正文 `{"body":"原话","to":["@bot:server"],"attachments":["附件 id"],"transactionId":"每条唯一"}` |
 | 读消息 | `GET /api/rooms/{roomId}/messages?limit=100`，按 `origin_server_ts` 计时 |
+| 设置 Bot 的参与方式（所属人） | `PATCH /api/bots/{botId}/attention`，正文 `{"mode":"mention","rooms":{"房间 ID":"natural"}}`；`rooms` 按房间覆盖，省略则保持原来的覆盖 |
 
 所有请求带 `Authorization: Bearer <access_token>`。「@ 某个 Bot」在接口里就是把它放进 `to`。
 

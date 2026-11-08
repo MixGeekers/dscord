@@ -13,9 +13,18 @@ import { normalizeDelivery } from './delivery-policy.mjs';
 import { runtimeSettings } from '../scripts/runtime-config.mjs';
 import { createNodeWorkClient } from './node-work.mjs';
 import { conversationContext, messageSource, speakerOf, threadOf } from './message-context.mjs';
-import { normalizeAttentionConfig, reliableAttentionRoute, attentionMessage, attentionConflict,
+import { normalizeAttentionConfig, attentionModeFor, attentionListens, sameAttention, reliableAttentionRoute, attentionMessage, attentionConflict,
   participationDelay, trailingBotTurns } from './attention.mjs';
-import { ATTENTION_POLICY_VERSION, DecisionError, validateDecision, createOpenAIDecisionProvider } from './decision-provider.mjs';
+import { ATTENTION_POLICY_VERSION, DecisionError, validateDecision, createOpenAIDecisionProvider, turnQuestion } from './decision-provider.mjs';
+
+// A person often splits one thought over several quick messages. The decision
+// model judges whether they are done (WAIT or REPLY), and whether a message that
+// arrives while the front is answering belongs to that answer (JOIN). Without a
+// decision model the next message is awaited BURST_SETTLE_MS, and a follow-up
+// joins an answer that has not used tools yet.
+export const BURST_SETTLE_MS = 2000;
+export const BURST_WAIT_MS = 6000;
+export const BURST_MAX_WAIT_MS = 15000;
 
 const metadataOf = event => event.content?.['org.ds_group'] || {};
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -200,11 +209,11 @@ export class BotNode {
       if (JSON.stringify(next) !== JSON.stringify(this.attention)) throw new Error('Attention revision already has a different configuration');
       return { ...this.attention, revision: this.attentionRevision };
     }
-    if (this.attention.mode !== next.mode) this.store.settleAttention('mode_changed');
+    if (!sameAttention(this.attention, next)) this.store.settleAttention('mode_changed');
     this.attention = next;
     this.attentionRevision = revision ?? this.attentionRevision + 1;
     this.attentionEpoch++;
-    if (this.started && !this.attending && (this.observe || next.mode !== 'mention')) this.attending = this.attentionLoop();
+    if (this.started && !this.attending && (this.observe || attentionListens(next))) this.attending = this.attentionLoop();
     return { ...this.attention, revision: this.attentionRevision };
   }
 
@@ -223,7 +232,7 @@ export class BotNode {
     const providerHealth = this.decisionHealth || this.decisionProvider?.health?.() || {};
     const configured = Boolean(this.decisionProvider && this.decisionProvider.configured !== false);
     const health = providerHealth.health || (configured ? 'unknown' : 'unconfigured');
-    return { mode: this.attention.mode, revision: this.attentionRevision,
+    return { mode: this.attention.mode, rooms: this.attention.rooms, revision: this.attentionRevision,
       activity: this.state === 'thinking' ? 'working' : this.sendingAttention ? 'speaking' : snapshot.queue.waiting ? 'waiting' : 'listening',
       provider: { id: this.decisionProvider?.id || null, model: this.decisionProvider?.model || null, configured,
         available: !configured || ['error', 'unconfigured'].includes(health) ? false : health === 'ok' ? true : null, health,
@@ -263,11 +272,13 @@ export class BotNode {
     this.decidingAttention = true;
     try {
       const observed = await this.flushObservations();
-      if (this.attention.mode === 'mention') return Boolean(this.store.settleAttention('mention_mode'));
+      if (!attentionListens(this.attention)) return Boolean(this.store.settleAttention('mention_mode'));
       const config = { ...this.attention };
       const epoch = this.attentionEpoch;
       const batch = this.store.nextAttentionBatch({ ...config, limit: config.historyLimit });
       if (!batch) return false;
+      config.mode = attentionModeFor(config, batch.roomId);
+      if (config.mode === 'mention') return Boolean(this.store.settleAttention('mention_mode', { roomId: batch.roomId }));
       const anchor = batch.events.at(-1);
       const recent = this.store.messagesThrough(batch.roomId, batch.watermark.sequence, config.historyLimit);
       const messages = recent.map(event => this.attentionMessageFor(event));
@@ -363,7 +374,7 @@ export class BotNode {
     if (this.store.withdrawnAttentionSource(evidence)) return 'source_withdrawn';
     // Once actual work has produced an effect, its result keeps the task route.
     if (item.response?.delegated || item.response?.toolCalls > 0 || item.response?.artifacts?.length) return undefined;
-    if (this.attention.mode !== 'natural') return 'mode_changed';
+    if (attentionModeFor(this.attention, item.event.room_id) !== 'natural') return 'mode_changed';
     if (!this.decisionProvider || this.decisionProvider.configured === false) return 'provider_unavailable';
     if (Date.now() >= evidence.expiresAt) return 'expired';
     return attentionConflict(evidence, item.event,
@@ -498,7 +509,7 @@ export class BotNode {
         }
       }
     } else await this.ensureParticipants(events);
-    return this.store.ingest(events, cursor, event => {
+    const ingested = this.store.ingest(events, cursor, event => {
       this.delivery.register(event);
       const route = this.store.item(event.event_id)?.attention;
       if (route?.reason === 'active_task_control' && route.sourceEventId) {
@@ -509,6 +520,8 @@ export class BotNode {
       }
     }, { route: event => this.routeOf(event),
       roomContext: roomId => this.roomContextFor(roomId) });
+    void this.considerJoin().catch(error => this.onError(`Follow-up join check failed: ${error.message}`));
+    return ingested;
   }
 
   async start() {
@@ -526,7 +539,7 @@ export class BotNode {
     this.syncing = this.syncLoop();
     this.heartbeats = this.heartbeatLoop();
     this.started = true;
-    if (this.observe || this.attention.mode !== 'mention') this.attending = this.attentionLoop();
+    if (this.observe || attentionListens(this.attention)) this.attending = this.attentionLoop();
     return this;
   }
 
@@ -983,7 +996,7 @@ export class BotNode {
     if (this.bridge.status && this.store.interrupted().some(item => !this.reconciled.has(item.event_id))) {
       return this.recoverInterrupted();
     }
-    const item = this.store.next();
+    let item = this.store.next();
     if (!item) return false;
     const suppressed = this.attentionSuppression(item);
     if (suppressed) { this.suppressAttention(item, suppressed); return true; }
@@ -998,9 +1011,30 @@ export class BotNode {
       this.store.recheckQueuedAttention(item.event_id);
       return true;
     }
+    let merged = [];
+    if (this.burstMessage(item)) {
+      const burst = [];
+      for (const next of this.store.burstAfter(item.event_id)) {
+        if (!this.burstMessage(next) || (threadOf(next.event) || '') !== (threadOf(item.event) || '')) break;
+        burst.push(next);
+      }
+      let held = this.holdBurst([item, ...burst]);
+      if (held instanceof Promise) held = await held;
+      if (held) return false;
+      if (burst.length) { merged = [item, ...burst.slice(0, -1)]; item = this.store.item(burst.at(-1).event_id); }
+    }
     if (this.roster && !this.work) await this.ensureParticipants([item.event]);
     let request = this.requestFor(item);
+    if (merged.length) {
+      request.event.mergedMessages = merged.map(earlier => ({ eventId: earlier.event_id,
+        body: earlier.event.content['m.new_content']?.body ?? earlier.event.content.body }));
+      request.event.attachments = uniqueAttachments([...merged.flatMap(earlier => eventAttachments(earlier.event)), ...request.event.attachments]);
+    }
     this.store.begin(item.event_id, request);
+    if (merged.length) {
+      this.store.merge(merged.map(earlier => earlier.event_id), item.event_id);
+      for (const earlier of merged) this.taskUpdate(earlier, { status: 'completed', stage: 'merged', summary: '和后面的消息一起回复' });
+    }
     this.state = 'thinking';
     let submitted = false;
     try {
@@ -1040,17 +1074,83 @@ export class BotNode {
         }
       }
       submitted = true;
+      this.current = { item, request };
       const response = await this.bridge.turn(request, this.bridgeOptions(item));
+      if (this.rejoin(item, response)) return true;
       await this.acceptResult(item, response);
     } catch (error) {
+      if (this.rejoin(item, { status: 'cancelled' })) return true;
       if (this.store.item(item.event_id).status === 'produced') throw error;
       const uncertain = submitted && temporaryTransferError(error);
       const status = error.taskCancelled ? 'cancelled' : uncertain ? 'unknown' : 'failed';
       await this.acceptResult(item, { status, errorCode: error.message });
       this.lastError = status === 'cancelled' ? null : error.message;
       if (status !== 'cancelled') this.onError(`Bot turn ${request.requestId} ended: ${error.message}`);
-    } finally { this.state = 'idle'; }
+    } finally { this.state = 'idle'; this.current = null; this.joining = null; }
     return true;
+  }
+
+  decisionsAvailable() { return Boolean(this.decisionProvider && this.decisionProvider.configured !== false); }
+
+  /** WAIT, JOIN or REPLY from the decision model; null when it is unavailable or fails. */
+  async decideTurn(input) {
+    if (!this.decisionsAvailable()) return null;
+    try {
+      const result = await attentionCall(signal => this.decisionProvider.decide({ version: 1, self: { id: this.participant.id, name: this.participant.name }, ...input },
+        { signal, question: turnQuestion }), Math.min(this.attention.providerTimeoutMs, 3000), this.controller.signal);
+      return result.action;
+    } catch { return null; }
+  }
+
+  /** Whether to wait before answering these consecutive messages from one person (a Promise only when the decision model is asked). */
+  holdBurst(messages) {
+    const last = messages.at(-1);
+    const now = Date.now();
+    const age = now - (last.event.origin_server_ts ?? 0);
+    if (this.rejoined === messages[0].event_id) { this.rejoined = null; return false; }
+    // A clock far off, or a burst that has gone on long enough, is answered now.
+    if (!(age >= 0) || now - (messages[0].event.origin_server_ts ?? 0) > BURST_MAX_WAIT_MS) return false;
+    if (this.burstHold?.eventId === last.event_id) return now < this.burstHold.until;
+    if (!this.decisionsAvailable()) return age < BURST_SETTLE_MS;
+    return this.decideTurn({ phase: 'before', pending: messages.map(message => this.attentionMessageFor(message.event)) }).then(action => {
+      if (!action) return age < BURST_SETTLE_MS;
+      this.burstHold = { eventId: last.event_id, until: action === 'WAIT' ? now + BURST_WAIT_MS : 0 };
+      return action === 'WAIT';
+    });
+  }
+
+  /** A follow-up from the same person while the front answers them: JOIN restarts the answer with both. */
+  async considerJoin() {
+    const current = this.current;
+    if (!current || this.joining || !this.bridge.interrupt) return;
+    const next = this.store.burstAfter(current.item.event_id, 1)[0];
+    if (!next || !this.burstMessage(next) || (threadOf(next.event) || '') !== (threadOf(current.item.event) || '')
+      || eventAttachments(next.event).length || this.considered === next.event_id) return;
+    this.considered = next.event_id;
+    if (!this.bridge.joinable?.(current.request.requestId)) return;
+    const action = await this.decideTurn({ phase: 'during',
+      answering: [...(current.request.event.mergedMessages || []).map(message => message.body), current.request.event.body],
+      newMessage: this.attentionMessageFor(next.event) });
+    if ((action ?? 'JOIN') !== 'JOIN' || this.current !== current) return;
+    this.joining = current.item.event_id;
+    if (!await this.bridge.interrupt(current.request.requestId)) this.joining = null;
+  }
+
+  /** The interrupted answer goes back to the queue and is answered again together with the follow-up. */
+  rejoin(item, response) {
+    if (this.joining !== item.event_id || response?.status !== 'cancelled') return false;
+    this.store.requeue(item.event_id);
+    this.rejoined = item.event_id;
+    this.taskUpdate(item, { status: 'queued', stage: 'queued', summary: '对方补充了消息，合并后重新回答' });
+    return true;
+  }
+
+  /** A plain message from a person: no work transfer, correction, reply or participation decision attached. */
+  burstMessage(item) {
+    const meta = metadataOf(item.event);
+    const relation = item.event.content?.['m.relates_to'];
+    return item.attention?.kind !== 'natural' && !meta.kind && !meta.workerTask && !meta.replyTo && !relation?.['m.in_reply_to'] && relation?.rel_type !== 'm.replace'
+      && this.participants.find(person => person.id === item.event.sender)?.kind !== 'bot';
   }
 
   async processLoop() {

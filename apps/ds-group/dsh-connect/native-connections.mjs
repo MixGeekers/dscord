@@ -133,7 +133,7 @@ export class NativeConnections {
 
   async applyAttention(entry, setting) {
     const state = entry.botNode.configureAttention(setting);
-    await savePrivateJson(path.join(entry.node.directory, 'attention.json'), { mode: state.mode, revision: state.revision });
+    await savePrivateJson(path.join(entry.node.directory, 'attention.json'), { mode: state.mode, rooms: state.rooms, revision: state.revision });
     return state;
   }
 

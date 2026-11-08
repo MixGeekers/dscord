@@ -49,7 +49,7 @@ const list = { kind: 'person', items: [{ id: 'matrix:@alice:test', name: 'Alice'
 test('kernel projection keeps unknowns and publishes only declared credential-free health fields', () => {
   assert.deepEqual(publicKernelSummary(null), {
     runtime: { id: null, version: null, upstreamVersion: null, available: null },
-    attention: { mode: null, provider: { configured: null, available: null, model: null }, activity: null, queue: null, lastDecision: null },
+    attention: { mode: null, rooms: {}, provider: { configured: null, available: null, model: null }, activity: null, queue: null, lastDecision: null },
     work: { status: 'unknown', activeTasks: null, waiting: null },
     memorySummary: { people: null, projects: null, pendingReview: null },
   });
@@ -70,14 +70,14 @@ test('kernel projection keeps unknowns and publishes only declared credential-fr
 test('attention desired mode persists offline, applies by revision, and reapplies to a replacement runtime', async t => {
   const app = await fixture(t);
   assert.equal((await stat(path.join(app.dataRoot, 'kernel-control.sqlite'))).mode & 0o777, 0o600);
-  assert.deepEqual(app.control.setAttention(botId, { mode: 'shadow' }), { mode: 'shadow', revision: 1, status: 'pending', applied: false, online: false });
+  assert.deepEqual(app.control.setAttention(botId, { mode: 'shadow' }), { mode: 'shadow', rooms: {}, revision: 1, status: 'pending', applied: false, online: false });
   assert.equal(app.control.setAttention(botId, { mode: 'shadow' }).revision, 1);
   await app.restart();
   const identity = app.online();
   const scope = scopeFor(identity);
   const [command] = app.control.poll(identity, scope).commands;
   assert.equal(command.operation, 'attention-set');
-  assert.deepEqual(command.args, { mode: 'shadow' });
+  assert.deepEqual(command.args, { mode: 'shadow', rooms: {} });
   assert.equal(command.revision, 1);
   assert.throws(() => app.control.result(resultFor(command, {}), scope), error => error.code === 'INVALID_ATTENTION_RESULT');
   assert.deepEqual(app.control.result(resultFor(command, { mode: 'shadow', revision: 1 }), scope), { recorded: true, duplicate: false });
@@ -248,4 +248,18 @@ test('a disconnected browser releases its queue slots and excessive parallel rea
   const [command] = app.control.poll(identity, scopeFor(identity)).commands;
   app.control.result(resultFor(command, { ...list, items: [] }), scopeFor(identity));
   assert.deepEqual(await pending, { ...list, items: [] }, 'Only an actual completed node response establishes an empty profile list');
+});
+
+test('room participation overrides travel with the Bot mode and are confirmed by the node', async t => {
+  const app = await fixture(t);
+  assert.throws(() => app.control.setAttention(botId, { mode: 'mention', rooms: { '!r:test': 'loud' } }), error => error.code === 'INVALID_ATTENTION_MODE');
+  assert.deepEqual(app.control.setAttention(botId, { mode: 'mention', rooms: { '!players:test': 'natural' } }).rooms, { '!players:test': 'natural' });
+  // Changing only the Bot mode keeps the room overrides.
+  assert.equal(app.control.setAttention(botId, { mode: 'shadow' }).revision, 2);
+  const identity = app.online(); const scope = scopeFor(identity);
+  const [command] = app.control.poll(identity, scope).commands;
+  assert.deepEqual(command.args, { mode: 'shadow', rooms: { '!players:test': 'natural' } });
+  assert.throws(() => app.control.result(resultFor(command, { mode: 'shadow', rooms: {}, revision: 2 }), scope), error => error.code === 'INVALID_ATTENTION_RESULT');
+  app.control.result(resultFor(command, { mode: 'shadow', rooms: { '!players:test': 'natural' }, revision: 2 }), scope);
+  assert.equal(app.control.desired(botId).status, 'applied');
 });

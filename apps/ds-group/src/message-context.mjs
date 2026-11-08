@@ -96,6 +96,7 @@ export function nativeMessage({ input, bot, files }) {
     + '\n你仍保留其他群和本地对话的经历；使用跨群知识时说明来源，不把其他群的说法当成本群已经达成的决定。'
     + '\n若 context.attention.participationOnly 为 true，这是交流回合：自然回应、澄清或跟进已有承诺，不要把旁听到的请求自动接成新任务。'
     + '\n直接回答当前发送者，回合结束后你的最后一条回复会发到本次 replyRoute。'
+    + '\ncurrentMessage.mergedMessages 是同一个人紧接着发来、还没回复的前几条消息，按时间排在 currentMessage 之前。先判断它们是一句话拆成了几条，还是几件不同的事：一句话就连起来理解，几件事就在这一条回复里逐一回应。'
     + '\n需要运行命令、读写文件、写代码、浏览网页或任何多步操作时，调用 dispatch_work 交给工作者（brief 要自足，带上原话和 files 里的输入文件路径），然后简短告诉对方已经开始；不要声称已经完成。'
     + '\n工作者的结果由核心直接回复到原消息并附上文件；workResults 列出自你上一轮以来已经交付的结果，供你了解，不要再转告，也不要自行重做。[task.question] 是工作者的提问。查看或调整进行中的工作用 task_status、task_note、task_cancel。'
     + '\n本机 Bot 协作使用 message_bot；跨 DSCord 节点可回复 {"text":"说明","delegate":{"to":"完整 Bot ID","body":"任务"}}，并在任务内容中带上相关来源。'

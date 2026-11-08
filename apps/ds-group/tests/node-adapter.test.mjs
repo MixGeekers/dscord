@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { BotNode, parseBotOutput, deliveriesFor, createBridge, acquireNodeLock } from '../src/bot-node.mjs';
 import { NodeStore } from '../src/node-store.mjs';
+import { createScriptDecisionProvider } from '../src/decision-provider.mjs';
 
 const participants = [
   { id: '@alice:ds-group.local', localpart: 'alice', name: 'Alice', kind: 'human' },
@@ -155,7 +156,7 @@ test('synthetic permanent send rejection ends that operation and allows the next
     bridge: { async turn(input) { requests.push(input); return { status: 'completed', text: '{"text":"回答"}', sessionId: 'native-1' }; } },
     matrix: { async send() { throw Object.assign(new Error('not a room member'), { status: 403 }); } },
   });
-  store.ingest([event('$first'), event('$second')], 's1');
+  store.ingest([event('$first'), event('$second', {}, { sender: participants[1].id })], 's1');
   await node.processOne();
   await node.processOne();
   assert.equal(store.pendingDelivery(), undefined);
@@ -206,7 +207,7 @@ test('synthetic Bot processing is serial per identity while two independent node
   const first = fixture({ bridge, matrix });
   const secondStore = new NodeStore(':memory:', hr.id);
   const second = new BotNode({ participant: hr, participants, roomId, matrix, bridge, store: secondStore, heartbeat: async () => {}, onError: () => {} });
-  first.store.ingest([event('$finance-a'), event('$finance-b')], 's1');
+  first.store.ingest([event('$finance-a'), event('$finance-b', {}, { sender: participants[1].id })], 's1');
   secondStore.ingest([event('$hr-a', { to: [hr.id] })], 's1');
   const work = [first.node.processLoop(), second.processLoop()];
   assert.equal(total, 2);
@@ -299,4 +300,99 @@ test('closing a store twice is harmless, so startup cleanup cannot mask the orig
   const store = new NodeStore(':memory:', finance.id);
   store.close();
   assert.doesNotThrow(() => store.close());
+});
+
+test('a person splitting one thought over quick messages gets one front turn and one reply', async () => {
+  const turns = []; const sent = [];
+  const { node, store } = fixture({
+    bridge: { async turn(input) { turns.push(input); return { status: 'completed', text: '商场三楼有个电玩城', sessionId: 'front' }; } },
+    matrix: { async send(room, body, options) { sent.push({ room, body, options }); return { event_id: `$answer-${sent.length}` }; } },
+  });
+  try {
+    const now = Date.now();
+    const say = (id, body, ts, sender = participants[0].id) => ({ ...event(id), sender, origin_server_ts: ts,
+      content: { body, 'org.ds_group': { to: [finance.id] } } });
+    store.ingest([say('$p1', '我想要', now - 1200), say('$p2', '看看有没有好玩的', now - 800), say('$p3', '在这个商场里', now - 100)]);
+    // The last message is too fresh: the node waits for the person to finish.
+    assert.equal(await node.processOne(), false);
+    assert.equal(turns.length, 0);
+    store.db.prepare("UPDATE messages SET event_json=json_set(event_json,'$.origin_server_ts',?) WHERE event_id='$p3'").run(now - 3000);
+    assert.equal(await node.processOne(), true);
+    assert.equal(turns.length, 1);
+    assert.equal(turns[0].event.eventId, '$p3');
+    assert.deepEqual(turns[0].event.mergedMessages.map(message => message.body), ['我想要', '看看有没有好玩的']);
+    assert.equal(store.item('$p1').status, 'merged'); assert.equal(store.item('$p2').status, 'merged');
+    await node.processOne();
+    assert.equal(sent.length, 1); assert.equal(sent[0].options.replyTo, '$p3');
+    assert.equal(await node.processOne(), false);
+    // Someone else speaking in between ends a burst.
+    store.ingest([say('$q1', '先问一个', now - 9000), say('$b1', '我插一句', now - 8000, participants[1].id), say('$q2', '再问一个', now - 7000)]);
+    await node.processOne();
+    assert.equal(turns.at(-1).event.eventId, '$q1'); assert.equal(turns.at(-1).event.mergedMessages, undefined);
+  } finally { store.close(); }
+});
+
+test('the decision layer waits for an unfinished thought and folds a follow-up into the answer in progress', async () => {
+  const asked = []; const turns = []; const interrupted = [];
+  let decide = () => ({ action: 'REPLY' }); let finishTurn;
+  const store = new NodeStore(':memory:', finance.id);
+  const node = new BotNode({ participant: finance, participants, roomId, store, heartbeat: async () => {}, onError: () => {},
+    matrix: { async send() { return { event_id: '$answer' }; } },
+    decisionProvider: createScriptDecisionProvider((input, { question }) => { asked.push({ input, question: question.name }); return decide(input); }),
+    bridge: {
+      async turn(input) { turns.push(input); return new Promise(resolve => { finishTurn = resolve; }); },
+      joinable: () => true,
+      async interrupt(requestId) { interrupted.push(requestId); finishTurn({ status: 'cancelled' }); return true; },
+    } });
+  try {
+    const now = Date.now();
+    const say = (id, body, ts) => ({ ...event(id), origin_server_ts: ts, content: { body, 'org.ds_group': { to: [finance.id] } } });
+    decide = input => ({ action: input.pending.length === 1 ? 'WAIT' : 'REPLY' });
+    store.ingest([say('$w1', '我想要', now)]);
+    assert.equal(await node.processOne(), false);
+    assert.equal(asked[0].question, 'turn_taking'); assert.equal(asked[0].input.phase, 'before');
+    assert.equal(await node.processOne(), false, 'a WAIT is kept until the next message or its deadline');
+    assert.equal(asked.length, 1);
+    await node.ingestEvents([say('$w2', '看看有没有好玩的', now + 1)]);
+    const first = node.processOne();
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(turns.length, 1); assert.equal(turns[0].event.eventId, '$w2');
+    // While the front answers, the same person adds a detail: JOIN restarts the answer with all three.
+    decide = () => ({ action: 'JOIN' });
+    await node.ingestEvents([say('$w3', '在这个商场里', now + 2)]);
+    for (let i = 0; i < 20 && !interrupted.length; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(asked.at(-1).input.phase, 'during'); assert.deepEqual(asked.at(-1).input.answering, ['我想要', '看看有没有好玩的']);
+    assert.equal(await first, true);
+    assert.equal(store.item('$w1').status, 'queued'); assert.equal(store.item('$w2').status, 'queued');
+    decide = () => ({ action: 'REPLY' });
+    const second = node.processOne();
+    for (let i = 0; i < 20 && turns.length < 2; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(turns[1].event.eventId, '$w3');
+    assert.deepEqual(turns[1].event.mergedMessages.map(message => message.body), ['我想要', '看看有没有好玩的']);
+    finishTurn({ status: 'completed', text: '三楼有电玩城', sessionId: 'front' });
+    assert.equal(await second, true);
+    assert.equal(interrupted.length, 1);
+  } finally { node.controller.abort(); store.close(); }
+});
+
+test('a follow-up that is a different matter is answered after the current answer, not folded in', async () => {
+  let finishTurn; const interrupted = [];
+  const store = new NodeStore(':memory:', finance.id);
+  const node = new BotNode({ participant: finance, participants, roomId, store, heartbeat: async () => {}, onError: () => {},
+    matrix: { async send() { return { event_id: '$answer' }; } },
+    decisionProvider: createScriptDecisionProvider(() => ({ action: 'REPLY' })),
+    bridge: { async turn() { return new Promise(resolve => { finishTurn = resolve; }); }, joinable: () => true,
+      async interrupt(id) { interrupted.push(id); return true; } } });
+  try {
+    const say = (id, body) => ({ ...event(id), content: { body, 'org.ds_group': { to: [finance.id] } } });
+    store.ingest([say('$a', '1 到 100 能被 7 整除的有几个？')]);
+    const first = node.processOne();
+    await new Promise(resolve => setImmediate(resolve));
+    await node.ingestEvents([say('$b', '另外帮我查下明天天气')]);
+    for (let i = 0; i < 20; i++) await new Promise(resolve => setImmediate(resolve));
+    assert.equal(interrupted.length, 0);
+    finishTurn({ status: 'completed', text: '14 个', sessionId: 'front' });
+    await first;
+    assert.equal(store.item('$b').status, 'queued');
+  } finally { node.controller.abort(); store.close(); }
 });

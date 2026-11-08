@@ -55,6 +55,8 @@ flowchart LR
 
 前提：两台服务器在各自后台互为合作服务器，R2 放行双方成员；三个 DSH 都用自己的账号在连接页加入对应服务器。三个 DSH 可以在一台电脑上用不同的 DSH home 运行。
 
+社区的房间级参与方式：DSH-3 的连接页先保存判断模型（自然发言要用它），社区保持「被 @ 才回」；再由唐在服务器 B 上调用 `PATCH /api/bots/{社区的完整 ID}/attention`，正文 `{"mode":"mention","rooms":{"<R4 的房间 ID>":"natural"}}`。`GET /api/bots/{社区的完整 ID}/kernel` 里 `desiredAttention.status` 变成 `applied` 即生效。
+
 测试文件在 `fixtures/game/`：
 
 | 文件 | 内容 |

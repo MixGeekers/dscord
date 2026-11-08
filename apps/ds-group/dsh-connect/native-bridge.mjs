@@ -8,6 +8,9 @@ import { nativeMessage, observedMemoryInput } from '../src/message-context.mjs';
 import { HANDOFF_ACK } from '../vendor/ds-bot/src/host/constants.js';
 import { isModelQuotaFailure } from '../src/model-failure.mjs';
 
+// Front tools that only read: an answer that used nothing else can be restarted.
+const READ_ONLY_FRONT_TOOLS = new Set(['recall', 'contacts', 'memory_source', 'raw_source_query', 'read_group_chat', 'read_own_chat',
+  'list_bots', 'read_image', 'web_fetch', 'task_status', 'review_memory']);
 const textOf = message => (message?.content || []).filter(block => block.type === 'text').map(block => block.text).join('');
 const terminal = record => ['completed', 'failed', 'cancelled', 'unknown'].includes(record?.status);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -326,7 +329,8 @@ export class NativeBridge {
       const workerTask = input.event.workerTask && this.state.tasks[input.event.workerTask];
       this.core.origin = workerTask?.origin || { requestId: input.requestId, roomId: input.event.roomId, eventId: input.event.eventId,
         ...(input.event.threadRootId ? { threadRootId: input.event.threadRootId } : {}),
-        senderId: input.event.senderId, senderName: input.event.senderName, body: input.event.body,
+        senderId: input.event.senderId, senderName: input.event.senderName,
+        body: [...(input.event.mergedMessages || []).map(message => message.body), input.event.body].join('\n'),
         files: files.files.map(file => file.path) };
       let resolve;
       const done = new Promise(done => { resolve = done; });
@@ -383,6 +387,19 @@ export class NativeBridge {
       this.durable.add(record.requestId);
     }
     return structuredClone(record);
+  }
+
+  /** A front answer that has used only reading tools can be stopped and given again with a follow-up. */
+  joinable(requestId) {
+    const record = this.state.requests[requestId];
+    return Boolean(record && !terminal(record) && !record.cancelRequested
+      && (record.toolReceipts || []).every(receipt => READ_ONLY_FRONT_TOOLS.has(receipt.name)));
+  }
+
+  async interrupt(requestId) {
+    if (!this.joinable(requestId)) return false;
+    await this.cancel(requestId);
+    return true;
   }
 
   async cancel(requestId) {

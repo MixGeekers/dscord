@@ -376,6 +376,35 @@ export class NodeStore {
     return row ? { ...row, event: JSON.parse(row.event_json), attention: row.attention_json ? JSON.parse(row.attention_json) : null } : undefined;
   }
 
+  /** Queued messages that directly follow this one in its room from the same sender, before anyone else speaks. */
+  burstAfter(eventId, limit = 8) {
+    const first = this.db.prepare('SELECT sequence,room_id,sender_id FROM messages WHERE event_id=?').get(eventId);
+    if (!first) return [];
+    const rows = this.db.prepare(`SELECT messages.event_id,messages.sender_id,messages.event_json,inbox.status,inbox.attention_json
+      FROM messages LEFT JOIN inbox USING(event_id) WHERE messages.room_id=? AND messages.sequence>? ORDER BY messages.sequence LIMIT ?`)
+      .all(first.room_id, first.sequence, limit);
+    const burst = [];
+    for (const row of rows) {
+      if (row.sender_id !== first.sender_id || row.status !== 'queued' || JSON.parse(row.attention_json || '{}').kind === 'natural') break;
+      burst.push({ event_id: row.event_id, event: JSON.parse(row.event_json), attention: row.attention_json ? JSON.parse(row.attention_json) : null });
+    }
+    return burst;
+  }
+
+  /** Earlier messages of a burst are answered by the turn of its last message. */
+  merge(eventIds, intoEventId) {
+    const update = this.db.prepare("UPDATE inbox SET status='merged',error=? WHERE event_id=? AND status='queued'");
+    this.transaction(() => { for (const eventId of eventIds) update.run(`Merged into ${intoEventId}`, eventId); });
+  }
+
+  /** An interrupted answer and the messages merged into it wait again, to be answered with the follow-up. */
+  requeue(eventId) {
+    this.transaction(() => {
+      this.db.prepare("UPDATE inbox SET status='queued',request_json=NULL,response_json=NULL,error=NULL,session_id=NULL WHERE event_id=? AND status='running'").run(eventId);
+      this.db.prepare("UPDATE inbox SET status='queued',error=NULL WHERE status='merged' AND error=?").run(`Merged into ${eventId}`);
+    });
+  }
+
   item(eventId) {
     if (typeof eventId !== 'string') return undefined;
     const row = this.db.prepare('SELECT inbox.*, messages.event_json FROM inbox JOIN messages USING(event_id) WHERE event_id=?').get(eventId);

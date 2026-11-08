@@ -80,10 +80,10 @@ test('Core exposes owner-only kernel and attention endpoints using full account 
   assert.equal((await app.request(botPath + '/attention', { token: 'synthetic-other-token', method: 'PATCH', body: { mode: 'natural' } })).status, 403);
   assert.equal((await app.request(botPath + '/attention', { method: 'PATCH', body: { mode: 'unbounded' } })).status, 400);
   response = await app.request(botPath + '/attention', { method: 'PATCH', body: { mode: 'natural' } });
-  assert.deepEqual(response, { status: 200, body: { mode: 'natural', revision: 1, status: 'pending', applied: false, online: false } });
+  assert.deepEqual(response, { status: 200, body: { mode: 'natural', rooms: {}, revision: 1, status: 'pending', applied: false, online: false } });
   await app.restart();
   response = await app.request(botPath + '/kernel');
-  assert.deepEqual(response.body.desiredAttention, { mode: 'natural', revision: 1, status: 'pending' });
+  assert.deepEqual(response.body.desiredAttention, { mode: 'natural', rooms: {}, revision: 1, status: 'pending' });
   assert.equal(response.body.attention.mode, 'natural');
   assert.equal((await app.heartbeat()).status, 200);
   const command = await app.nextCommand();
