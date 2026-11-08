@@ -23,7 +23,8 @@ async function fixture(t, options = {}) {
   };
   const native = { bot: async () => ({ id: 'native', name: 'Lin', sessionId: 'front', model: 'p/m' }), agent: async id => agentFor(id) };
   const state = { tasks: {} }; let saves = 0;
-  const core = new WorkCore({ ctx, native, node: { nativeBotId: 'native', directory }, state, save: async () => { saves++; }, ...options });
+  const { nativeBotId = 'native', ...rest } = options;
+  const core = new WorkCore({ ctx, native, node: { nativeBotId, directory }, state, save: async () => { saves++; }, ...rest });
   const results = [];
   core.onResult = async (task, message) => { results.push({ task: structuredClone(task), message, text: core.resultText(task, message) }); };
   t.after(() => core.dispose());
@@ -162,4 +163,27 @@ test('a worker that asked cannot deliver before the answer arrives, and a note c
   await f.core.event(worker, { type: 'user/message', data: { content: [{ type: 'text', text: '前台补充：改成英文表头' }] } });
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '按日/月/年统一了' }), /已汇报完成/);
   assert.equal(task.status, 'done'); assert.equal(task.waiting, undefined);
+});
+
+test('work a Bot does for another Bot goes back through the asking Bot to the room message behind the request', async t => {
+  const dev = await fixture(t, { nativeBotId: 'dev' });
+  const planner = await fixture(t, { nativeBotId: 'planner' });
+  await dev.core.serveFront(dev.agentFor('front'));
+  await planner.core.serveFront(planner.agentFor('front'));
+  // 开发助理 is answering 林 in R1 and asks 策划 with message_bot; 策划 dispatches a worker for it.
+  dev.core.origin = { roomId: '!r1', eventId: '$g5', senderId: '@lin', body: '请策划写 known-issues.md' };
+  await planner.core.event({ id: 'front' }, { type: 'user/message', data: { message: { content: [{ type: 'text', text: '写 known-issues.md' }],
+    source: { kind: 'bot', role: 'request', senderSessionId: 'dev', exchangeId: 'x1' } } } });
+  await run(planner, 'front', 'dispatch_work', { title: '写 known-issues.md', brief: '整理已知问题' });
+  const task = Object.values(planner.state.tasks)[0];
+  assert.deepEqual([task.origin.roomId, task.origin.eventId, task.origin.via], ['!r1', '$g5', 'dev']);
+  dev.core.origin = null;
+  await writeFile(path.join(task.dir, 'outputs', 'known-issues.md'), '# 已知问题\n');
+  await run(planner, 'worker-1', 'work_report', { status: 'done', summary: '整理了 3 个已知问题' });
+  assert.equal(planner.results.length, 0);
+  assert.equal(dev.results.length, 1);
+  assert.equal(dev.results[0].task.origin.eventId, '$g5');
+  assert.deepEqual(dev.results[0].task.artifacts.map(file => file.name), ['known-issues.md']);
+  assert.match(dev.results[0].text, /^Lin：「写 known-issues\.md」完成了/);
+  assert.equal(task.notified, true);
 });

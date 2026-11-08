@@ -47,6 +47,10 @@ const compileTools = async defs => {
   defineTool ||= (await import('@deepseek-ai/dsh-tools')).defineTool;
   return defs.map(def => defineTool(def));
 };
+// The program cores of the Bots in this DSH, by native Bot ID. A Bot asked by
+// another Bot (message_bot) has no room of its own for the work; its result goes
+// back through the asking Bot, to the message that started the request.
+const cores = new Map();
 // Every status change is kept on the task as its timeline.
 const mark = (task, to, by, extra = {}) => {
   (task.events ||= []).push({ at: new Date().toISOString(), from: task.status ?? null, to, by });
@@ -68,6 +72,7 @@ export class WorkCore {
       if (!ended(task)) mark(task, 'unknown', 'restart', { summary: '宿主重启时任务未结束，结果不确定。', finishedAt: new Date().toISOString(), notified: false, doing: undefined });
     }
     this.disposeGuard = ctx.tools?.guard?.(exec => this.guard(exec));
+    if (node.nativeBotId) cores.set(node.nativeBotId, this);
   }
 
   tasks() { return Object.values(this.state.tasks); }
@@ -146,7 +151,7 @@ export class WorkCore {
     brief = String(brief || '').trim();
     if (!title || !brief) return '需要 title 和 brief。';
     const id = shortId();
-    const origin = this.origin;
+    const origin = this.origin || this.askedOrigin();
     const task = this.state.tasks[id] = { id, title, brief, ...(deliverables ? { deliverables: String(deliverables) } : {}),
       origin, inputFiles: origin?.files || [], createdAt: new Date().toISOString(), notified: false, toolCalls: 0 };
     mark(task, 'queued', 'front');
@@ -289,7 +294,18 @@ export class WorkCore {
   }
 
   /** Worker Session events: a turn that ends without a report gets one reminder, then fails. */
+  /** The room message behind the current Bot-to-Bot request, while the asking Bot is still answering it. */
+  askedOrigin() {
+    const asked = this.asked;
+    const asker = asked && Date.now() - asked.at < 30 * 60_000 ? cores.get(asked.from) : undefined;
+    return asker && asker !== this && asker.origin ? { ...asker.origin, via: asked.from } : null;
+  }
+
   async event(session, event) {
+    const source = event.data?.message?.source || event.data?.source;
+    if (event.type === 'user/message' && this.frontSessions.has(session.id) && source?.kind === 'bot' && source.role === 'request' && source.senderSessionId) {
+      this.asked = { from: source.senderSessionId, at: Date.now() };
+    }
     const task = this.workerTask(session.id);
     if (!task) return false;
     if (event.type === 'turn/start') task.busy = true;
@@ -327,9 +343,23 @@ export class WorkCore {
   }
 
   async notify(task, message) {
+    const asker = message.kind === 'result' && task.origin?.via ? cores.get(task.origin.via) : undefined;
+    if (asker && asker !== this && asker.onResult) {
+      const bot = await this.native.bot(this.node.nativeBotId).catch(() => null);
+      await asker.adopt({ ...structuredClone(task), by: bot?.name || null });
+      task.notified = true; await this.save();
+      return;
+    }
     if (!this.onResult) return;
     await this.onResult(task, message);
     if (message.kind === 'result') { task.notified = true; await this.save(); }
+  }
+
+  /** Another Bot's finished task, done for a request this Bot made: delivered from here, where the request started. */
+  async adopt(task) {
+    this.state.tasks[task.id] = { ...task, notified: false };
+    await this.save();
+    await this.notify(this.state.tasks[task.id], { kind: 'result' });
   }
 
   /** Results that finished while no Bot node was listening (or before a restart). */
@@ -351,7 +381,7 @@ export class WorkCore {
   resultText(task, message) {
     if (message.kind === 'question') return `[task.question] 工作者 ${task.id}（${task.title}）提问：${message.question}\n请回答：可以直接问对方，或用 task_note 把答案转给工作者。`;
     if (task.status === 'unknown') return `「${task.title}」在宿主重启时还没有结束，结果不确定。我没有自动重做，需要的话告诉我。`;
-    return `「${task.title}」${task.status === 'done' ? '完成了' : '没有完成'}。\n\n${task.summary || ''}`.trim();
+    return `${task.by ? `${task.by}：` : ''}「${task.title}」${task.status === 'done' ? '完成了' : '没有完成'}。\n\n${task.summary || ''}`.trim();
   }
 
   /** Record a delivered result for the front's next turn. */
@@ -374,5 +404,6 @@ export class WorkCore {
     for (const timer of this.timers.values()) clearTimeout(timer);
     this.timers.clear();
     this.disposeGuard?.();
+    if (cores.get(this.node.nativeBotId) === this) cores.delete(this.node.nativeBotId);
   }
 }
