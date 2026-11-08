@@ -246,6 +246,11 @@ test('reply relationships and native Matrix mentions are reliable but an explici
   named.content['m.mentions'] = { user_ids: [peer.id, self.id] };
   await f.node.ingestEvents([named]);
   assert.equal(f.store.item('$named-other'), undefined);
+  const listed = message('$listed-other', '帮忙核对一下公告。', { replyTo: '$own', to: [peer.id] });
+  listed.content['org.ds_group'].mentions = { users: [], replyUserId: self.id };
+  listed.content['m.mentions'] = { user_ids: [self.id] };
+  await f.node.ingestEvents([listed]);
+  assert.equal(f.store.item('$listed-other'), undefined);
 });
 
 test('consecutive Bot chatter is bounded without suppressing real directed delegation and result chains', async t => {

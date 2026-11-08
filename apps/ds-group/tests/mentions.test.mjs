@@ -102,6 +102,9 @@ test('reply mention uses the actual replied sender and can be disabled', async t
   assert.deepEqual(named.to, []);
   assert.equal(named.mentions.replyUserId, bot);
   assert.ok(named.mMentions.user_ids.includes(bot));
+  // The same holds when the recipient comes in the API's explicit `to`.
+  const listed = await feature.resolveMessage({ userId: alice, roomId, members, client, input: { body: '看看这个', to: [bob], replyTo: '$prior' } });
+  assert.deepEqual(listed.to, [bob]);
 });
 
 test('presence expires and here recipients remain the send-time snapshot', async t => {
