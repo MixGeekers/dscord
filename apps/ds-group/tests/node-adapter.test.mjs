@@ -294,3 +294,9 @@ test('a worker result becomes a turn for the front and its reply lands on the or
     assert.deepEqual(sent[0].options.mMentions.user_ids, [participants[0].id]);
   } finally { store.close(); }
 });
+
+test('closing a store twice is harmless, so startup cleanup cannot mask the original failure', () => {
+  const store = new NodeStore(':memory:', finance.id);
+  store.close();
+  assert.doesNotThrow(() => store.close());
+});

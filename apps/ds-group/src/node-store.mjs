@@ -937,5 +937,5 @@ export class NodeStore {
       lastError: failure?.error ?? null, counts, cursor: this.cursor() ?? null };
   }
 
-  close() { this.db.close(); }
+  close() { if (this.db.isOpen) this.db.close(); }
 }

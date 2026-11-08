@@ -39,6 +39,14 @@ const targetOf = args => {
 };
 const ended = task => ['done', 'failed', 'cancelled', 'unknown'].includes(task?.status);
 const shortId = () => `T-${randomUUID().slice(0, 8)}`;
+// DSH registers compiled definitions: defineTool turns the field specs into an
+// object JSON Schema. Loaded lazily because the SDK resolves through the host
+// runtime only after the native team has started.
+let defineTool;
+const compileTools = async defs => {
+  defineTool ||= (await import('@deepseek-ai/dsh-tools')).defineTool;
+  return defs.map(def => defineTool(def));
+};
 // Every status change is kept on the task as its timeline.
 const mark = (task, to, by, extra = {}) => {
   (task.events ||= []).push({ at: new Date().toISOString(), from: task.status ?? null, to, by });
@@ -71,14 +79,14 @@ export class WorkCore {
   }
 
   /** Make the Bot's current native Session a front: front tools in, work tools out. */
-  serveFront(agent) {
+  async serveFront(agent) {
     const id = agent?.session?.id;
     if (!id) return;
     this.frontSessions.add(id);
     const tools = agent.ctx?.tools;
     if (!tools || this.served.has(agent)) return;
     this.served.add(agent);
-    for (const def of this.frontTools()) {
+    for (const def of await compileTools(this.frontTools())) {
       try { tools.register(def); } catch { /* already registered on this Agent */ }
     }
     const served = (this.ctx.tools?.schemas?.(agent) || tools.schemas?.(agent) || []).map(tool => tool.name);
@@ -166,7 +174,7 @@ export class WorkCore {
     const agent = await this.native.agent(sessionId);
     await this.ctx.sessionTitle?.rename?.(agent.session, `${bot.name} · ${task.title}`).catch?.(() => {});
     await this.selectModel(sessionId, bot.workerModel || bot.model);
-    for (const def of this.workerTools(task)) agent.ctx.tools.register(def);
+    for (const def of await compileTools(this.workerTools(task))) agent.ctx.tools.register(def);
     this.timers.set(task.id, setTimeout(() => void this.timeout(task.id), this.timeoutMs));
     await this.prompt(sessionId, this.briefText(task));
   }

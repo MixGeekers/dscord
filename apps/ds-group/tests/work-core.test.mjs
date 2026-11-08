@@ -34,7 +34,7 @@ const run = (f, sessionId, name, args = {}) => f.agentFor(sessionId).tools.get(n
 
 test('the front keeps only communication tools and is refused everything else', async t => {
   const f = await fixture(t);
-  f.core.serveFront(f.agentFor('front'));
+  await f.core.serveFront(f.agentFor('front'));
   const front = f.agentFor('front');
   assert.ok(['dispatch_work', 'task_status', 'task_cancel', 'task_note'].every(name => front.tools.has(name)));
   assert.deepEqual(front.restricted, ['bash', 'write']);
@@ -47,7 +47,7 @@ test('the front keeps only communication tools and is refused everything else', 
 
 test('dispatch starts a worker with the brief and origin, and a verified report goes back once', async t => {
   const f = await fixture(t);
-  f.core.serveFront(f.agentFor('front'));
+  await f.core.serveFront(f.agentFor('front'));
   f.core.origin = { roomId: '!r', eventId: '$e', senderId: '@ann', senderName: 'Ann', body: '帮我整理成 CSV', files: ['/in/a.xlsx'] };
   const reply = await run(f, 'front', 'dispatch_work', { title: '整理表格', brief: '把 a.xlsx 转成 CSV' });
   const task = Object.values(f.state.tasks)[0];
@@ -66,7 +66,7 @@ test('dispatch starts a worker with the brief and origin, and a verified report 
 
 test('listed files that do not exist are refused so the worker can correct its report', async t => {
   const f = await fixture(t);
-  f.core.serveFront(f.agentFor('front'));
+  await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
   const reply = await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'ok', files: ['missing.txt'] });
   assert.match(reply, /文件核对没有通过/);
@@ -75,7 +75,7 @@ test('listed files that do not exist are refused so the worker can correct its r
 
 test('a worker turn without a report is reminded once, then fails with its last words', async t => {
   const f = await fixture(t);
-  f.core.serveFront(f.agentFor('front'));
+  await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
   await f.core.event({ id: 'worker-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '我做到一半' }] } } });
   await f.core.event({ id: 'worker-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
@@ -86,7 +86,7 @@ test('a worker turn without a report is reminded once, then fails with its last 
 
 test('slots queue extra work, cancel stops a worker without a result message, and the queue moves on', async t => {
   const f = await fixture(t, { maxWorkers: 1 });
-  f.core.serveFront(f.agentFor('front'));
+  await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { title: 'one', brief: '1' });
   assert.match(await run(f, 'front', 'dispatch_work', { title: 'two', brief: '2' }), /排队中/);
   const [first, second] = Object.values(f.state.tasks);
@@ -105,7 +105,7 @@ test('slots queue extra work, cancel stops a worker without a result message, an
 
 test('timeouts stop the worker and report failure; restarts turn open work into unknown results', async t => {
   const f = await fixture(t, { timeoutMs: 20 });
-  f.core.serveFront(f.agentFor('front'));
+  await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { title: 'slow', brief: 's' });
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.equal(f.results[0].task.status, 'failed'); assert.equal(f.agentFor('worker-1').cancelled, 1);
@@ -118,7 +118,7 @@ test('timeouts stop the worker and report failure; restarts turn open work into 
 
 test('a worker question goes to the front without ending the task', async t => {
   const f = await fixture(t);
-  f.core.serveFront(f.agentFor('front'));
+  await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { title: 'q', brief: 'q' });
   await run(f, 'worker-1', 'work_ask', { question: '用哪个日期格式？' });
   assert.equal(f.results[0].message.kind, 'question'); assert.match(f.results[0].text, /\[task\.question\].*日期格式/s);

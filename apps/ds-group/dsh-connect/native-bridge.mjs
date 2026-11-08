@@ -299,7 +299,7 @@ export class NativeBridge {
       await report(); check();
       const bot = await interruptible(() => this.native.bot(this.node.nativeBotId), signal);
       const agent = await interruptible(() => this.native.agent(bot.sessionId), signal);
-      this.core.serveFront(agent);
+      await this.core.serveFront(agent);
       await interruptible(() => Promise.race([agent.whenIdle(), new Promise((_, reject) => { this.waiting = { record, reject }; })]), signal);
       this.waiting = null;
       check();

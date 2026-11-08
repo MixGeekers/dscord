@@ -104,11 +104,10 @@ export class NativeConnections {
       }
       this.connections.set(node.id, entry);
     } catch (error) {
-      await entry.control?.stop();
-      await entry.botNode?.stop();
-      await bridge?.detach();
-      store?.close();
-      await release();
+      // Each cleanup step runs, and none of them replaces the original failure.
+      for (const cleanup of [() => entry.control?.stop(), () => entry.botNode?.stop(), () => bridge?.detach(), () => store?.close(), release]) {
+        await Promise.resolve().then(cleanup).catch(() => {});
+      }
       throw error;
     }
   }
