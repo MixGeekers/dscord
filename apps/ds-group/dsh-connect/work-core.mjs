@@ -17,18 +17,21 @@ export const FRONT_TOOLS = new Set([
   'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note',
   'recall', 'contacts', 'memory_source', 'raw_source_query',
   'read_group_chat', 'read_own_chat', 'list_bots', 'message_bot', 'post_to_group', 'group_relay',
-  'read_image', 'web_fetch', 'ask_user', 'ask_user_question', 'show_view',
+  'read_image', 'web_fetch',
   // Quick Bot-level actions: memory, team and schedules belong to the Bot itself.
   'remember', 'forget', 'review_memory', 'schedule_create', 'schedule_edit',
   'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal',
 ]);
 // Workers do the work; they do not speak for the Bot or change the team.
 export const WORKER_DENY = new Set([
-  'ask_user', 'ask_user_question', 'message_bot', 'post_to_group', 'group_relay', 'show_view',
+  'message_bot', 'post_to_group', 'group_relay',
   'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal',
   'schedule_create', 'schedule_edit', 'remember', 'forget', 'review_memory',
   'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note',
 ]);
+// Desktop cards: in DSCord nobody sees them, and a turn that ends on one has no reply to send (script 02 G16).
+export const CARD_TOOLS = new Set(['ask_user', 'ask_user_question', 'show_view']);
+export const CARD_REFUSAL = '这里是聊天，没有卡片界面。要问对方，就把问题直接写在这一轮的回复里；工作者用 work_ask。';
 export const FRONT_REFUSAL = '前台不直接做这件事。用 dispatch_work 把它交给工作者，然后告诉对方已经开始。';
 
 const output = { schema: { type: 'string' }, render: (_args, value) => [{ type: 'text', text: String(value) }] };
@@ -126,6 +129,7 @@ export class WorkCore {
 
   guard(exec) {
     const id = exec.agent?.session?.id ?? exec.agent?.id;
+    if (CARD_TOOLS.has(exec.name) && (this.frontSessions.has(id) || this.workerTask(id))) return CARD_REFUSAL;
     if (this.frontSessions.has(id) && !FRONT_TOOLS.has(exec.name)) return FRONT_REFUSAL;
     if (this.workerTask(id) && WORKER_DENY.has(exec.name)) return '工作者只做事并用 work_report 汇报，不直接对外说话或改团队设置。';
     return undefined;

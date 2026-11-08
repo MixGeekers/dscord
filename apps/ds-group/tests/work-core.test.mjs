@@ -4,7 +4,7 @@ import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { WorkCore, FRONT_REFUSAL, FRONT_TOOLS, WORKER_DENY, localBot } from '../dsh-connect/work-core.mjs';
+import { WorkCore, CARD_REFUSAL, CARD_TOOLS, FRONT_REFUSAL, FRONT_TOOLS, WORKER_DENY, localBot } from '../dsh-connect/work-core.mjs';
 import { ContactBook } from '../src/contact-book.mjs';
 
 async function fixture(t, options = {}) {
@@ -54,6 +54,12 @@ test('the front keeps only communication tools and is refused everything else', 
   // Every tool a worker is denied stays available at the front, so nothing becomes unreachable.
   for (const name of WORKER_DENY) assert.ok(FRONT_TOOLS.has(name), name);
   assert.equal(f.guard({ agent: f.agentFor('someone-else'), name: 'bash' }), undefined);
+  // Script 02 G16: a desktop card has no reader in a chat room and leaves the turn without a reply.
+  for (const name of CARD_TOOLS) {
+    assert.equal(FRONT_TOOLS.has(name), false, name);
+    assert.equal(f.guard({ agent: front, name }), CARD_REFUSAL);
+  }
+  assert.equal(f.guard({ agent: f.agentFor('someone-else'), name: 'ask_user' }), undefined);
 });
 
 test('dispatch starts a worker with the brief and origin, and a verified report goes back once', async t => {
@@ -69,6 +75,7 @@ test('dispatch starts a worker with the brief and origin, and a verified report 
   assert.match(f.prompts[0].text, /把 a\.xlsx 转成 CSV/); assert.match(f.prompts[0].text, /帮我整理成 CSV/); assert.match(f.prompts[0].text, /\/in\/a\.xlsx/);
   assert.equal(f.guard({ agent: f.agentFor('worker-1'), name: 'message_bot' }) !== undefined, true);
   assert.equal(f.guard({ agent: f.agentFor('worker-1'), name: 'bash' }), undefined);
+  assert.equal(f.guard({ agent: f.agentFor('worker-1'), name: 'ask_user' }), CARD_REFUSAL);
   await writeFile(path.join(task.dir, 'outputs', 'out.csv'), 'a,b\n');
   // The reply is what the requester reads; the summary is the front's record and never goes out.
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '转好了' }), /需要 reply/);
