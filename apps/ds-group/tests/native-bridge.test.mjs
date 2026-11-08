@@ -296,7 +296,7 @@ test('requests made with ask_bot go out with the reply of the turn that made the
     await event('assistant/message', { turn, message: { content: [{ type: 'text', text: '我去请 QA 看日志。' }] } });
     await event('turn/end', { turn, reason: { kind: 'completed' } });
   } });
-  f.bridge.core.seat(f.node.id).contacts = new ContactBook({ db, self: { id: f.node.id } });
+  f.bridge.core.seat(f.node.id).contacts = new ContactBook({ db }).on({ self: { id: f.node.id } });
   f.bridge.core.seat(f.node.id).contacts.seeRoom('!a:home.test', [{ id: f.node.id, kind: 'bot' }, { id: '@qa:other.test', name: 'QA', kind: 'bot' }]);
   const result = await f.bridge.turn(f.request('asks'));
   assert.match(asked, /发给 QA/);

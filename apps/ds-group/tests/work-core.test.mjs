@@ -34,7 +34,7 @@ async function fixture(t, options = {}) {
   Object.defineProperty(core, 'origin', { get: () => current, set: value => { current = value && { botId: id, ...value }; } });
   const db = new DatabaseSync(':memory:');
   const seat = core.seat(id);
-  seat.contacts = new ContactBook({ db, self: { id }, local: localBot });
+  seat.contacts = new ContactBook({ db }).on({ self: { id }, local: localBot });
   // The room message the front is answering; null for a Bot that is only asked by another Bot.
   core.origin = origin;
   t.after(() => db.close());

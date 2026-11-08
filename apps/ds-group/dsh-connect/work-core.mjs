@@ -299,12 +299,12 @@ export class WorkCore {
     if (!body) return '需要 body：写清请对方做什么。';
     const contact = this.contacts?.resolve(to);
     if (!contact?.id) return contact?.error || '对方不在你的通讯录里，联系不上；直接告诉请求者。';
-    if (this.seats.has(contact.id)) return '不能请自己；这件事用 dispatch_work 交给工作者。';
+    if (this.seats.has(contact.account)) return '不能请自己；这件事用 dispatch_work 交给工作者。';
     // One request gets one result: work a worker delivers on its own does not also wait for another Bot.
     const handed = this.handedOff(origin.requestId);
     if (handed.length) return `这一轮已经把这件事交给了工作者 ${handed.join('、')}，它的结果会直接交给请求者，同一件事不要再找别的 Bot。确实需要别的 Bot 的材料，就先用 task_cancel 取消，再用 ask_bot，等结果回来后连同材料一起派工。`;
     const asks = (this.asks ||= new Map()).get(origin.requestId) || [];
-    if (asks.some(ask => ask.to === contact.id)) return `这一轮已经请过 ${contact.name}；要补充就写进同一个请求，不要再发一次。`;
+    if (asks.some(ask => ask.to === contact.account)) return `这一轮已经请过 ${contact.name}；要补充就写进同一个请求，不要再发一次。`;
     if (asks.length >= ASKS_PER_TURN) return `一轮最多请 ${ASKS_PER_TURN} 个 Bot。`;
     const text = [body, audience ? `结果给谁、什么口径：${String(audience).trim()}` : '',
       plain === true ? '最终读者不该看到技术内部信息：不贴堆栈、异常类型、源码位置和日志原文。' : ''].filter(Boolean).join('\n\n');
@@ -318,7 +318,7 @@ export class WorkCore {
       if (!info?.isFile()) return `读不到文件 ${file}；只能带你这边真实存在的文件。`;
       attached.push({ path: filename, name: path.basename(filename) });
     }
-    asks.push({ to: contact.id, body: text, ...(attached.length ? { files: attached } : {}) });
+    asks.push({ to: contact.account, body: text, ...(attached.length ? { files: attached } : {}) });
     this.asks.set(origin.requestId, asks);
     return `已记下：这一轮结束后发给 ${contact.name}。它的结果会作为新消息回到你这里，那时再回复请求者。现在这一轮的回复简短告诉对方你去问了谁，不要编结果。`;
   }

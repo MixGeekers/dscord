@@ -9,7 +9,7 @@ import { NodeStore } from '../src/node-store.mjs';
 const alice = { id: '@alice:roster.test', localpart: 'alice', name: 'Alice', kind: 'human' };
 const bot = { id: '@bot-one:roster.test', localpart: 'bot-one', name: 'Helper', kind: 'bot', accessToken: 'synthetic-own-token' };
 const newcomer = { id: '@new-human:roster.test', localpart: 'new-human', name: 'New human', kind: 'human' };
-const peer = { id: '@bot-two:roster.test', localpart: 'bot-two', name: 'Helper', kind: 'bot', ownerId: newcomer.id };
+const peer = { id: '@bot-two:roster.test', localpart: 'bot-two', name: 'Helper', kind: 'bot', ownerId: newcomer.id, globalId: 'bot-two@central.test' };
 const roomId = '!group:roster.test';
 const message = (id, sender, metadata = {}) => ({ type: 'm.room.message', event_id: id, room_id: roomId, sender,
   content: { body: 'Create a summary.', 'org.ds_group': { to: [bot.id], ...metadata } } });
@@ -59,7 +59,8 @@ test('new humans and Bots are known before sync persists their delivery identity
   // Registered on the server is not the same as known: a Bot this one never shared a room with is not in its book.
   assert.deepEqual(f.calls[0].event.contacts, []);
   f.node.contacts.seeRoom(roomId, [alice, bot, peer]);
-  assert.deepEqual(f.node.contacts.reachableBots(), [{ id: peer.id, name: peer.name, reach: 'room', rooms: [roomId] }]);
+  // The book keys the peer by the global identity its server's roster gives, reached through its account here.
+  assert.deepEqual(f.node.contacts.reachableBots(), [{ id: peer.globalId, account: peer.id, name: peer.name, reach: 'room', rooms: [roomId] }]);
 });
 
 test('a failed or incomplete roster leaves unknown messages and the sync cursor unconsumed', async t => {
