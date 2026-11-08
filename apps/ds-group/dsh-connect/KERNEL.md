@@ -63,5 +63,6 @@ DSCord 的聊天入口是 Matrix。吸收的其他 IM adapter 源码不等于提
 
 - 联系人以完整身份 ID 为键，这也是记忆里人物档案的键。某人是谁、偏好什么、能做什么只记在人物档案里，通讯录不另记。
 - 共同房间来自房间 roster（只有成员读得到）和时间线里的成员变化；同一个 DSH 里的 Bot 由宿主告知（`work-core.mjs` 的 `localBot`），用 `message_bot` 找，其他的经共同房间用 `delegate` 找。前台每轮在 `contacts` 里看到能找到的 Bot 和找法，不在其中的 Bot 联系不上。
+- 跨节点受托时，前台这一轮如果派了工，它的回复只是受理（`reply` / `ack`，不唤醒对方），不算结果；工作者的结果作为对原请求的 `task.result` 交回请求方 Bot，带原任务号和来源链。
 - `delegate` 发到通讯录里双方都在的房间，节点协作房间优先，其次是来源房间；发送彻底失败时在原消息下告诉请求方没有发出去。
 - 往来（exchange）记录每次 Bot 间请求：方向、对方、途径（`message_bot` / `matrix`）、代表的源消息、状态（received → dispatched → delivered，或 sending → sent → returned，失败为 failed）和任务编号。主人通过 kernel 管理通道的 `contacts` 操作只读查看，按联系人过滤，按时间分页。

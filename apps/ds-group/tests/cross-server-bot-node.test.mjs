@@ -204,3 +204,24 @@ test('when the delegation cannot be sent, the requester is told it did not go ou
   assert.match(errors.join('\n'), /Matrix delivery failed/);
   assert.equal(f.runtime.contacts.view().exchanges[0].status, 'failed');
 });
+
+test('another Bot gets the worker result as the answer to its request, not the front saying work has started', async t => {
+  const peer = '@peer:b.node.test';
+  const f = await fixture(t, { sender: peer, meta: { kind: 'task.request', returnTo: peer, taskId: 'task-x', hop: 1,
+    originSenderId: humanId, originRoomId: '!b-room:b.node.test', originEventId: '$su' } });
+  f.bridge.turn = async request => request.event.workerKind === 'result'
+    ? { status: 'completed', text: 'Helper：「核对崩溃」完成了。\n\n是已知问题 B-017。', sessionId: 'native-room-session', artifacts: [], toolReceipts: [] }
+    : { status: 'completed', text: '收到，已开工，结论出来直接回你。', dispatched: ['T-1'], sessionId: 'native-room-session', artifacts: [], toolReceipts: [] };
+  await drain(f.runtime);
+  assert.equal(f.sent.length, 1);
+  assert.deepEqual([f.sent[0].options.kind, f.sent[0].options.deliveryRole, f.sent[0].options.to], ['reply', 'ack', []]);
+  assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'dispatched');
+  f.runtime.acceptWorkerResult({ id: 'T-1', origin: { roomId, eventId: '$node-request', senderId: peer } }, { kind: 'result' }, 'ignored');
+  await drain(f.runtime);
+  const answer = f.sent[1];
+  assert.deepEqual([answer.roomId, answer.options.kind, answer.options.to, answer.options.replyTo, answer.options.taskId],
+    [roomId, 'task.result', [peer], '$node-request', 'task-x']);
+  assert.deepEqual([answer.options.originEventId, answer.options.originRoomId, answer.options.hop], ['$su', '!b-room:b.node.test', 2]);
+  assert.match(answer.body, /B-017/);
+  assert.equal(f.runtime.contacts.exchange('in:$node-request').status, 'returned');
+});

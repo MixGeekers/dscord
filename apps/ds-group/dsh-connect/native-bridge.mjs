@@ -376,6 +376,8 @@ export class NativeBridge {
         throw error(isModelQuotaFailure(run.failure) ? 'MODEL_QUOTA_EXCEEDED' : 'NATIVE_TURN_FAILED');
       }
       record.text = run.text;
+      // Work this turn handed to workers: the reply only acknowledges it, the result follows later.
+      record.dispatched = Object.values(this.state.tasks).filter(task => task.origin?.requestId === input.requestId).map(task => task.id);
       // The front writes no files; worker results carry theirs without a front turn.
       record.artifacts = [];
       record.status = 'completed'; record.stage = 'completed'; record.summary = '处理完成';

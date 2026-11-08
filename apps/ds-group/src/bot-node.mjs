@@ -84,8 +84,14 @@ export function parseBotOutput(raw, botId, participants, { ignoreDelivery = fals
   return { ...output, delegate: { to: delegate.to, body: delegate.body.trim() } };
 }
 
-export function deliveriesFor(event, output, botId, participants, collaborationRoomId = event.room_id) {
+export function deliveriesFor(event, output, botId, participants, collaborationRoomId = event.room_id, seed = event.event_id) {
   const meta = metadataOf(event);
+  // A worker's result for another Bot's request answers that request, as the reply to it would have.
+  if (meta.workerTask && meta.answers) {
+    const request = { ...event, event_id: meta.answers.eventId, sender: meta.answers.sender,
+      content: { ...event.content, 'org.ds_group': meta.answers.meta } };
+    return deliveriesFor(request, output, botId, participants, collaborationRoomId, event.event_id);
+  }
   const hop = Number.isInteger(meta.hop) && meta.hop >= 0 ? meta.hop : 0;
   if (hop > 4 || (output.delegate && hop >= 4)) throw new Error('Collaboration hop limit reached');
   const taskId = typeof meta.taskId === 'string' && meta.taskId ? meta.taskId : `task-${digest(event.event_id).slice(0, 24)}`;
@@ -101,8 +107,10 @@ export function deliveriesFor(event, output, botId, participants, collaborationR
     : sourceThreadRootId;
   const returnTo = requestedByBot && meta.kind === 'task.request'
     && meta.returnTo === event.sender ? meta.returnTo : undefined;
-  const prefix = `ds-group-${digest(`${botId}\0${event.event_id}`).slice(0, 40)}`;
+  const prefix = `ds-group-${digest(`${botId}\0${seed}`).slice(0, 40)}`;
   const isFinalResult = requestedByBot && ['task.result', 'task.failure'].includes(meta.kind) && !output.delegate;
+  // A reply that only says the work was handed to a worker is not the result another Bot waits for.
+  const answering = returnTo && !output.delegate && !output.accepted;
   const replyRoomId = isFinalResult ? originRoomId : event.room_id;
   const replyEventId = isFinalResult ? originEventId : event.event_id;
   const replyThreadRootId = isFinalResult ? originThreadRootId : sourceThreadRootId;
@@ -115,10 +123,10 @@ export function deliveriesFor(event, output, botId, participants, collaborationR
     || !sourceAttachments.some(source => source.sha256 === file.sha256 && source.name === file.name));
   const replyAttachments = attachments.length ? attachments : isFinalResult && !output.failure ? uniqueAttachments(output.resultAttachments || eventAttachments(event)) : [];
   const result = [{ roomId: replyRoomId, body: output.text, options: {
-    ...common, replyTo: replyEventId, transactionId: `${prefix}-reply`, to: returnTo && !output.delegate ? [returnTo] : [],
+    ...common, replyTo: replyEventId, transactionId: `${prefix}-reply`, to: answering ? [returnTo] : [],
     ...(replyThreadRootId ? { threadRootId: replyThreadRootId } : {}),
-    deliveryRole: output.controlOnly ? 'control' : output.delegate ? 'ack' : returnTo ? 'peer' : 'final',
-    kind: returnTo && !output.delegate ? output.failure ? 'task.failure' : 'task.result' : 'reply',
+    deliveryRole: output.controlOnly ? 'control' : output.delegate || output.accepted ? 'ack' : returnTo ? 'peer' : 'final',
+    kind: answering ? output.failure ? 'task.failure' : 'task.result' : 'reply',
     ...(replyAttachments.length ? { attachments: replyAttachments } : {}),
     mentions: { users: [], roles: [], everyone: false, here: false, replyUserId: replyRecipient,
       roleUsers: [], everyoneUsers: [], hereUsers: [] },
@@ -500,10 +508,16 @@ export class BotNode {
   acceptWorkerResult(task, message, text) {
     const origin = task.origin;
     const eventId = message.kind === 'result' ? `$dscord-${task.id}-result` : `$dscord-${task.id}-q-${Date.now()}`;
+    // Work done for another Bot's request goes back to that Bot as the answer to its request.
+    const request = message.kind === 'result' ? this.store.message(origin.eventId) : undefined;
+    const requestMeta = request ? metadataOf(request) : {};
+    const answers = requestMeta.kind === 'task.request' && requestMeta.returnTo === request.sender
+      && this.participants.some(person => person.id === request.sender && person.kind === 'bot')
+      ? { eventId: request.event_id, sender: request.sender, meta: requestMeta } : undefined;
     const event = { type: 'm.room.message', event_id: eventId, room_id: origin.roomId, sender: this.participant.id,
       origin_server_ts: Date.now(), content: { msgtype: 'm.notice', body: text, 'org.ds_group': { kind: 'task.result', workerTask: task.id, workerKind: message.kind,
         originSenderId: origin.senderId, originRoomId: origin.roomId, originEventId: origin.eventId,
-        ...(origin.threadRootId ? { originThreadRootId: origin.threadRootId } : {}) } } };
+        ...(origin.threadRootId ? { originThreadRootId: origin.threadRootId } : {}), ...(answers ? { answers } : {}) } } };
     this.store.ingest([event], undefined, item => this.delivery.register(item), { route: candidate => this.routeOf(candidate),
       roomContext: roomId => this.roomContextFor(roomId) });
   }
@@ -869,6 +883,7 @@ export class BotNode {
         { ignoreDelivery: !this.delivery.acceptsProposal(item) });
       this.delivery.applyOutput(item, output);
       output.controlOnly = response.controlOnly === true;
+      output.accepted = response.dispatched?.length > 0;
       await this.withTransferControl(item, async signal => {
         for (const artifact of response.artifacts || []) {
           if (!this.files) throw new Error('This node has no attachment transfer service');
@@ -953,9 +968,10 @@ export class BotNode {
       this.lastAttentionSpokeAt = Date.now();
     }
     const meta = metadataOf(item.event);
+    const answered = meta.answers?.eventId || item.event_id;
     if (['task.result', 'task.failure'].includes(delivery.options.kind)) {
-      this.contacts.settle(`in:${item.event_id}`, { status: delivery.options.kind === 'task.result' ? 'returned' : 'failed' });
-    }
+      this.contacts.settle(`in:${answered}`, { status: delivery.options.kind === 'task.result' ? 'returned' : 'failed' });
+    } else if (item.response?.dispatched?.length) this.contacts.settle(`in:${answered}`, { status: 'dispatched' });
     if (['task.result', 'task.failure'].includes(meta.kind) && meta.taskId) {
       this.contacts.settle(`${meta.taskId}>${item.event.sender}`, { status: meta.kind === 'task.result' ? 'returned' : 'failed' });
     }
