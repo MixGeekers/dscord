@@ -32,6 +32,8 @@ services:
       DSCORD_CENTRAL_ISSUER: ${DS_GROUP_CENTRAL_URL:-http://localhost:18200}
       DSCORD_CENTRAL_REGISTRATION: ${DSCORD_CENTRAL_REGISTRATION:-open}
       DSCORD_CENTRAL_CLIENT_ORIGINS: ${DSCORD_CENTRAL_CLIENT_ORIGINS:-${DS_GROUP_PUBLIC_URL:-http://localhost:18100}}
+      # The server index reads this chat server's public page through the Compose network.
+      DSCORD_CENTRAL_SERVER_FETCH_URLS: ${DSCORD_CENTRAL_SERVER_FETCH_URLS:-${DS_GROUP_PUBLIC_URL:-http://localhost:18100}=http://core:18100}
     volumes:
       - central-data:/central
     ports:
@@ -123,6 +125,7 @@ services:
       DS_GROUP_SYNAPSE_DIR: /synapse
       DS_GROUP_ADMIN_HOST: 0.0.0.0
       DS_GROUP_ADMIN_PORT: "18110"
+      DS_GROUP_CENTRAL_FETCH_URL: ${DS_GROUP_CENTRAL_FETCH_URL:-http://central:18200}
     volumes:
       - core-data:/data
       - synapse-data:/synapse

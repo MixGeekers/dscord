@@ -46,14 +46,19 @@ export function centralOptions(config = {}) {
 
 /**
  * The saved configuration. On first start a deployment may seed it from the environment
- * (DSCORD_CENTRAL_ISSUER, DSCORD_CENTRAL_REGISTRATION, DSCORD_CENTRAL_CLIENT_ORIGINS); after that the file is the configuration.
+ * (DSCORD_CENTRAL_ISSUER, DSCORD_CENTRAL_REGISTRATION, DSCORD_CENTRAL_CLIENT_ORIGINS, DSCORD_CENTRAL_SERVER_FETCH_URLS);
+ * after that the file is the configuration.
  */
 export async function loadConfig(dataRoot, env = process.env) {
   const filename = env.DSCORD_CENTRAL_CONFIG_PATH || path.join(dataRoot, 'central-config.json');
   try { return JSON.parse(await readFile(filename, 'utf8')); }
   catch (error) { if (error.code !== 'ENOENT' || !env.DSCORD_CENTRAL_ISSUER) throw error; }
+  const list = value => (value || '').split(',').map(item => item.trim()).filter(Boolean);
   const config = { issuer: env.DSCORD_CENTRAL_ISSUER, registration: env.DSCORD_CENTRAL_REGISTRATION || 'open',
-    clientOrigins: (env.DSCORD_CENTRAL_CLIENT_ORIGINS || '').split(',').map(value => value.trim()).filter(Boolean) };
+    clientOrigins: list(env.DSCORD_CENTRAL_CLIENT_ORIGINS) };
+  // origin=fetch-url pairs, for chat servers whose public origin is not reachable from where central runs.
+  const fetchUrls = list(env.DSCORD_CENTRAL_SERVER_FETCH_URLS).map(pair => pair.split('=').map(part => part.trim()));
+  if (fetchUrls.length) config.serverFetchUrls = Object.fromEntries(fetchUrls);
   centralOptions(config);
   await writeFile(filename, JSON.stringify(config, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
   return config;

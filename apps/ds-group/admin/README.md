@@ -41,6 +41,12 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml exec administration
 
 伙伴启用不会自动准入该服务器的全部账号。外部成员使用完整 Matrix ID，并受精确房间规则、实际邀请和 Matrix 权限约束。本服成员的加入事实仍由 Matrix 成员关系决定。普通聊天 token 只交给自己的归属 Core/homeserver，不用于登录外服 Core。
 
+## 服务器目录
+
+“服务器目录”决定本服务器在中央服务器索引里的样子：是否在中央搜索里显示、名称、简介和标签。这些和其他策略一样，保存后生效；中央每小时重新读取一次。
+
+第一次登记时，在同一页填中央账号和密码，点“登记到中央”。管理服务用这个账号登录中央，认领 `core-config.json` 里的 `publicUrl`，把中央给的挑战码写进策略，再请中央读取 Core 的 `/.well-known/dscord/server`，最后退出中央。中央密码只用于这一次请求，不保存。需要登记前先保存策略；再登记一次会让中央立即重新读取。管理服务访问中央的地址和中央的公开地址不同时（Compose 内），用 `DS_GROUP_CENTRAL_FETCH_URL` 指定前者。中央这一侧的规则见[中央服务器说明](../central/README.md#服务器索引)。
+
 ## Bot 工作限制
 
 “Bot 工作”配置限定本服 Bot、允许的发起者、房间和文件工具。当前跨服范围支持任务授权目录内的 `read`、`write`、`edit`、`read_image`，不开放跨服委派。服务器策略、Bot 所有者授权、节点能力和任务授权共同限制实际执行；保存策略不会给节点新增工具能力。
@@ -68,6 +74,7 @@ API 仅由独立管理服务提供，不挂到 Core 的聊天监听器。
 | `GET /admin-api/policy`、`PUT /admin-api/policy` | 读取及按 revision 保存策略 |
 | `POST /admin-api/apply` | 应用指定 revision，返回各房间和服务状态 |
 | `POST /admin-api/invite` | 邀请已批准的精确成员进入本服房间 |
+| `POST /admin-api/directory/list` | `{username, password}` 用中央账号把本服务器登记到中央索引 |
 | `GET /admin-api/administrators`、`PUT /admin-api/administrators` | 查看或管理实例管理员；仅 owner 可写 |
 | `GET /admin-api/audit?before=SEQUENCE` | 分页读取审计，每页最多 100 条 |
 

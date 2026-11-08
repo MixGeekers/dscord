@@ -2,7 +2,7 @@
 
 中央服务器只管三件事：账号、签发身份、服务器索引。它不存消息和文件，不转发聊天，也不持有任何 Matrix token。聊天服务器（Core + Synapse）接入一台中央，人和 Bot 都用中央账号登录聊天服务器。整体方案见项目文档《DSCord 中央身份与聊天服务器方案》。
 
-已经完成：账号、账号规则、身份令牌、Bot 节点授权（第一期），聊天服务器只认中央账号（第二期，见下文“聊天服务器怎样接入”）。服务器索引在后续各期完成。
+已经完成：账号、账号规则、身份令牌、Bot 节点授权（第一期），聊天服务器只认中央账号（第二期，见下文“聊天服务器怎样接入”），服务器索引（第四期，见下文“服务器索引”）。
 
 ## 运行
 
@@ -26,8 +26,9 @@ npm run central
 - `registration`：`open` 允许自助注册，`closed` 关闭。
 - `usernameRule`：账号规则，见下。
 - `clientOrigins`：允许跨域调用中央接口的网页客户端 origin。
+- `serverFetchUrls`：可选，`{ "聊天服务器 origin": "中央实际访问的地址" }`。中央所在网络访问不到某台聊天服务器的公开地址时（例如同一个 Compose 里），索引改从这里读它的公开页面。
 
-配置文件不存在时，可以用环境变量 `DSCORD_CENTRAL_ISSUER`、`DSCORD_CENTRAL_REGISTRATION`、`DSCORD_CENTRAL_CLIENT_ORIGINS`（逗号分隔）在第一次启动时生成它；之后以文件为准，改环境变量不再生效。Compose 自带的 `central` 服务就是这样启动的。
+配置文件不存在时，可以用环境变量 `DSCORD_CENTRAL_ISSUER`、`DSCORD_CENTRAL_REGISTRATION`、`DSCORD_CENTRAL_CLIENT_ORIGINS`（逗号分隔）、`DSCORD_CENTRAL_SERVER_FETCH_URLS`（逗号分隔的 `origin=地址`）在第一次启动时生成它；之后以文件为准，改环境变量不再生效。Compose 自带的 `central` 服务就是这样启动的。
 
 数据目录里的 `signing-key.json` 是签名私钥（权限 `0600`），`central.sqlite` 是账号库。备份时两者都要保留；换掉私钥后，聊天服务器要重新读取公钥。
 
@@ -60,6 +61,39 @@ npm run central
 | `POST /api/device` | Bot 节点 | `{label?}` 开始设备码授权，返回 `deviceCode`、`userCode`（10 分钟有效） |
 | `POST /api/device/approve` | Bot 的所属人 | `{userCode, botId}` 把这个节点授权给自己的 Bot |
 | `POST /api/device/token` | Bot 节点 | `{deviceCode}` 换取 Bot 的节点会话；所属人批准前返回 `AUTHORIZATION_PENDING`，只能换一次 |
+| `GET /api/servers?q=&tag=&limit=` | 任何人（不用令牌，允许任意网页跨域） | 搜索服务器索引 |
+| `POST /api/servers` | 人 | `{origin}` 认领一台聊天服务器，返回挑战码 `challenge`；同一个人再认领拿到同一个挑战码 |
+| `POST /api/servers/:origin/verify` | 人 | 读取 `origin` 的公开页面，挑战码对得上就把这台服务器记在自己名下 |
+| `GET /api/servers/mine` | 人 | 自己名下的服务器（含最近一次读取的结果）和还没验证的认领 |
+| `POST /api/servers/:origin/refresh` / `DELETE /api/servers/:origin` | 服务器所属人 | 立即重新读取 / 从索引里删除 |
+
+## 服务器索引
+
+索引只记每台聊天服务器自己公开的介绍，不存它的成员、房间和消息。
+
+- 登记：服务器管理员在中央认领服务器的 origin，拿到一个挑战码，把它写进聊天服务器的策略（管理后台“服务器目录”一步完成）。Core 随即在 `GET /.well-known/dscord/server` 公开这个挑战码、它信任的中央地址和自己的介绍。中央从这个 origin 读到页面、核对 `central` 是自己、挑战码和认领人的一致，就把认领人记为所属人。
+- 为什么是中央去读，而不是聊天服务器推送：能在这个 origin 上放出挑战码，就证明管理员控制这个域名；聊天服务器也就不需要在中央持有任何凭据。后验证的人接手所属权，因为能改页面的人才是实际的控制者。
+- 刷新：中央每小时重新读一遍所有登记过的服务器（读取不跟随跳转，页面上限 64 KB）。页面读不到、换了挑战码或改信任别的中央时，保留上次的介绍并记下错误；连续三天没读到成功的页面，就从搜索结果里消失，读到后自动恢复。管理员把“在中央搜索里显示”关掉，下次读取后也会从搜索里消失。
+- 搜索：只列公开、三天内读到过的服务器，按人数排序。`q` 里的每个词都要出现在名称、简介或标签里（不分大小写）；`tag` 按标签精确筛选；`limit` 默认 20，最多 50。结果不含挑战码。
+
+公开页面的格式（`schemaVersion: 1`）：
+
+```json
+{
+  "schemaVersion": 1,
+  "central": "https://id.example.org",
+  "origin": "https://chat.example.org",
+  "challenge": "dscord-server-…",
+  "listed": true,
+  "name": "机器人社",
+  "description": "机械臂和小车",
+  "tags": ["robots"],
+  "join": "central-account",
+  "members": { "people": 12, "bots": 3 }
+}
+```
+
+`origin` 必须和登记的 origin 一致；`name` 最多 80 字，`description` 最多 500 字，`tags` 最多 10 个、每个最多 32 字。
 
 ## 身份令牌
 

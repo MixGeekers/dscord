@@ -195,6 +195,9 @@ test('first start seeds the saved configuration from the environment and the fil
   if (process.platform !== 'win32') assert.equal((await stat(filename)).mode & 0o777, 0o600);
   assert.deepEqual(await loadConfig(root, { ...env, DSCORD_CENTRAL_REGISTRATION: 'open' }), seeded);
   await assert.rejects(loadConfig(await mkdtemp(path.join(root, 'bad-')), { DSCORD_CENTRAL_ISSUER: 'ftp://id.example.org' }));
+  const mapped = await loadConfig(await mkdtemp(path.join(root, 'fetch-')), { DSCORD_CENTRAL_ISSUER: 'https://id.example.org',
+    DSCORD_CENTRAL_SERVER_FETCH_URLS: 'https://chat-a.example.org=http://core:18100' });
+  assert.deepEqual(mapped.serverFetchUrls, { 'https://chat-a.example.org': 'http://core:18100' });
 });
 
 
