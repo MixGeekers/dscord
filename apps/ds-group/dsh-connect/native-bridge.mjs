@@ -333,10 +333,18 @@ export class NativeBridge {
       const files = await prepareWorkFiles({ dataDir: this.node.directory, requestId: input.requestId, workdir: input.workdir, files: input.files });
       check();
       const workerTask = input.event.workerTask && this.state.tasks[input.event.workerTask];
-      this.core.origin = workerTask?.origin || { requestId: input.requestId, roomId: input.event.roomId, eventId: input.event.eventId,
-        ...(input.event.threadRootId ? { threadRootId: input.event.threadRootId } : {}),
-        senderId: input.event.senderId, senderName: input.event.senderName,
-        body: [...(input.event.mergedMessages || []).map(message => message.body), input.event.body].join('\n'),
+      // Another Bot's result to this Bot's own request belongs to the message that started the request:
+      // work dispatched from it answers that message, not the peer's result.
+      const event = input.event;
+      const answer = ['task.result', 'task.failure'].includes(event.kind) && event.senderKind === 'bot' && event.originEventId;
+      this.core.origin = workerTask?.origin || { requestId: input.requestId,
+        ...(answer
+          ? { roomId: event.originRoomId || event.roomId, eventId: event.originEventId, senderId: event.originSenderId,
+            ...(event.originThreadRootId ? { threadRootId: event.originThreadRootId } : {}),
+            body: `（${event.senderName || event.senderId} 交回的结果）${event.body}` }
+          : { roomId: event.roomId, eventId: event.eventId, ...(event.threadRootId ? { threadRootId: event.threadRootId } : {}),
+            senderId: event.senderId, senderName: event.senderName,
+            body: [...(event.mergedMessages || []).map(message => message.body), event.body].join('\n') }),
         files: files.files.map(file => file.path) };
       let resolve;
       const done = new Promise(done => { resolve = done; });

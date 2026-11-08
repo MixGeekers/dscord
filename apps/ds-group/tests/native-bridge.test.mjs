@@ -291,3 +291,19 @@ test('an unknown result says so and is not redone; the next front turn carries i
   await f.bridge.turn(f.request('after'));
   assert.equal(f.calls[1].workResults, undefined);
 });
+
+test('work started from another Bot\'s result answers the message that started the request', async t => {
+  let origin;
+  const f = await fixture(t, { send: async ({ event, turn }) => {
+    origin = structuredClone(f.bridge.core.origin);
+    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: '收到策划的简介，我来整理资料包。' }] } });
+    await event('turn/end', { turn, reason: { kind: 'completed' } });
+  } });
+  const request = f.request('peer-result', '!r2:home.test');
+  Object.assign(request.event, { eventId: '$planner-result', senderId: '@planner:a.test', senderName: '策划', senderKind: 'bot',
+    kind: 'task.result', body: '两段简介如下', originEventId: '$g18', originRoomId: '!r2:home.test', originSenderId: '@tang:home.test',
+    originThreadRootId: '$thread' });
+  await f.bridge.turn(request);
+  assert.deepEqual([origin.roomId, origin.eventId, origin.senderId, origin.threadRootId], ['!r2:home.test', '$g18', '@tang:home.test', '$thread']);
+  assert.match(origin.body, /策划 交回的结果/);
+});
