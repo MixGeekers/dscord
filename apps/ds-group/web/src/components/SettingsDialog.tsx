@@ -117,12 +117,16 @@ export function SettingsDialog(props: SettingsDialogProps) {
             <p id="settings-account" className="identity-value">
               {session?.user_id || t("signedOut")}
             </p>
-            {session?.identity && (
+            {session?.identity?.globalId && (
               <p className="muted small identity-value">
-                {session.identity.subjectId}
+                {session.identity.globalId}
               </p>
             )}
             <dl className="account-origins">
+              <dt>{t("central")}</dt>
+              <dd>
+                {session?.binding?.centralIssuer ?? t("configuredByHome")}
+              </dd>
               <dt>{t("homeCore")}</dt>
               <dd>{config.homeCoreUrl}</dd>
               <dt>{t("homeMatrix")}</dt>

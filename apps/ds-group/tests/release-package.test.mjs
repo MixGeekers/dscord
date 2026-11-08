@@ -19,7 +19,7 @@ async function fixture(t) {
     'web/src/client-config.ts': 'export {};', 'web/client-config.json': '{}', 'dsh-connect/index.mjs': 'export {};',
     'ui/controls.tsx': 'export {};', 'ui/overlays.tsx': 'export {};', 'ui/tailwind.css': '@source "./";', 'web/licenses/ui-foundation.txt': 'MIT',
     'src/identity.mjs': 'export {};', 'src/web-mode.mjs': 'export {};', 'src/admin.mjs': 'export {};',
-    'scripts/central-init.mjs': 'export {};', 'scripts/admin.mjs': 'export {};', 'bin/dscord.mjs': '// CLI',
+    'src/central-trust.mjs': 'export {};', 'central/service.mjs': 'export {};', 'central/tokens.mjs': 'export {};', 'scripts/admin.mjs': 'export {};', 'bin/dscord.mjs': '// CLI',
     'admin/index.html': '<!doctype html>', 'admin/vite.config.ts': 'export default {};',
     'deploy/synapse/dscord_guard.py': '# guard', '中央身份实施记录.md': '# Identity', '统一客户端实施记录.md': '# Client',
     'deploy/compose.yaml': 'services: {}', 'deploy/.env.example': 'DOMAIN=localhost',
@@ -60,7 +60,7 @@ test('release packages are reproducible and extract a verified self-contained so
   assert.ok(files.includes('ds-group-0.1.0/deploy/.env.example'));
   assert.ok(files.includes('ds-group-0.1.0/vendor/ds-bot/LICENSE'));
   for (const file of ['ui/controls.tsx', 'ui/overlays.tsx', 'ui/tailwind.css', 'web/licenses/ui-foundation.txt']) assert.ok(files.includes(`ds-group-0.1.0/${file}`), file);
-  for (const file of ['src/identity.mjs', 'src/web-mode.mjs', 'src/admin.mjs', 'scripts/central-init.mjs', 'scripts/admin.mjs',
+  for (const file of ['src/identity.mjs', 'src/web-mode.mjs', 'src/admin.mjs', 'central/service.mjs', 'scripts/admin.mjs',
     'admin/vite.config.ts', 'deploy/synapse/dscord_guard.py', 'LICENSE', 'tests/fixtures/data.json',
     'vendor/ds-bot/src/office/skills/office/SKILL.md']) assert.ok(files.includes(`ds-group-0.1.0/${file}`), file);
   assert.equal(files.some(filename => /credential|evidence|backup|\/\.env$|kernel-validation|实施|记录|private-model|local-settings/.test(filename)), false);
@@ -70,8 +70,8 @@ test('release packages are reproducible and extract a verified self-contained so
 
 test('source packaging refuses a missing central or administration deployment entry', async t => {
   const root = await fixture(t);
-  await rm(path.join(root, 'scripts/central-init.mjs'));
-  await assert.rejects(buildRelease({ root }), /missing scripts\/central-init/);
+  await rm(path.join(root, 'central/service.mjs'));
+  await assert.rejects(buildRelease({ root }), /missing central\/service/);
 });
 
 test('dependency directory symlinks are excluded while source symlinks fail packaging', async t => {

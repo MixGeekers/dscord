@@ -21,7 +21,7 @@ npm run build
 }
 ```
 
-`authUrl` 可显式指定受信任的认证 origin，默认与 `homeCoreUrl` 相同。当前中央身份服务的登录接口由归属 Core 提供，通常无需单独指定。独立部署的新增地址必须是完整 HTTPS origin，不能带账号、密码、路径、查询或片段；本机验证允许 HTTP loopback。既有 HTTP 同源网页继续使用其原 origin，包括 HTTP 私网 Core 和从该服务发现的私网 Matrix 地址。普通 token 仍只发往固定 Core；HTTP 私网网页不能使用浏览器要求安全上下文的 PWA 和系统推送能力。配置文件只允许这四个公开字段，不接受 token、密码或管理凭据。
+配置文件不写中央服务器：客户端从归属 Core 的 `/.well-known/dscord/client` 读出它接入的中央，在那里登录。独立部署的新增地址必须是完整 HTTPS origin，不能带账号、密码、路径、查询或片段；本机验证允许 HTTP loopback。既有 HTTP 同源网页继续使用其原 origin，包括 HTTP 私网 Core 和从该服务发现的私网 Matrix 地址。普通 token 仍只发往固定 Core；HTTP 私网网页不能使用浏览器要求安全上下文的 PWA 和系统推送能力。配置文件只允许这三个公开字段，不接受 token、密码或管理凭据。
 
 原有同源部署继续使用 `{"schemaVersion":1}`，未提供该文件的旧部署在文件返回真实 404 时回退同源。配置返回 HTML、其他错误或不合法地址时会停止启动，避免误把错误配置当成登录入口。客户端不从 URL 参数、远端发现或旧存储数据改写归属服务。
 
@@ -29,9 +29,9 @@ npm run build
 
 ## 归属服务允许的客户端
 
-中央身份服务的 `identity.clientOrigins` 必须包含实际客户端 origin，例如 `https://client.example.com`。CORS 需要允许 `Authorization`、`Content-Type`、`X-Upload-Id` 和对应业务方法。浏览器所有业务请求均设置 `credentials: omit`、`redirect: error`，不依赖 cookie。登录密码只交给固定认证入口，普通 Matrix token 只交给固定归属 Core。远端协作使用归属 Core 的 `/api/spaces` 和完整 Matrix 房间 ID，不把普通 token 发送给外服 Core。
+Core 的 `identity.clientOrigins` 和中央的 `clientOrigins` 都必须包含实际客户端 origin，例如 `https://client.example.com`。CORS 需要允许 `Authorization`、`Content-Type`、`X-Upload-Id` 和对应业务方法。浏览器所有业务请求均设置 `credentials: omit`、`redirect: error`，不依赖 cookie。登录密码只交给中央，中央的会话换出身份令牌后立即退出；聊天会话 token 只交给固定归属 Core。远端协作使用归属 Core 的 `/api/spaces` 和完整 Matrix 房间 ID，不把会话 token 发送给外服 Core。
 
-`/.well-known/dscord/client` 的 `authorityId`、归属 Matrix server name 及返回会话中的稳定主体会相互核对。修改归属配置会产生另一组会话和草稿作用域；旧未绑定 `ds-group.session` 只在原同源入口迁移。既有房间、草稿、待确认消息按原完整身份保留，确认发送前保持原 transaction ID。
+会话绑定归属 Core、Matrix 和中央地址（`centralIssuer`），草稿和待确认消息按会话里的全局身份 ID（`用户名@中央域名`）分开保存。归属 Core 改接另一台中央后，旧会话作废，需要重新登录。
 
 ## PWA、附件和通知
 
@@ -39,7 +39,7 @@ service worker 从静态客户端 origin 注册并只缓存应用壳。API、发
 
 上传使用 `fetch` 以阻止重定向，保留取消和幂等上传 ID；浏览器未提供 fetch 上传进度时显示待完成状态，实际成功由附件回执确认。附件从 Core 请求时携带原消息的 `roomId/eventId` 证明，按当前权限读取。它不承诺撤回用户已经下载的字节，也不把已知 Matrix 媒体 URI 当成可远程抹除的内容。外服媒体仍需服务端的实际访问能力，不能由发现地址代替。
 
-通知订阅属于客户端 origin，订阅管理请求仍交归属 Core。worker 保存的接收人绑定只有完整 userId、homeCoreUrl 和 authorityId，没有 token 或消息。通知后端应在 `payload.data` 带这三个字段及完整 `roomId`、`eventId`，以便过滤旧身份推送并安全导航。旧后端未带接收人信息的推送只显示通用 DSCord 通知并打开主页，不自动打开消息。手机系统推送送达还受设备和浏览器限制；外服附件需要实际服务端媒体访问能力，不能由公开发现地址代替授权。
+通知订阅属于客户端 origin，订阅管理请求仍交归属 Core。worker 保存的接收人绑定只有完整 userId、homeCoreUrl 和 centralIssuer，没有 token 或消息。通知后端应在 `payload.data` 带这三个字段及完整 `roomId`、`eventId`，以便过滤旧身份推送并安全导航。旧后端未带接收人信息的推送只显示通用 DSCord 通知并打开主页，不自动打开消息。手机系统推送送达还受设备和浏览器限制；外服附件需要实际服务端媒体访问能力，不能由公开发现地址代替授权。
 
 ## 兼容限制
 

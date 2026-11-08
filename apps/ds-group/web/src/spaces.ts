@@ -58,7 +58,7 @@ export interface DiscoveredServer {
   origin: string;
   name: string;
   serverName: string;
-  authorityId: string;
+  centralIssuer: string | null;
 }
 
 export async function discoverServer(
@@ -83,19 +83,15 @@ export async function discoverServer(
   const value = (await response.json()) as {
     schemaVersion: number;
     name?: string;
-    authorityId: string;
+    central: { issuer: string } | null;
     home: { serverName: string };
   };
-  if (
-    value.schemaVersion !== 1 ||
-    !value.authorityId ||
-    !value.home?.serverName
-  )
+  if (value.schemaVersion !== 2 || !value.home?.serverName)
     throw new Error("This address is not a DSCord service");
   return {
     origin,
     name: value.name || value.home.serverName,
     serverName: value.home.serverName,
-    authorityId: value.authorityId,
+    centralIssuer: value.central?.issuer ?? null,
   };
 }

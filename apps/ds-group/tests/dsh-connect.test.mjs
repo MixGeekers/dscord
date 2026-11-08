@@ -7,8 +7,11 @@ import { ConnectController } from '../dsh-connect/controller.mjs';
 import { NodeProcesses } from '../dsh-connect/processes.mjs';
 
 const serverUrl = 'https://chat.example';
+const centralUrl = 'https://id.example';
 const userId = '@alice:chat.example';
-const bot = { id: '@alice-helper:chat.example', name: 'Helper', kind: 'bot', localpart: 'alice-helper', ownerId: userId };
+const botId = '@alice-helper:chat.example';
+const bot = { id: botId, name: 'Helper', kind: 'bot', localpart: 'alice-helper', ownerId: userId };
+const centralBot = { id: 'central-bot-1', username: 'alice-helper', displayName: 'Helper', globalId: 'alice-helper@id.example', kind: 'bot', status: 'active' };
 
 function bundle() {
   return {
@@ -33,16 +36,32 @@ async function fixture(t, options = {}) {
     ...options.processes,
   };
   let logins = 0;
+  let devices = 0;
+  // The chat server at serverUrl and its central server at centralUrl, as one fake network.
   const request = async (url, init) => {
-    const pathname = new URL(url).pathname;
-    calls.push({ pathname, init });
-    if (pathname === '/api/login') {
-      logins++;
-      return Response.json({ user_id: userId, access_token: `synthetic-human-token-${logins}` });
+    const { origin, pathname } = new URL(url);
+    calls.push({ origin, pathname, init });
+    const body = init.body ? JSON.parse(init.body) : {};
+    if (origin === centralUrl) {
+      if (pathname === '/api/login') {
+        logins++;
+        return Response.json({ token: `synthetic-central-token-${logins}`, account: { kind: 'human', displayName: 'Alice', globalId: 'alice@id.example' } });
+      }
+      if (pathname === '/api/bots') return Response.json({ bots: [centralBot] });
+      if (pathname === '/api/device') { devices++; return Response.json({ deviceCode: `device-${devices}`, userCode: `USER-${devices}` }); }
+      if (pathname === '/api/device/approve') return Response.json({ bot: centralBot });
+      if (pathname === '/api/device/token') return Response.json({ token: `synthetic-bot-central-${body.deviceCode}` });
+      if (pathname === '/api/identity-tokens') return Response.json({ token: `identity:${init.headers.Authorization.slice(7)}` });
+      if (pathname === '/api/logout') return Response.json({ loggedOut: true });
+    }
+    if (pathname === '/.well-known/dscord/client') return Response.json({ home: { serverName: 'chat.example' }, central: { issuer: centralUrl },
+      auth: { audience: serverUrl, sessionPath: '/api/session' } });
+    if (pathname === '/api/session') {
+      const bot = body.identityToken.startsWith('identity:synthetic-bot-central');
+      return Response.json(bot ? { user_id: botId, access_token: 'synthetic-bot-session' } : { user_id: userId, access_token: `synthetic-human-token-${logins}` });
     }
     if (pathname === '/api/status') return Response.json({ budget: options.policy || { maxTokens: 8192, allowedModels: null } });
-    if (pathname === '/api/bots') return Response.json({ bots: [bot] });
-    if (pathname === `/api/bots/${encodeURIComponent(bot.id)}/connect`) {
+    if (pathname === `/api/bots/${encodeURIComponent(botId)}/connect`) {
       await options.beforeBundle?.();
       return Response.json({ bundle: options.bundle?.() || bundle() });
     }
@@ -69,10 +88,12 @@ test('DSH connection login stores a private client token and never persists or r
   const saved = await readFile(filename, 'utf8');
   assert.equal(saved.includes('synthetic-password'), false);
   assert.equal(JSON.parse(saved).accessToken, 'synthetic-human-token-1');
+  assert.equal(JSON.parse(saved).centralToken, 'synthetic-central-token-1');
+  assert.equal(result.user.globalId, 'alice@id.example');
   if (process.platform !== 'win32') assert.equal((await stat(filename)).mode & 0o777, 0o600);
   await login();
-  const logout = calls.find(call => call.pathname === '/api/logout');
-  assert.equal(logout.init.headers.Authorization, 'Bearer synthetic-human-token-1');
+  const logouts = calls.filter(call => call.pathname === '/api/logout').map(call => [call.origin, call.init.headers.Authorization]);
+  assert.deepEqual(logouts, [[serverUrl, 'Bearer synthetic-human-token-1'], [centralUrl, 'Bearer synthetic-central-token-1']]);
   await controller.dispose();
 });
 
@@ -115,6 +136,25 @@ test('DSH connect is idempotent, preserves identity across reload, and explicit 
   assert.equal((await offline.handle({ action: 'status' })).bots[0].status, 'offline');
   assert.deepEqual(effects, [['start', bot.id], ['stop', bot.id], ['start', bot.id], ['stop', bot.id]]);
   await offline.dispose();
+});
+
+test('a Bot connects with its own central session from an owner-approved device code, reused on reconnect', async t => {
+  const { controller, login, calls } = await fixture(t);
+  await login();
+  await controller.handle({ action: 'connect', botId: bot.id });
+  await controller.handle({ action: 'disconnect', botId: bot.id });
+  await controller.handle({ action: 'connect', botId: bot.id });
+  assert.equal(calls.filter(call => call.pathname === '/api/device').length, 1);
+  const approve = calls.find(call => call.pathname === '/api/device/approve');
+  assert.equal(approve.init.headers.Authorization, 'Bearer synthetic-central-token-1');
+  assert.deepEqual(JSON.parse(approve.init.body), { userCode: 'USER-1', botId: centralBot.id });
+  assert.equal(controller.state.botSessions[centralBot.id], 'synthetic-bot-central-device-1');
+  const connects = calls.filter(call => call.pathname.endsWith('/connect'));
+  assert.equal(connects.length, 2);
+  assert.ok(connects.every(call => call.init.headers.Authorization === 'Bearer synthetic-bot-session'));
+  const botLogouts = calls.filter(call => call.pathname === '/api/logout' && call.init.headers.Authorization === 'Bearer synthetic-bot-session');
+  assert.equal(botLogouts.length, 2);
+  await controller.dispose();
 });
 
 test('failed Bot start drains partial processes and remains retryable', async t => {
@@ -182,8 +222,8 @@ test('failed login persistence retains the previous identity and revokes the unu
   await assert.rejects(login(), /ENOENT/);
   assert.equal(controller.state, previous);
   assert.equal(JSON.parse(await readFile(savedFilename, 'utf8')).accessToken, 'synthetic-human-token-1');
-  const logout = calls.find(call => call.pathname === '/api/logout');
-  assert.equal(logout.init.headers.Authorization, 'Bearer synthetic-human-token-2');
+  const logouts = calls.filter(call => call.pathname === '/api/logout').map(call => [call.origin, call.init.headers.Authorization]);
+  assert.deepEqual(logouts, [[serverUrl, 'Bearer synthetic-human-token-2'], [centralUrl, 'Bearer synthetic-central-token-2']]);
   controller.filename = savedFilename;
   await controller.dispose();
 });

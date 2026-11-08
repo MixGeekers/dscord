@@ -15,6 +15,9 @@ const en = {
   displayNameRequired: "Enter your display name",
   rateLimited: "Too many sign-in requests. Try again shortly.",
   rateLimitedFor: "Too many sign-in requests. Try again in {seconds} seconds.",
+  centralSignIn: "Sign in with your account on {host}.",
+  centralRegister:
+    "The new account lives on {host} and works on every chat server connected to it.",
 };
 
 export const authMessages = {
@@ -36,5 +39,7 @@ export const authMessages = {
     displayNameRequired: "请输入显示名称",
     rateLimited: "登录请求过于频繁，请稍后重试。",
     rateLimitedFor: "登录请求过于频繁，请在 {seconds} 秒后重试。",
+    centralSignIn: "使用 {host} 上的账号登录。",
+    centralRegister: "新账号建在 {host} 上，接入它的聊天服务器都能用。",
   } satisfies Record<keyof typeof en, string>,
 };

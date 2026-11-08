@@ -20,13 +20,13 @@ const bootstrap = {
   roomId: rooms[0].roomId,
   roomName: rooms[0].name,
   participants: people,
-  demoLogin: true,
-  registration: { enabled: true, mode: 'open' },
   attachments: { maxBytes: 52428800, maxPerMessage: 10 },
 };
+const centralOrigin = 'https://id.example';
+const identityOf = localpart => ({ globalId: `${localpart}@id.example`, matrixUserId: `@${localpart}:test`, kind: 'human' });
 const sessions = {
-  alice: { user_id: people[0].id, access_token: 'alice-fixture' },
-  bob: { user_id: people[1].id, access_token: 'bob-fixture' },
+  alice: { user_id: people[0].id, access_token: 'alice-fixture', identity: identityOf('alice') },
+  bob: { user_id: people[1].id, access_token: 'bob-fixture', identity: identityOf('bob') },
 };
 const pendingMessage = {
   body: 'Alice pending in One',
@@ -45,10 +45,12 @@ const bobOneDraft = {
   replyMention: true,
 };
 const discovery = {
-  schemaVersion: 1,
-  authorityId: 'urn:uuid:fixture-home',
+  schemaVersion: 2,
+  contractVersion: '2.0.0',
+  name: 'DSCord',
   home: { serverName: 'test', coreUrl: null, matrixUrl: 'http://127.0.0.1:1' },
-  auth: { mode: 'matrix-password', cookieCredentials: false },
+  central: { issuer: centralOrigin },
+  auth: { mode: 'central-identity-token', audience: null, sessionPath: '/api/session', cookieCredentials: false },
 };
 const spacesFor = userId => ({
   homeServer: 'test',
@@ -112,8 +114,8 @@ const sentMessages = [];
 const logoutRequests = [];
 const registrationRequests = [];
 const loginRequests = [];
+const centralLogouts = [];
 const loginLimits = [];
-const botRequests = [];
 const revokedTokens = new Set();
 const ownedBots = new Map();
 let registeredUser;
@@ -134,6 +136,7 @@ try {
   context.setDefaultTimeout(15000);
   // Seed storage with the keys the client itself derives for this origin.
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+  discovery.auth.audience = origin;
   const { parseClientConfig } = await import('../web/src/client-config.ts');
   const { bindSession, sessionStorageKey, storageKey } = await import('../web/src/session.ts');
   const clientConfig = parseClientConfig({ schemaVersion: 1 }, origin);
@@ -173,8 +176,6 @@ try {
     ['GET /api/roles', { roles: [], canManage: true }],
     ['GET /api/push/config', { enabled: false }],
     ['POST /api/presence', { accepted: true }],
-    ['GET /api/demo-login?user=alice', sessions.alice],
-    ['GET /api/demo-login?user=bob', sessions.bob],
   ]);
   for (const room of rooms) {
     const base = `/api/rooms/${encodeURIComponent(room.roomId)}`;
@@ -192,7 +193,51 @@ try {
   page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   await page.route('**/.well-known/dscord/client', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(discovery) }));
-  await page.route('**/api/**', async (route) => {
+  // The central server holds the accounts: password sign-in and registration happen there.
+  await page.route(`${centralOrigin}/**`, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Headers': 'Authorization, Content-Type', 'Access-Control-Allow-Methods': 'GET, POST' };
+    if (request.method() === 'OPTIONS') return route.fulfill({ status: 204, headers: cors });
+    let status = 200;
+    let body;
+    let headers = cors;
+    const token = request.headers().authorization?.replace('Bearer ', '');
+    if (url.pathname === '/.well-known/dscord/central') {
+      body = { issuer: centralOrigin, domain: 'id.example', registration: 'open' };
+    } else if (url.pathname === '/api/register') {
+      const input = request.postDataJSON();
+      registrationRequests.push(input);
+      registeredUser = { id: `@${input.username}:test`, localpart: input.username, name: input.displayName, kind: 'human' };
+      status = 201;
+      body = { token: `central-register-${input.username}` };
+    } else if (url.pathname === '/api/login') {
+      const input = request.postDataJSON();
+      loginRequests.push(input);
+      const known = people.some(person => person.localpart === input.username)
+        || input.username === registeredUser?.localpart && input.password === 'fixture-password';
+      status = known ? 200 : 401;
+      body = known ? { token: `central-login-${input.username}` } : { error: 'Invalid credentials' };
+      const limit = loginLimits.shift();
+      if (limit) {
+        status = 429;
+        body = { error: 'Too Many Requests', code: 'RATE_LIMITED', ...limit.body };
+        headers = { ...cors, 'Access-Control-Expose-Headers': 'Retry-After', ...limit.headers };
+      }
+    } else if (url.pathname === '/api/identity-tokens') {
+      assert.equal(request.postDataJSON().audience, origin);
+      body = { token: `identity:${token}` };
+    } else if (url.pathname === '/api/logout') {
+      centralLogouts.push(token);
+      body = { loggedOut: true };
+    } else {
+      unhandledRequests.push(`${request.method()} ${centralOrigin}${url.pathname}`);
+      status = 501;
+      body = { error: 'Unhandled central request' };
+    }
+    await route.fulfill({ status, headers, contentType: 'application/json', body: JSON.stringify(body) });
+  });
+  await page.route(`${origin}/api/**`, async (route) => {
     const request = route.request();
     const url = new URL(request.url());
     const key = `${request.method()} ${url.pathname}${url.search}`;
@@ -217,33 +262,12 @@ try {
       logoutRequests.push(token);
       revokedTokens.add(token);
       body = { loggedOut: true };
-    } else if (key === 'POST /api/register') {
-      const input = request.postDataJSON();
-      registrationRequests.push(input);
-      registeredUser = { id: `@${input.username}:test`, localpart: input.username, name: input.displayName, kind: 'human' };
-      status = 201;
-      body = { user_id: registeredUser.id, access_token: 'registered-fixture' };
-    } else if (key === 'POST /api/login') {
-      const input = request.postDataJSON();
-      loginRequests.push(input);
-      status = input.user === registeredUser?.localpart && input.password === 'fixture-password' ? 200 : 401;
-      body = status === 200 ? { user_id: registeredUser.id, access_token: 'registered-login-fixture' } : { error: 'Invalid credentials' };
-      const limit = loginLimits.shift();
-      if (limit) {
-        status = 429;
-        body = { error: 'Too Many Requests', code: 'M_LIMIT_EXCEEDED', ...limit.body };
-        headers = limit.headers ?? {};
-      }
-    } else if (key === 'GET /api/bot-catalog') {
-      body = { bots: [{ id: 'native-finance', name: 'Finance', hostId: 'dsh-test', hostName: 'Local DSH', available: true, role: 'Finance', model: 'native/model', botId: null }] };
-    } else if (key === 'POST /api/bots/attach') {
-      const input = request.postDataJSON();
-      botRequests.push(input);
-      const bot = { id: '@bot-created:test', localpart: 'bot-created', name: 'Finance', kind: 'bot', ownerId: user.id,
-        nativeBinding: { hostId: input.hostId, nativeBotId: input.nativeBotId, botId: '@bot-created:test' } };
-      ownedBots.set(user.id, [bot]);
-      status = 201;
-      body = { bot };
+    } else if (key === 'POST /api/session') {
+      // The identity token names the central session it came from; Core opens the chat session for that person.
+      const [, how, localpart] = /^identity:central-(register|login)-(.+)$/.exec(request.postDataJSON().identityToken) ?? [];
+      const person = people.find(value => value.localpart === localpart);
+      body = person ? sessions[localpart]
+        : { user_id: registeredUser.id, access_token: how === 'register' ? 'registered-fixture' : 'registered-login-fixture', identity: identityOf(localpart) };
     } else if (key === `POST /api/rooms/${encodeURIComponent(rooms[0].roomId)}/messages`) {
       sentMessages.push({
         roomId: rooms[0].roomId,
@@ -283,7 +307,7 @@ try {
       const configModule = await import('/src/client-config.ts');
       const config = configModule.defaultClientConfig();
       if (legacy === 'ds-group.session') return JSON.parse(sessionStorage.getItem(sessionModule.sessionStorageKey(config)) ?? 'null');
-      const prefix = 'ds-group.v2.' + configModule.bindingKey(config) + '.';
+      const prefix = 'ds-group.v3.' + configModule.bindingKey(config) + '.';
       for (const key of Object.keys(sessionStorage)) {
         if (!key.startsWith(prefix)) continue;
         const [kind, , , userId, , roomId] = JSON.parse(decodeURIComponent(key.slice(prefix.length)));
@@ -297,6 +321,7 @@ try {
     await page.locator('#account-switch-button').click();
     await page.locator('#login-dialog[open]').waitFor();
     await page.locator('#login-user').fill(localpart);
+    await page.locator('#login-password').fill('fixture-password');
     await page.locator('#login-submit').click();
     await page.waitForFunction(name => document.querySelector('#current-name')?.textContent === name, displayName);
     await page.locator('#login-dialog').waitFor({ state: 'hidden' });
@@ -459,18 +484,22 @@ try {
   assert.equal((await readStorage('ds-group.session')).user_id, '@charlie-new:test');
   assert.equal((await readStorage('ds-group.session')).access_token, 'registered-fixture');
   assert.equal((await readStorage('ds-group.session')).binding.homeCoreUrl, new URL(page.url()).origin);
-  checks.push('newAccountRegistersAndMeSuppliesIdentityOutsideBootstrapRoster');
+  assert.deepEqual(centralLogouts.slice(-1), ['central-register-charlie-new']);
+  checks.push('newAccountRegistersAtCentralAndCoreSessionComesFromItsIdentityToken');
 
   await page.locator('#global-bots-button').click();
   await page.locator('#create-bot-button').click();
-  await page.locator('input[name="native-bot"]').check();
-  await page.locator('#create-bot-submit').click();
+  await page.locator('#create-bot-dialog[open]').waitFor();
+  assert.equal(await page.locator('#create-bot-dialog input').count(), 0);
+  await page.locator('#create-bot-done').click();
   await page.locator('#create-bot-dialog').waitFor({ state: 'hidden' });
-  assert.equal(botRequests.length, 1);
-  assert.deepEqual(botRequests[0], { hostId: 'dsh-test', nativeBotId: 'native-finance' });
-  await page.locator('#owned-bots [data-owned-bot-id="@bot-created:test"]').filter({ hasText: 'Finance' }).waitFor();
+  // DSH adds the Bot at central and links it; the web client only lists what Core reports.
+  ownedBots.set(registeredUser.id, [{ id: '@finance:test', localpart: 'finance', name: 'Finance', kind: 'bot', ownerId: registeredUser.id,
+    nativeBinding: { hostId: 'dsh-test', nativeBotId: 'native-finance', botId: '@finance:test' } }]);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await page.locator('#owned-bots [data-owned-bot-id="@finance:test"]').filter({ hasText: 'Finance' }).waitFor();
   assert.equal(await page.locator('#owned-bot-count').textContent(), '1');
-  checks.push('newOwnerSelectsExistingNativeBotAndSeesLinkedIdentity');
+  checks.push('addBotPointsToDshAndOwnedBotsFollowCore');
 
   await page.locator('#identity-button').click();
   await page.locator('#settings-button').click();
@@ -491,7 +520,7 @@ try {
   assert.equal(await page.locator('#login-password').inputValue(), 'fixture-password');
   assert.equal(await page.locator('#login-submit').isEnabled(), true);
   await page.locator('#login-error').filter({ hasText: 'Try again shortly' }).waitFor();
-  assert.equal(loginRequests.length, 1);
+  assert.equal(loginRequests.filter(input => input.username === 'charlie-new').length, 1);
   await page.locator('#login-submit').click();
   await page.locator('#login-error').filter({ hasText: 'Try again in 2 seconds' }).waitFor();
   await page.evaluate(async () => (await import('/i18n.js')).setLocalePreference('zh-CN'));
@@ -503,9 +532,10 @@ try {
   await page.locator('#login-submit').click();
   await page.locator('#login-dialog').waitFor({ state: 'hidden' });
   await page.locator('#global-bots-button').click();
-  await page.locator('#owned-bots [data-owned-bot-id="@bot-created:test"]').filter({ hasText: 'Finance' }).waitFor();
+  await page.locator('#owned-bots [data-owned-bot-id="@finance:test"]').filter({ hasText: 'Finance' }).waitFor();
   await page.locator('[data-server="test"]').click();
-  assert.deepEqual(loginRequests, Array.from({ length: 4 }, () => ({ user: 'charlie-new', password: 'fixture-password' })));
+  assert.deepEqual(loginRequests.filter(input => input.username === 'charlie-new'),
+    Array.from({ length: 4 }, () => ({ username: 'charlie-new', password: 'fixture-password' })));
   assert.equal((await readStorage('ds-group.session')).access_token, 'registered-login-fixture');
   checks.push('passwordLoginRestoresNewAccountAndOwnedBotsAfterLogout');
 
@@ -518,6 +548,7 @@ try {
   await page.locator('#logout-button').click();
   await page.locator('#login-dialog[open]').waitFor();
   await page.locator('#login-user').fill('bob');
+  await page.locator('#login-password').fill('fixture-password');
   await page.locator('#login-submit').click();
   await page.locator('#login-dialog').waitFor({ state: 'hidden' });
   await page.waitForFunction(() => document.querySelector('#current-name')?.textContent === 'Bob');

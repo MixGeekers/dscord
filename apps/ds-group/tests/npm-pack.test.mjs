@@ -19,7 +19,7 @@ async function fixture(t) {
     LICENSE: 'MIT fixture license',
     'bin/dscord.mjs': '#!/usr/bin/env node\nconsole.log("fixture");',
     'dsh-connect/index.mjs': 'export {};', 'dsh-connect/client.js': '// DSH client', 'cordis.patch.yml': '[]',
-    'src/core.mjs': 'import "../web/mention-tokens.js";',
+    'src/core.mjs': 'import "../web/mention-tokens.js";', 'central/service.mjs': 'export {};',
     'memory/native.mjs': 'export {};', 'service/ombre/service.py': '# memory service', 'service/ombre/LICENSE': 'MIT',
     'service/ombre/SOURCE.json': '{}', 'vendor/ds-bot/UPSTREAM.json': '{}',
     'memory/复用与运行.md': '# User memory guide',
@@ -50,7 +50,7 @@ async function fixture(t) {
     '.local/credentials.json': 'PRIVATE', '.npmrc': 'PRIVATE',
     'artifacts/chat.json': 'PRIVATE', 'deploy/.env': 'PRIVATE',
   };
-  for (const name of ['service', 'matrix', 'runtime-config', 'runtime-dependencies', 'dsh-node', 'file-work', 'server-init', 'server-bootstrap', 'server-admin', 'central-init', 'admin', 'memory-setup']) {
+  for (const name of ['service', 'matrix', 'runtime-config', 'runtime-dependencies', 'dsh-node', 'file-work', 'server-init', 'server-bootstrap', 'server-admin', 'admin', 'memory-setup']) {
     files[`scripts/${name}.mjs`] = 'export {};';
   }
   for (const [filename, content] of Object.entries(files)) {
@@ -66,13 +66,13 @@ test('npm packs the exact source version, runtime and licenses without internal 
   assert.equal(result.name, 'dscord');
   assert.equal(result.version, '0.2.0');
   assert.ok(result.size > 0);
-  for (const name of ['package.json', 'README.md', 'bin/dscord.mjs', 'src/core.mjs', 'web/mention-tokens.js',
+  for (const name of ['package.json', 'README.md', 'bin/dscord.mjs', 'src/core.mjs', 'central/service.mjs', 'web/mention-tokens.js',
     'LICENSE', 'memory/复用与运行.md', 'vendor/ds-bot/src/office/skills/office/SKILL.md',
     'memory/native.mjs', 'service/ombre/service.py', 'service/ombre/LICENSE',
     'dist/web/index.html', 'dist/web/sw.js', 'dist/web/licenses/lucide.txt', 'dist/web/licenses/ui-foundation.txt', 'dist/admin/licenses/ui-foundation.txt', 'vendor/ds-bot/LICENSE',
     'dist/web/licenses/bundled-dependencies.txt', 'dist/admin/licenses/bundled-dependencies.txt',
     'vendor/ds-bot/NOTICE', 'dsh-plugin/runtime-dependencies-lock.json', 'dsh-connect/index.mjs',
-    'dsh-connect/client.js', 'cordis.patch.yml', 'dist/admin/index.html', 'dist/admin/theme.js', 'deploy/synapse/dscord_guard.py', 'scripts/admin.mjs', 'scripts/central-init.mjs']) assert.ok(result.files.includes(name), name);
+    'dsh-connect/client.js', 'cordis.patch.yml', 'dist/admin/index.html', 'dist/admin/theme.js', 'deploy/synapse/dscord_guard.py', 'scripts/admin.mjs']) assert.ok(result.files.includes(name), name);
   assert.equal(result.files.some(name => /\.local|\.npmrc|artifacts|\.env|\.vite|credentials|personal-config|实施与长程测试|vendor\/ds-bot\/README/.test(name)), false);
   assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).private, true);
   const { stdout } = await promisify(execFile)('tar', ['-xOf', result.archive, 'package/package.json']);

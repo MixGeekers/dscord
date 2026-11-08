@@ -4,26 +4,21 @@ import type { FormEvent, MouseEvent } from "react";
 import { messageOf } from "../api";
 import { useTranslation } from "../locale";
 import { authMessages } from "../locales/auth";
-import type { Bootstrap, Session } from "../types";
+import type { CentralInfo } from "../central";
+import type { Session } from "../types";
 import { Icon } from "./Icons";
 
-export type AuthSubmission =
-  | {
-      mode: "login";
-      username: string;
-      password: string;
-      displayName: string;
-    }
-  | {
-      mode: "register";
-      username: string;
-      password: string;
-      displayName: string;
-    };
+export interface AuthSubmission {
+  mode: "login" | "register";
+  username: string;
+  password: string;
+  displayName: string;
+}
 
 export interface AuthDialogProps {
   open: boolean;
-  bootstrap: Bootstrap | null;
+  /** The central server whose accounts sign in here. */
+  central: CentralInfo | null;
   session: Session | null;
   busy: boolean;
   error: string;
@@ -38,7 +33,7 @@ type Field = "username" | "password" | "displayName";
 
 export function AuthDialog({
   open,
-  bootstrap,
+  central,
   session,
   busy,
   error,
@@ -66,15 +61,10 @@ export function AuthDialog({
   >({});
   const [localError, setLocalError] = useState("");
   const [currentTime, setCurrentTime] = useState(Date.now);
-  const registrationOpen =
-    bootstrap?.registration?.enabled === true &&
-    bootstrap.registration.mode === "open";
+  const registrationOpen = central?.registration === "open";
   const registering = mode === "register" && registrationOpen;
-  const passwordRequired = registering || bootstrap?.demoLogin !== true;
   const disabled = busy || submitting;
   const canClose = Boolean(session) && !disabled;
-  const humans =
-    bootstrap?.participants.filter((person) => person.kind === "human") ?? [];
   const retrySeconds = Math.max(
     0,
     Math.ceil(((rateLimitUntil ?? 0) - currentTime) / 1000),
@@ -117,12 +107,10 @@ export function AuthDialog({
   }, [open]);
 
   useEffect(() => {
-    if (!open || editedUsername.current) return;
-    const current = humans.find((person) => person.id === session?.user_id);
-    const suggested =
-      current ?? (bootstrap?.demoLogin === true ? humans[0] : null);
-    if (suggested) setUsername(suggested.localpart ?? suggested.id);
-  }, [open, bootstrap?.participants, bootstrap?.demoLogin, session?.user_id]);
+    if (!open || editedUsername.current || !session) return;
+    // A local Matrix ID is the central username on this server.
+    setUsername(session.user_id.slice(1, session.user_id.indexOf(":")));
+  }, [open, session?.user_id]);
 
   useEffect(() => {
     if (!registrationOpen) setMode("login");
@@ -149,7 +137,7 @@ export function AuthDialog({
     if (disabled || pending.current) return;
     const errors = {
       username: username.trim().length === 0,
-      password: passwordRequired && password.length === 0,
+      password: password.length === 0,
       displayName: registering && displayName.trim().length === 0,
     };
     setFieldErrors(errors);
@@ -229,6 +217,13 @@ export function AuthDialog({
           </Button>
         </div>
         <div className="dialog-scroll-region">
+          {central && (
+            <p id="login-central" className="auth-central">
+              {t(registering ? "centralRegister" : "centralSignIn", {
+                host: central.host,
+              })}
+            </p>
+          )}
           <label htmlFor="login-user">{t("username")}</label>
           <Input
             id="login-user"
@@ -240,11 +235,6 @@ export function AuthDialog({
             spellCheck={false}
             required
             value={username}
-            list={
-              !registering && bootstrap?.demoLogin === true
-                ? "demo-accounts"
-                : undefined
-            }
             disabled={disabled}
             aria-invalid={Boolean(fieldErrors.username)}
             aria-describedby={
@@ -256,15 +246,6 @@ export function AuthDialog({
               clearFieldError("username");
             }}
           />
-          {!registering && bootstrap?.demoLogin === true && (
-            <datalist id="demo-accounts">
-              {humans.map((person) => (
-                <option key={person.id} value={person.localpart ?? person.id}>
-                  {person.name}
-                </option>
-              ))}
-            </datalist>
-          )}
           {fieldErrors.username && (
             <p id="username-error" className="field-error" role="alert">
               {t("usernameRequired")}
@@ -306,7 +287,7 @@ export function AuthDialog({
               type={showPassword ? "text" : "password"}
               name="password"
               autoComplete={registering ? "new-password" : "current-password"}
-              required={passwordRequired}
+              required
               value={password}
               disabled={disabled}
               aria-invalid={Boolean(fieldErrors.password)}

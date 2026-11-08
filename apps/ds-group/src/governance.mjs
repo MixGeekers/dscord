@@ -81,7 +81,7 @@ export function emptyPolicy(domain) {
     members: [],
     rooms: [],
     botPolicies: [],
-    settings: { registrationMode: null, maxUploadBytes: null },
+    settings: { maxUploadBytes: null },
   };
 }
 
@@ -178,8 +178,6 @@ export function validatePolicy(value, domain) {
     "botId",
   );
   const settings = value.settings || {};
-  if (![null, "open", "closed"].includes(settings.registrationMode))
-    throw policyError(400, "Invalid registration mode");
   if (
     settings.maxUploadBytes !== null &&
     (!Number.isSafeInteger(settings.maxUploadBytes) ||
@@ -196,7 +194,6 @@ export function validatePolicy(value, domain) {
     rooms,
     botPolicies,
     settings: {
-      registrationMode: settings.registrationMode,
       maxUploadBytes: settings.maxUploadBytes,
     },
   };

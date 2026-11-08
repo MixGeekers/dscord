@@ -24,10 +24,13 @@ COPY --chown=node:node scripts ./scripts
 COPY --chown=node:node vendor ./vendor
 COPY --chown=node:node memory ./memory
 COPY --chown=node:node service ./service
+COPY --chown=node:node central ./central
 COPY --chown=node:node deploy/synapse ./deploy/synapse
 COPY --from=frontend --chown=node:node /app/dist/web ./dist/web
 COPY --from=frontend --chown=node:node /app/dist/admin ./dist/admin
 
+# A fresh central-data volume takes this directory's owner, so the central server can write its key and accounts.
+RUN mkdir -p /central && chown node:node /central
 ENV NODE_ENV=production DS_GROUP_DATA_DIR=/data DS_GROUP_HOST=0.0.0.0 DS_GROUP_PORT=18100
 USER node
 EXPOSE 18100

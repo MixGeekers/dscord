@@ -49,7 +49,7 @@ API-only 在读取 `webRoot` 之前拒绝网页托管。`GET/HEAD /`、`/index.h
 
 `/healthz`、`/readyz`、公开发现、登录、账号、房间、消息、附件和节点 API 继续走原处理路径。`/api/bootstrap` 新增 `web.mode`，`/api/status` 的 `core.webMode` 展示当前有效模式。普通 API 的 Matrix 和本地账号状态门禁继续执行。该模式不会授予管理员权限，也不把独立管理面板挂到 Core 根页面；实例管理后台继续使用自己的管理监听。
 
-独立静态站点使用同一份 `dist/web/` 构建产物，配置方式见[客户端部署](client/README.md)。公开 Core/Matrix 地址及 `core-config.json` 的 `identity.clientOrigins` 必须与实际客户端匹配。网页托管模式不会自动放宽 CORS，也不会将外服 URL 变成普通登录令牌的允许目标。
+独立静态站点使用同一份 `dist/web/` 构建产物，配置方式见[客户端部署](client/README.md)。公开 Core/Matrix 地址、`core-config.json` 的 `identity.clientOrigins` 和中央的 `clientOrigins` 必须与实际客户端匹配。网页托管模式不会自动放宽 CORS，也不会将外服 URL 变成普通登录令牌的允许目标。
 
 切换模式不删除构建、聊天历史、账号或节点配置，也不会清空用户设备已有的 PWA 离线缓存；服务器网络请求的网页发布按当前模式处理。
 

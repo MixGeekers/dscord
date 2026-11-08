@@ -17,7 +17,7 @@ test('server initialization survives retries, keeps identity and rejects an inco
     await initializeServer(options, { containerOwnership: false });
     assert.equal(await readFile(path.join(options.dataRoot, 'server.json'), 'utf8'), metadata);
     assert.equal(await readFile(path.join(options.dataRoot, 'core-config.json'), 'utf8'), core);
-    assert.equal(JSON.parse(core).demoLogin, false);
+    assert.equal(JSON.parse(core).identity, undefined);
     const synapse = JSON.parse(await readFile(path.join(options.synapseRoot, 'homeserver.yaml'), 'utf8'));
     assert.deepEqual(synapse.rc_login, {
       address: { per_second: 1, burst_count: 20 },

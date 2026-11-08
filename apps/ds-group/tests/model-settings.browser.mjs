@@ -12,6 +12,7 @@ const temporary = await mkdtemp(path.join(os.tmpdir(), 'dscord-model-ui-'));
 const output = path.join(packageRoot, '.local/model-settings');
 await mkdir(output, { recursive: true });
 const bot = { id: '@project-helper:chat.example', name: '项目助手', localpart: 'project-helper', kind: 'bot' };
+const centralBot = { id: 'central-bot-1', username: 'project-helper', displayName: '项目助手', globalId: 'project-helper@id.example', kind: 'bot', status: 'active' };
 const profiles = {
   'team-api': { displayName: '团队 API', apiKeyEnv: 'TEAM_KEY', models: [{ id: 'team/chat' }] },
   'local-model': { displayName: '本地推理', api: 'openai-completions', baseURL: 'http://127.0.0.1:9991/v1', models: [{ id: 'assistant' }] },
@@ -51,10 +52,24 @@ const controller = await new ConnectController({
     async stop(node) { effects.push('stop'); live.delete(node.id); },
     probe: async node => ({ status: live.has(node.id) ? 'online' : 'offline', modelConfig: live.get(node.id) }),
   },
-  async request(url) {
-    if (url.endsWith('/api/login')) return Response.json({ user_id: '@alice:chat.example', access_token: 'synthetic-user-token', user: { name: 'Alice' } });
-    if (url.endsWith('/api/status')) return Response.json({ budget: { maxTokens: 8192, allowedModels: null } });
-    if (url.endsWith('/api/bots')) return Response.json({ bots: [bot] });
+  // The chat server and its central server, as one fake network.
+  async request(url, init) {
+    const { origin, pathname } = new URL(url);
+    const body = init.body ? JSON.parse(init.body) : {};
+    if (origin === 'https://id.example') {
+      if (pathname === '/api/login') return Response.json({ token: 'synthetic-central-token', account: { kind: 'human', displayName: 'Alice', globalId: 'alice@id.example' } });
+      if (pathname === '/api/bots') return Response.json({ bots: [centralBot] });
+      if (pathname === '/api/device') return Response.json({ deviceCode: 'synthetic-device', userCode: 'USER-1' });
+      if (pathname === '/api/device/approve') return Response.json({ bot: centralBot });
+      if (pathname === '/api/device/token') return Response.json({ token: 'synthetic-bot-central' });
+      if (pathname === '/api/identity-tokens') return Response.json({ token: `identity:${init.headers.Authorization.slice(7)}` });
+      return Response.json({});
+    }
+    if (pathname === '/.well-known/dscord/client') return Response.json({ home: { serverName: 'chat.example' }, central: { issuer: 'https://id.example' },
+      auth: { audience: 'https://chat.example', sessionPath: '/api/session' } });
+    if (pathname === '/api/session') return Response.json(body.identityToken === 'identity:synthetic-bot-central'
+      ? { user_id: bot.id, access_token: 'synthetic-bot-session' } : { user_id: '@alice:chat.example', access_token: 'synthetic-user-token', user: { name: 'Alice' } });
+    if (pathname === '/api/status') return Response.json({ budget: { maxTokens: 8192, allowedModels: null } });
     if (url.endsWith('/connect')) return Response.json({ bundle: {
       schemaVersion: 1, nodeId: bot.localpart, coreUrl: 'https://chat.example',
       coreConfig: { nodeSecret: 'synthetic-node-token', publicUrl: 'https://chat.example' },

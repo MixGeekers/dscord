@@ -1,7 +1,6 @@
-import { chmod, readFile, rename, writeFile } from 'node:fs/promises';
-import path from 'node:path';
+import { CentralTrust } from './central-trust.mjs';
 
-const IDENTITY_CONTRACT_VERSION = '1.0.1';
+const IDENTITY_CONTRACT_VERSION = '2.0.0';
 const fail = message => { throw new Error(message); };
 const forbidden = message => Object.assign(new Error(message), { status: 403, code: 'CLIENT_ORIGIN_DENIED' });
 
@@ -18,51 +17,41 @@ function identityOrigin(value, name, { secure = true } = {}) {
 
 export function validateIdentityOptions(value = {}) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) fail('identity configuration must be an object');
-  const { mode = 'standalone', coreUrl, matrixUrl, clientOrigins = [] } = value;
-  if (!['central', 'standalone'].includes(mode)) fail('identity.mode must be central or standalone');
+  const { central, matrixUrl, clientOrigins = [] } = value;
   if (!Array.isArray(clientOrigins) || clientOrigins.length > 32) fail('identity.clientOrigins must be an array of at most 32 origins');
-  return { mode,
-    ...(coreUrl === undefined ? {} : { coreUrl: identityOrigin(coreUrl, 'identity.coreUrl', { secure: mode === 'central' }) }),
-    ...(matrixUrl === undefined ? {} : { matrixUrl: identityOrigin(matrixUrl, 'identity.matrixUrl', { secure: mode === 'central' }) }),
+  return {
+    ...(central === undefined ? {} : { central: identityOrigin(central, 'identity.central') }),
+    ...(matrixUrl === undefined ? {} : { matrixUrl: identityOrigin(matrixUrl, 'identity.matrixUrl', { secure: false }) }),
     clientOrigins: [...new Set(clientOrigins.map(origin => identityOrigin(origin, 'identity.clientOrigins')))].sort() };
 }
 
-/** Public discovery and browser-origin policy, independent of the static client bundle. */
+/** Public discovery, the central server this chat server trusts, and browser-origin policy. */
 export class IdentityService {
-  constructor({ accounts, setup, config, dataRoot }) { Object.assign(this, { accounts, setup, config, dataRoot }); }
+  constructor({ accounts, setup, config, centralUrl }) { Object.assign(this, { accounts, setup, config, centralUrl }); }
 
-  async initialize() {
-    const filename = path.join(this.dataRoot, 'identity-config.json');
-    let stored;
-    try { stored = JSON.parse(await readFile(filename, 'utf8')); } catch (error) { if (error.code !== 'ENOENT') throw error; }
-    if (stored && (stored.schemaVersion !== 1 || stored.authorityId !== this.accounts.authorityId)) {
-      fail('Restore identity-config.json and accounts.sqlite from the same identity authority');
-    }
-    const serverName = this.accounts.serverName || null;
-    if (stored?.serverName && stored.serverName !== serverName) fail('The default Matrix home cannot change in an existing identity authority');
-    const selected = validateIdentityOptions(this.config.identity ?? stored?.options ?? {});
-    const coreUrl = selected.coreUrl ?? (this.config.publicUrl ? identityOrigin(this.config.publicUrl, 'publicUrl', { secure: selected.mode === 'central' }) : null);
-    const matrixUrl = selected.matrixUrl ?? identityOrigin(this.setup.publicHomeserverUrl || this.setup.homeserverUrl, 'public Matrix URL', { secure: selected.mode === 'central' });
-    if (selected.mode === 'central' && (!serverName || !coreUrl)) fail('Central identity requires a Matrix server name and explicit public Core/Matrix URLs');
-    if (selected.mode === 'central' && !this.setup.publicHomeserverUrl && !selected.matrixUrl) fail('Central identity requires an explicit public Matrix URL');
-    this.options = { ...selected, ...(coreUrl ? { coreUrl } : {}), matrixUrl };
-    this.home = { serverName, coreUrl, matrixUrl };
+  initialize() {
+    const selected = validateIdentityOptions(this.config.identity ?? {});
+    const coreUrl = this.config.publicUrl ? identityOrigin(this.config.publicUrl, 'publicUrl', { secure: false }) : null;
+    const matrixUrl = selected.matrixUrl ?? identityOrigin(this.setup.publicHomeserverUrl || this.setup.homeserverUrl, 'public Matrix URL', { secure: false });
+    if (selected.central && !coreUrl) fail('A chat server that trusts a central server needs its public Core URL (publicUrl)');
+    this.options = { ...selected, matrixUrl };
+    this.home = { serverName: this.accounts.serverName || null, coreUrl, matrixUrl };
     this.accounts.home = this.home;
-    if (selected.mode === 'central') this.setup.publicHomeserverUrl = matrixUrl;
-    const state = { schemaVersion: 1, authorityId: this.accounts.authorityId, serverName, options: this.options };
-    if (JSON.stringify(state) !== JSON.stringify(stored)) {
-      const temporary = `${filename}.${process.pid}.tmp`;
-      await writeFile(temporary, JSON.stringify(state, null, 2) + '\n', { mode: 0o600 });
-      await rename(temporary, filename);
-    }
-    await chmod(filename, 0o600);
+    if (selected.matrixUrl) this.setup.publicHomeserverUrl = matrixUrl;
+    this.central = selected.central ? new CentralTrust({ issuer: selected.central, audience: coreUrl, url: this.centralUrl || selected.central }) : null;
     return this;
   }
 
+  /** The central server, or a refusal when this chat server has none configured. */
+  trust() {
+    if (!this.central) throw Object.assign(new Error('This chat server has no central server configured'), { status: 503, code: 'CENTRAL_UNCONFIGURED' });
+    return this.central;
+  }
+
   discovery() {
-    return { schemaVersion: 1, contractVersion: IDENTITY_CONTRACT_VERSION, name: 'DSCord', mode: this.options.mode,
-      authorityId: this.accounts.authorityId, home: this.home,
-      auth: { mode: 'matrix-password', loginPath: '/api/login', registerPath: '/api/register', mePath: '/api/me', logoutPath: '/api/logout', cookieCredentials: false },
+    return { schemaVersion: 2, contractVersion: IDENTITY_CONTRACT_VERSION, name: 'DSCord', home: this.home,
+      central: this.central ? { issuer: this.central.issuer } : null,
+      auth: { mode: 'central-identity-token', audience: this.home.coreUrl, sessionPath: '/api/session', mePath: '/api/me', logoutPath: '/api/logout', cookieCredentials: false },
       credentials: { type: 'matrix-access-token', coreOrigin: this.home.coreUrl, matrixOrigin: this.home.matrixUrl, remoteCore: 'forbidden', deploymentAdmin: 'forbidden' } };
   }
 
@@ -79,7 +68,7 @@ export class IdentityService {
     if (origin === undefined) return; // CLI/node callers still need their normal authentication.
     let normalized;
     try { normalized = identityOrigin(origin, 'Origin', { secure: false }); } catch { throw forbidden('Invalid client Origin'); }
-    // Unconfigured legacy single-origin deployments keep their existing browser path.
+    // Without a configured public Core URL, the page's own host is the one browser origin.
     const localOrigins = !this.home.coreUrl && request.headers.host ? [`http://${request.headers.host}`, `https://${request.headers.host}`] : [];
     if (origin !== normalized || ![this.home.coreUrl, ...localOrigins, ...this.options.clientOrigins].includes(normalized)) {
       throw forbidden('This client origin is not allowed by the home server');

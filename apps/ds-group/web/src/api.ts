@@ -15,18 +15,14 @@ export class ApiError extends Error {
     this.code = code;
   }
 }
-function apiUrl(
-  config: ClientConfig,
-  route: string,
-  target: "core" | "auth" = "core",
-): string {
+function apiUrl(config: ClientConfig, route: string): string {
   if (
     !route.startsWith("/api/") ||
     route.includes("\\") ||
     /[\r\n]/.test(route)
   )
     throw new Error("API routes must be relative /api/ paths");
-  const origin = target === "auth" ? config.authUrl : config.homeCoreUrl;
+  const origin = config.homeCoreUrl;
   const url = new URL(route, origin);
   if (url.origin !== origin || !url.pathname.startsWith("/api/"))
     throw new Error("API route escapes the pinned service");
@@ -36,7 +32,6 @@ function apiUrl(
 export function createRequest(
   getSession: () => Session | null,
   config: ClientConfig = defaultClientConfig(),
-  target: "core" | "auth" = "core",
   transform: (route: string) => string = (route) => route,
 ): RawRequest {
   return async (route, options = {}) => {
@@ -51,7 +46,7 @@ export function createRequest(
     }
     const identity = sessionIdentity(session);
     const { auth: _auth, ...init } = options;
-    const response = await fetch(apiUrl(config, transform(route), target), {
+    const response = await fetch(apiUrl(config, transform(route)), {
       ...init,
       headers,
       credentials: "omit",
@@ -70,10 +65,9 @@ export function createRequest(
 export function createApi(
   getSession: () => Session | null,
   config: ClientConfig = defaultClientConfig(),
-  target: "core" | "auth" = "core",
   transform?: (route: string) => string,
 ): Api {
-  const raw = createRequest(getSession, config, target, transform);
+  const raw = createRequest(getSession, config, transform);
   return async function request<T>(
     route: string,
     options: RequestOptions = {},
@@ -98,38 +92,41 @@ export function createApi(
     } catch {
       throw new ApiError(`HTTP ${response.status}`, response.status);
     }
-    if (!response.ok) {
-      const error = data as {
-        error?: string;
-        message?: string;
-        retry_after_ms?: number;
-        code?: string;
-      };
-      const retryAfter = response.headers.get("Retry-After");
-      const headerDelay = retryAfter
-        ? Number.isFinite(Number(retryAfter))
-          ? Number(retryAfter) * 1000
-          : Date.parse(retryAfter) - Date.now()
-        : 0;
-      const bodyDelay = error.retry_after_ms;
-      const retryAfterMs =
-        typeof bodyDelay === "number" && Number.isFinite(bodyDelay)
-          ? Math.max(0, bodyDelay)
-          : Number.isFinite(headerDelay)
-            ? Math.max(0, headerDelay)
-            : 0;
-      throw new ApiError(
-        typeof error.error === "string"
-          ? error.error
-          : error.message || `HTTP ${response.status}`,
-        response.status,
-        retryAfterMs,
-        typeof error.code === "string" ? error.code : "",
-      );
-    }
+    if (!response.ok) throw responseError(response, data);
     return data as T;
   };
 }
+/** The error a failed JSON response carries, with any rate-limit delay from its body or Retry-After header. */
+export function responseError(response: Response, data: unknown): ApiError {
+  const error = (data ?? {}) as {
+    error?: string;
+    message?: string;
+    retry_after_ms?: number;
+    code?: string;
+  };
+  const retryAfter = response.headers.get("Retry-After");
+  const headerDelay = retryAfter
+    ? Number.isFinite(Number(retryAfter))
+      ? Number(retryAfter) * 1000
+      : Date.parse(retryAfter) - Date.now()
+    : 0;
+  const bodyDelay = error.retry_after_ms;
+  const retryAfterMs =
+    typeof bodyDelay === "number" && Number.isFinite(bodyDelay)
+      ? Math.max(0, bodyDelay)
+      : Number.isFinite(headerDelay)
+        ? Math.max(0, headerDelay)
+        : 0;
+  return new ApiError(
+    typeof error.error === "string"
+      ? error.error
+      : error.message || `HTTP ${response.status}`,
+    response.status,
+    retryAfterMs,
+    typeof error.code === "string" ? error.code : "",
+  );
+}
+
 export function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

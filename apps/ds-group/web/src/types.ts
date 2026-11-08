@@ -7,8 +7,7 @@ export interface Session {
   user_id: string;
   device_id?: string;
   identity?: {
-    authorityId: string;
-    subjectId: string;
+    globalId: string | null;
     matrixUserId: string;
     kind: "human";
   };
@@ -164,9 +163,6 @@ export interface Bootstrap {
   homeserverUrl?: string;
   serverName?: string;
   participants: Participant[];
-  demoLogin?: boolean;
-  registration?: { enabled: boolean; mode: "open" | "closed" };
-  mode?: string;
   attachments?: { maxBytes: number; maxPerMessage: number };
 }
 export interface NotificationPreferences {

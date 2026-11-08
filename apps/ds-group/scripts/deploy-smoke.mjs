@@ -19,8 +19,9 @@ if (!Number.isInteger(portBase) || portBase < 0 || portBase > 65525 || (portBase
 const env = { ...process.env, DS_GROUP_IMAGE: process.env.DS_GROUP_IMAGE || 'ds-group:ci',
   DS_GROUP_MEDIA_BACKEND: 'local', DS_GROUP_WEB_MODE: 'bundled', DS_GROUP_BOOTSTRAP_DEMO: 'true',
   DS_GROUP_HTTP_PORT: String(portBase), DS_GROUP_MATRIX_PORT: String(portBase ? portBase + 8 : 0),
-  DS_GROUP_ADMIN_PORT: String(portBase ? portBase + 10 : 0), DS_GROUP_BIND: '127.0.0.1', DS_GROUP_SERVER_NAME: `${name}.local`,
-  DS_GROUP_PUBLIC_URL: 'http://localhost:18100', DS_GROUP_MATRIX_PUBLIC_URL: 'http://localhost:18008' };
+  DS_GROUP_ADMIN_PORT: String(portBase ? portBase + 10 : 0), DS_GROUP_CENTRAL_PORT: String(portBase ? portBase + 20 : 0),
+  DS_GROUP_BIND: '127.0.0.1', DS_GROUP_SERVER_NAME: `${name}.local`,
+  DS_GROUP_PUBLIC_URL: 'http://localhost:18100', DS_GROUP_MATRIX_PUBLIC_URL: 'http://localhost:18008', DS_GROUP_CENTRAL_URL: 'http://localhost:18200' };
 const report = { schemaVersion: 1, startedAt: new Date().toISOString(), project: name,
   platform: process.env.DS_GROUP_PLATFORM || process.platform + '/' + process.arch,
   runner: { platform: process.platform, architecture: process.arch },
@@ -39,16 +40,25 @@ async function compose(args) {
   }
 }
 
-async function endpoint() {
-  const binding = (await compose(['port', 'core', '18100'])).split('\n')[0];
+async function endpoint(service = 'core', port = 18100) {
+  const binding = (await compose(['port', service, String(port)])).split('\n')[0];
   return `http://${binding}`;
 }
 
-async function request(baseUrl, route, { token, body } = {}) {
+/** Sign in to the chat server the one way there is: a central account and an identity token naming it. */
+async function signIn(coreUrl, username) {
+  const central = await endpoint('central', 18200);
+  const account = await request(central, '/api/register', { body: { username, password: `${name}-password`, displayName: username }, status: 201 });
+  const { token: identityToken } = await request(central, '/api/identity-tokens', { token: account.token,
+    body: { audience: env.DS_GROUP_PUBLIC_URL, allowNew: true } });
+  return request(coreUrl, '/api/session', { body: { identityToken } });
+}
+
+async function request(baseUrl, route, { token, body, status = 200 } = {}) {
   const response = await fetch(`${baseUrl}${route}`, { method: body === undefined ? 'GET' : 'POST',
     headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...(body === undefined ? {} : { 'Content-Type': 'application/json' }) },
     ...(body === undefined ? {} : { body: JSON.stringify(body) }), signal: AbortSignal.timeout(20_000) });
-  assert.equal(response.status, 200, `${route} returned HTTP ${response.status}`);
+  assert.equal(response.status, status, `${route} returned HTTP ${response.status}`);
   return response.json();
 }
 
@@ -181,7 +191,7 @@ async function checkRemoteAdapter(bundle, coreUrl, token) {
 await mkdir(path.dirname(reportPath), { recursive: true });
 if (process.env.DS_GROUP_PLATFORM) {
   const override = path.join(path.dirname(reportPath), `${name}.compose.json`);
-  await writeFile(override, JSON.stringify({ services: Object.fromEntries(['config', 'synapse', 'bootstrap', 'core', 'administration'].map(service => [service, { platform: process.env.DS_GROUP_PLATFORM }])) }));
+  await writeFile(override, JSON.stringify({ services: Object.fromEntries(['central', 'config', 'synapse', 'bootstrap', 'core', 'administration'].map(service => [service, { platform: process.env.DS_GROUP_PLATFORM }])) }));
   composeFiles.push('-f', override);
 }
 
@@ -194,12 +204,12 @@ try {
   assert.equal(initial.participants.length, 4);
   await request(url, '/readyz');
   report.checks.push('freshVolumesReady');
-  const demo = await fetch(`${url}/api/demo-login?user=alice`);
-  assert.equal(demo.status, 404);
+  assert.equal((await fetch(`${url}/api/me`)).status, 401);
   report.checks.push('serverRequiresLogin');
-  const credentials = JSON.parse(await compose(['exec', '-T', 'core', 'node', 'scripts/server-admin.mjs', 'credentials', 'alice']));
-  const login = await request(url, '/api/login', { body: credentials });
+  // The central account named alice claims the seeded Matrix account of the same name.
+  const login = await signIn(url, 'alice');
   assert.equal(login.user_id, initial.participants.find(person => person.localpart === 'alice').id);
+  assert.equal(login.identity.globalId, 'alice@localhost');
   const token = login.access_token;
   const group = await request(url, '/api/rooms', { token, body: { name: 'Deployment smoke', inviteIds: [], requestId: `${name}-group` } });
   const message = `Persisted deployment message ${name}`;
@@ -207,7 +217,7 @@ try {
     body: { body: message, to: [], transactionId: `${name}-message` } });
   const history = await request(url, `/api/rooms/${encodeURIComponent(group.roomId)}/messages`, { token });
   assert.ok(history.events.some(event => event.event_id === sent.event_id && event.content.body === message));
-  report.checks.push('matrixLoginGroupAndMessage');
+  report.checks.push('centralSignInGroupAndMessage');
   const manifest = await fetch(`${url}/manifest.webmanifest`);
   assert.equal(manifest.status, 200);
   assert.equal((await manifest.json()).display, 'standalone');

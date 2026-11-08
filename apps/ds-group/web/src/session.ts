@@ -3,18 +3,16 @@ import type { ClientConfig, ClientDiscovery } from "./client-config.ts";
 import type { Session } from "./types";
 
 export interface SessionBinding {
-  schemaVersion: 1;
+  schemaVersion: 2;
   homeCoreUrl: string;
-  authUrl: string;
   homeMatrixUrl: string | null;
-  authorityId: string;
+  centralIssuer: string;
 }
 
 export function sameBinding(session: Session, config: ClientConfig): boolean {
   return (
-    session.binding?.schemaVersion === 1 &&
+    session.binding?.schemaVersion === 2 &&
     session.binding.homeCoreUrl === config.homeCoreUrl &&
-    session.binding.authUrl === config.authUrl &&
     session.binding.homeMatrixUrl === config.homeMatrixUrl
   );
 }
@@ -24,16 +22,15 @@ export function bindSession(
   config: ClientConfig,
   discovery: ClientDiscovery,
 ): Session {
-  if (!input.access_token || !input.user_id)
+  if (!input.access_token || !input.user_id || !discovery.central)
     throw new Error("Invalid login session");
   return {
     ...input,
     binding: {
-      schemaVersion: 1,
+      schemaVersion: 2,
       homeCoreUrl: config.homeCoreUrl,
-      authUrl: config.authUrl,
       homeMatrixUrl: config.homeMatrixUrl,
-      authorityId: discovery.authorityId,
+      centralIssuer: discovery.central.issuer,
     },
   };
 }
@@ -42,7 +39,7 @@ export function sessionIdentity(session: Session | null): string {
   return session
     ? JSON.stringify([
         session.binding,
-        session.identity?.subjectId,
+        session.identity?.globalId,
         session.user_id,
         session.access_token,
       ])
@@ -50,7 +47,7 @@ export function sessionIdentity(session: Session | null): string {
 }
 
 export function sessionStorageKey(config: ClientConfig): string {
-  return `ds-group.session.v2.${bindingKey(config)}`;
+  return `ds-group.session.v3.${bindingKey(config)}`;
 }
 
 export function readStored<T>(key: string): T | null {
@@ -74,11 +71,11 @@ export function storageKey(
   spaceId?: string | null,
   roomId?: string | null,
 ): string {
-  return `ds-group.v2.${bindingKey(config)}.${encodeURIComponent(
+  return `ds-group.v3.${bindingKey(config)}.${encodeURIComponent(
     JSON.stringify([
       kind,
-      session?.binding?.authorityId ?? null,
-      session?.identity?.subjectId ?? null,
+      session?.binding?.centralIssuer ?? null,
+      session?.identity?.globalId ?? null,
       session?.user_id ?? null,
       spaceId ?? null,
       roomId ?? null,

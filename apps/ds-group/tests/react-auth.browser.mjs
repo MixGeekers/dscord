@@ -24,26 +24,20 @@ const html = `<!doctype html>
       import { createRoot } from 'react-dom/client';
       import { AuthDialog } from '/src/components/AuthDialog.tsx';
 
-      const initialBootstrap = {
-        name: 'DSCord', roomId: '!general:test', roomName: 'General', demoLogin: false,
-        registration: { enabled: true, mode: 'open' },
-        participants: [{ id: '@alice:test', localpart: 'alice', name: 'Alice', kind: 'human' }],
-      };
+      const initialCentral = { issuer: 'https://id.example', host: 'id.example', registration: 'open' };
       const fixture = window.fixture = { calls: [], closeCount: 0, clearCount: 0, behavior: 'success' };
       function Fixture() {
-        const [bootstrap, setBootstrap] = React.useState(initialBootstrap);
+        const [central, setCentral] = React.useState(initialCentral);
         const [session, setSession] = React.useState(null);
         const [open, setOpen] = React.useState(true);
         const [busy, setBusy] = React.useState(false);
         const [error, setError] = React.useState('');
-        fixture.bootstrap = value => setBootstrap(previous => ({ ...previous, ...value }));
+        fixture.central = value => setCentral(previous => ({ ...previous, ...value }));
         fixture.session = setSession;
         fixture.open = setOpen;
-        fixture.rerender = () => setBootstrap(previous => ({
-          ...previous, participants: previous.participants.map(person => ({ ...person })),
-        }));
+        fixture.rerender = () => setCentral(previous => ({ ...previous }));
         return React.createElement(AuthDialog, {
-          open, bootstrap, session, busy, error,
+          open, central, session, busy, error,
           onClearError() { fixture.clearCount++; setError(''); },
           onClose() { fixture.closeCount++; setOpen(false); },
           async onSubmit(input) {
@@ -107,7 +101,9 @@ try {
   assert.equal(await page.evaluate(() => window.fixture.calls.length), 0);
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#login-dialog').evaluate(element => element.open), true);
+  assert.equal(await page.locator('#login-central').textContent(), 'Sign in with your account on id.example.');
   checks.push('requiredFieldsIdentifyErrorsAndSignedOutDialogStaysOpen');
+  checks.push('dialogNamesTheCentralServerThatHoldsTheAccount');
 
   await page.locator('#login-user').fill('new-person');
   await page.locator('#login-password').fill('synthetic-pass');
@@ -119,7 +115,7 @@ try {
   assert.deepEqual(await page.evaluate(() => window.fixture.calls[0]), {
     mode: 'login', username: 'new-person', password: 'synthetic-pass', displayName: '',
   });
-  checks.push('unknownUsernameCanSignInAndBootstrapRefreshPreservesCredentials');
+  checks.push('unknownUsernameCanSignInAndCentralRefreshPreservesCredentials');
 
   await page.locator('#password-toggle').click();
   assert.equal(await page.locator('#login-password').getAttribute('type'), 'text');
@@ -176,23 +172,12 @@ try {
   checks.push('failedRequestPreservesCredentialsAndAllowsRetry');
 
   await page.locator('#auth-toggle-mode').click();
-  await page.evaluate(() => window.fixture.bootstrap({ registration: { enabled: false, mode: 'closed' } }));
+  await page.evaluate(() => window.fixture.central({ registration: 'closed' }));
   await page.waitForFunction(() => document.querySelector('#login-title').textContent === 'Sign in');
   assert.equal(await page.locator('#auth-toggle-mode').count(), 0);
   assert.equal(await page.locator('#register-name').count(), 0);
-  await page.evaluate(() => window.fixture.bootstrap({ registration: { enabled: true, mode: 'closed' } }));
-  assert.equal(await page.locator('#auth-toggle-mode').count(), 0);
-  checks.push('closedRegistrationCannotBeSelectedAndPolicyChangeReturnsToLogin');
-
-  await page.evaluate(() => window.fixture.bootstrap({ demoLogin: true }));
-  await page.locator('#login-user').fill('alice');
-  await page.locator('#login-password').fill('');
+  checks.push('closedCentralRegistrationCannotBeSelectedAndPolicyChangeReturnsToLogin');
   await page.evaluate(() => { window.fixture.behavior = 'success'; });
-  await page.locator('#login-submit').click();
-  await page.waitForFunction(() => window.fixture.calls.at(-1)?.username === 'alice');
-  assert.equal((await page.evaluate(() => window.fixture.calls.at(-1))).password, '');
-  assert.equal(await page.locator('#demo-accounts option[value="alice"]').count(), 1);
-  checks.push('explicitDemoModeKeepsPasswordlessKnownAccountPath');
 
   await page.locator('#login-user').fill('mobile-person');
   await page.locator('#login-password').fill('mobile-password');

@@ -269,17 +269,13 @@ try {
   );
   await page.getByRole("button", { name: "Deployment", exact: true }).click();
   await page.screenshot({ path: path.join(output, "admin-deployment-desktop.png"), animations: "disabled" });
-  await page
-    .getByLabel("Local registration", { exact: true })
-    .selectOption("closed");
   await page.getByLabel("Attachment limit (MiB)", { exact: true }).fill("2");
   await page.getByRole("button", { name: "Save policy", exact: true }).click();
   await page.getByText("Saved revision 6", { exact: true }).waitFor();
   assert.deepEqual((await admin.governance.read()).settings, {
-    registrationMode: "closed",
     maxUploadBytes: 2097152,
   });
-  checks.push("Deployment controls persist registration and upload policy");
+  checks.push("Deployment controls persist the upload policy");
   await page.getByRole("button", { name: "Prepare and apply", exact: true }).click();
   await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
   await page.getByRole("button", { name: "概览", exact: true }).click();

@@ -193,23 +193,25 @@ test('node polling requires current scoped heartbeat and malformed management re
   assert.equal((await app.nodeRequest('/internal/kernel/result', { ...command, status: 'failed', error: { code: 'OLD' } })).body.code, 'KERNEL_RUNTIME_CHANGED');
 });
 
-test('owner connection bundle marks a native binding without changing legacy node bundle schema', async t => {
+test('a Bot connection bundle carries the native binding its node reports', async t => {
   const app = await fixture(t);
-  let response = await app.request(botPath + '/connect', { method: 'POST', body: {} });
+  const connect = (body, token = 'synthetic-bot-token') => app.request(botPath + '/connect', { token, method: 'POST', body });
+  let response = await connect({});
   assert.equal(response.status, 200);
   assert.equal(response.body.bundle.schemaVersion, 1);
   assert.equal(response.body.bundle.coreConfig.executionMode, undefined);
   assert.equal(response.body.bundle.setup.participants.find(person => person.id === botId).nativeBinding, undefined);
   const binding = { hostId: 'owner-host', nativeBotId: 'original-native', botId };
-  app.core.accounts.db.prepare('INSERT INTO native_bot_bindings VALUES (?,?,?,?)').run(ownerId, binding.hostId, binding.nativeBotId, botId);
-  response = await app.request(botPath + '/connect', { method: 'POST', body: {} });
+  response = await connect({ native: { hostId: binding.hostId, nativeBotId: binding.nativeBotId } });
   assert.equal(response.status, 200);
   const { bundle } = response.body;
-  assert.equal(bundle.schemaVersion, 1);
   assert.equal(bundle.coreConfig.executionMode, 'native');
   assert.deepEqual(bundle.coreConfig.nativeBinding, binding);
   assert.deepEqual(bundle.setup.participants.find(person => person.id === botId).nativeBinding, binding);
   assert.equal(bundle.setup.participants.filter(person => person.nativeBinding).length, 1);
   assert.equal(bundle.setup.participants.filter(person => person.accessToken).length, 1);
-  assert.equal((await app.request(botPath + '/connect', { token: 'synthetic-other-token', method: 'POST', body: {} })).status, 403);
+  assert.equal((await connect({ native: { hostId: binding.hostId, nativeBotId: binding.nativeBotId } }, 'synthetic-other-bot-token')).status, 403);
+  assert.equal((await connect({}, 'synthetic-owner-token')).status, 403);
+  const owned = await app.request('/api/bots');
+  assert.deepEqual(owned.body.bots.find(bot => bot.id === botId).nativeBinding, binding);
 });

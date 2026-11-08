@@ -80,8 +80,8 @@ export async function buildRelease({ root = packageRoot, output = path.join(root
   const lock = source.find(file => file.path === 'package-lock.json');
   assertReleaseVersions(pkg, JSON.parse(lock?.bytes.toString('utf8') || '{}'));
   await projectLicense(root, pkg);
-  const required = ['package-lock.json', 'src/core.mjs', 'src/identity.mjs', 'src/web-mode.mjs', 'src/admin.mjs',
-    'scripts/central-init.mjs', 'scripts/admin.mjs', 'bin/dscord.mjs', 'web/index.html', 'web/src/client-config.ts', 'web/client-config.json', 'admin/index.html', 'admin/vite.config.ts',
+  const required = ['package-lock.json', 'src/core.mjs', 'src/identity.mjs', 'src/central-trust.mjs', 'central/service.mjs', 'central/tokens.mjs', 'src/web-mode.mjs', 'src/admin.mjs',
+    'scripts/admin.mjs', 'bin/dscord.mjs', 'web/index.html', 'web/src/client-config.ts', 'web/client-config.json', 'admin/index.html', 'admin/vite.config.ts',
     'Dockerfile', 'deploy/compose.yaml', 'deploy/synapse/dscord_guard.py', 'ui/controls.tsx', 'ui/overlays.tsx', 'ui/tailwind.css', 'web/licenses/ui-foundation.txt',
     'dsh-plugin/index.mjs', 'dsh-plugin/runtime-dependencies.json', 'dsh-plugin/runtime-dependencies-lock.json', 'dsh-plugin/runtime-dependencies-pnpm-lock.yaml',
     'dsh-connect/kernel-runtime.mjs', 'memory/snapshot-context.mjs', 'src/native-request.mjs', 'vendor/ds-bot/src/host/message-source.js',

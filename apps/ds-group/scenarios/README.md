@@ -24,7 +24,7 @@
 
 | 做什么 | 请求 |
 | --- | --- |
-| 登录 | `POST /api/login`，正文 `{"user":"账号","password":"密码"}`，返回 `access_token` |
+| 登录 | 先在中央服务器 `POST /api/login`（正文 `{"username":"账号","password":"密码"}`）拿中央会话令牌，再 `POST /api/identity-tokens`（正文 `{"audience":"服务器地址","allowNew":true}`）换身份令牌，最后对服务器 `POST /api/session`，正文 `{"identityToken":"…"}`，返回 `access_token` |
 | 列出房间 | `GET /api/rooms` |
 | 打开与某人的私聊 | `POST /api/dm`，正文 `{"participantId":"@bot:server"}` |
 | 上传附件 | `POST /api/attachments?filename=名字`，正文是文件字节，带 `Content-Type`，返回 `attachment.id` |

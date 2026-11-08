@@ -20,10 +20,12 @@ const tarball = path.resolve(packageRoot, values.tarball);
 const reportPath = path.resolve(packageRoot, values.report);
 const corePort = 21100;
 const matrixPort = 21008;
+const centralPort = 21200;
 const containerName = 'dscord-npm-smoke';
 const image = 'ghcr.io/element-hq/synapse@sha256:f0df87cff259872637b4b5e5174b9977e5e3046dd421505407803b5e45c5f842';
 const coreUrl = `http://127.0.0.1:${corePort}`;
 const matrixUrl = `http://127.0.0.1:${matrixPort}`;
+const centralUrl = `http://127.0.0.1:${centralPort}`;
 const runId = `npm-smoke-${randomUUID()}`;
 const report = { schemaVersion: 1, runId, startedAt: new Date().toISOString(), status: 'running',
   platform: process.platform, arch: process.arch, node: process.version,
@@ -33,6 +35,9 @@ const delay = milliseconds => new Promise(resolve => setTimeout(resolve, millise
 let workspace;
 let core;
 let coreExit;
+let central;
+let centralExit;
+let centralLog = '';
 let containerId;
 let coreLog = '';
 
@@ -83,6 +88,35 @@ async function jsonRequest(route, { token, body, method = body === undefined ? '
   return response.json();
 }
 
+async function centralRequest(route, { token, body } = {}) {
+  const response = await fetch(new URL(route, centralUrl), { method: 'POST', signal: AbortSignal.timeout(15000),
+    headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body ?? {}) });
+  assert.ok(response.ok, `Central ${route} returned ${response.status}`);
+  return response.json();
+}
+
+/** Register a central account of the seeded username and sign in to Core with an identity token naming it. */
+async function centralSignIn(username) {
+  const { token } = await centralRequest('/api/register', { body: { username, password: `npm-smoke-${runId}`, displayName: username } });
+  const issued = await centralRequest('/api/identity-tokens', { token, body: { audience: coreUrl, allowNew: true } });
+  return jsonRequest('/api/session', { body: { identityToken: issued.token } });
+}
+
+async function stopChild(child, exit, port, label) {
+  if (child.exitCode === null && child.signalCode === null) {
+    child.kill('SIGTERM');
+    let timer;
+    try {
+      await Promise.race([exit, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error(`${label} did not stop after SIGTERM`)), 15000); })]);
+    } catch (error) {
+      process.kill(-child.pid, 'SIGKILL');
+      await exit;
+      throw error;
+    } finally { clearTimeout(timer); }
+  }
+  await freePort(port);
+}
+
 async function check(name, work) {
   console.log(`Checking ${name}`);
   await work();
@@ -93,6 +127,7 @@ async function check(name, work) {
 try {
   await freePort(corePort);
   await freePort(matrixPort);
+  await freePort(centralPort);
   const existing = (await command('docker', ['ps', '-a', '--filter', `name=^/${containerName}$`, '--format', '{{.ID}}'])).trim();
   assert.equal(existing, '', 'The smoke container name is already in use');
   await command('docker', ['image', 'inspect', image]);
@@ -117,7 +152,7 @@ try {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('DS_GROUP_') && key !== 'NODE_PATH' && key !== 'OPENCODE_API_KEY'));
   Object.assign(env, { DS_GROUP_DATA_DIR: './data', DS_GROUP_SYNAPSE_DIR: './synapse', DS_GROUP_SERVER_NAME: 'npm-smoke.local',
     DS_GROUP_MATRIX_URL: matrixUrl, DS_GROUP_MATRIX_PUBLIC_URL: matrixUrl, DS_GROUP_PUBLIC_URL: coreUrl,
-    DS_GROUP_HOST: '127.0.0.1', DS_GROUP_PORT: String(corePort), DS_GROUP_DEMO_LOGIN: 'false', DS_GROUP_BOOTSTRAP_DEMO: 'true' });
+    DS_GROUP_HOST: '127.0.0.1', DS_GROUP_PORT: String(corePort), DS_GROUP_CENTRAL_URL: centralUrl, DS_GROUP_BOOTSTRAP_DEMO: 'true' });
   await check('installed-cli-and-relative-data-paths', async () => {
     assert.match(await command(cli, ['--help'], { env }), /Usage: dscord/);
     assert.equal((await command(cli, ['--version'], { env })).trim(), manifest.version);
@@ -152,6 +187,17 @@ try {
   });
   const setup = JSON.parse(await readFile(path.join(workspace, 'data', 'matrix-setup.json'), 'utf8'));
   const people = Object.fromEntries(setup.participants.map(person => [person.localpart, person]));
+  central = spawn(process.execPath, [path.join(installed, 'central', 'service.mjs')], { cwd: workspace, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+    env: { ...env, DSCORD_CENTRAL_DATA_DIR: path.join(workspace, 'central'), DSCORD_CENTRAL_HOST: '127.0.0.1', DSCORD_CENTRAL_PORT: String(centralPort),
+      DSCORD_CENTRAL_ISSUER: centralUrl, DSCORD_CENTRAL_REGISTRATION: 'open', DSCORD_CENTRAL_CLIENT_ORIGINS: coreUrl } });
+  centralExit = once(central, 'exit');
+  central.stdout.on('data', value => { centralLog += value; });
+  central.stderr.on('data', value => { centralLog += value; });
+  await check('installed-central-discovery', async () => {
+    await waitReady(`${centralUrl}/.well-known/dscord/central`);
+    const discovery = await (await fetch(`${centralUrl}/.well-known/dscord/central`)).json();
+    assert.equal(discovery.issuer, centralUrl);
+  });
   core = spawn(cli, ['server'], { cwd: workspace, env, detached: true, stdio: ['ignore', 'pipe', 'pipe'] });
   coreExit = once(core, 'exit');
   core.stdout.on('data', value => { coreLog += value; });
@@ -175,8 +221,8 @@ try {
     report.web = { assetCount: assets.length, manifest: true, serviceWorker: true };
   });
   await check('real-two-human-login-message-and-attachment-roundtrip', async () => {
-    const alice = await jsonRequest('/api/login', { body: { user: people.alice.id, password: people.alice.password } });
-    const bob = await jsonRequest('/api/login', { body: { user: people.bob.id, password: people.bob.password } });
+    const alice = await centralSignIn('alice');
+    const bob = await centralSignIn('bob');
     assert.equal(alice.user_id, people.alice.id);
     assert.equal(bob.user_id, people.bob.id);
     report.humanLoginAttempts = { alice: 1, bob: 1, retries: 0 };
@@ -220,21 +266,17 @@ try {
   const cleanupErrors = [];
   if (core) {
     try {
-      if (core.exitCode === null && core.signalCode === null) {
-        core.kill('SIGTERM');
-        let timer;
-        try {
-          await Promise.race([coreExit, new Promise((_, reject) => { timer = setTimeout(() => reject(new Error('Core did not stop after SIGTERM')), 15000); })]);
-        } catch (error) {
-          process.kill(-core.pid, 'SIGKILL');
-          await coreExit;
-          throw error; // oxlint-disable-line no-unsafe-finally -- caught by the enclosing cleanup try.
-        } finally { clearTimeout(timer); }
-      }
-      await freePort(corePort);
+      await stopChild(core, coreExit, corePort, 'Core');
       report.coreStopped = true;
     } catch (error) { cleanupErrors.push(error.message); }
     if (workspace) await writeFile(path.join(workspace, 'core.log'), coreLog, { mode: 0o600 });
+  }
+  if (central) {
+    try {
+      await stopChild(central, centralExit, centralPort, 'Central');
+      report.centralStopped = true;
+    } catch (error) { cleanupErrors.push(error.message); }
+    if (workspace) await writeFile(path.join(workspace, 'central.log'), centralLog, { mode: 0o600 });
   }
   if (containerId) {
     try {

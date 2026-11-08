@@ -124,7 +124,7 @@ function validOwner(value) {
     typeof value.userId !== "string" ||
     !/^@[^\s:]+:[^\s]+$/.test(value.userId) ||
     typeof value.homeCoreUrl !== "string" ||
-    (value.authorityId !== null && typeof value.authorityId !== "string")
+    (value.centralIssuer !== null && typeof value.centralIssuer !== "string")
   )
     return null;
   try {
@@ -137,7 +137,7 @@ function validOwner(value) {
     return {
       userId: value.userId,
       homeCoreUrl: value.homeCoreUrl,
-      authorityId: value.authorityId,
+      centralIssuer: value.centralIssuer,
     };
   } catch {
     return null;
@@ -149,7 +149,7 @@ const sameOwner = (left, right) =>
       right &&
       left.userId === right.userId &&
       left.homeCoreUrl === right.homeCoreUrl &&
-      left.authorityId === right.authorityId,
+      left.centralIssuer === right.centralIssuer,
   );
 self.addEventListener("message", (event) => {
   if (event.data?.type !== "ds-group:set-owner" || !event.source?.url) return;
@@ -189,7 +189,7 @@ function notificationTarget(data = {}, allowNavigation = false) {
       "server",
       "userId",
       "homeCoreUrl",
-      "authorityId",
+      "centralIssuer",
     ]) {
       if (typeof data[key] === "string" && data[key])
         target.searchParams.set(key, data[key]);
@@ -201,7 +201,7 @@ function notificationTarget(data = {}, allowNavigation = false) {
     eventId: target.searchParams.get("eventId"),
     userId: allowNavigation ? data.userId : null,
     homeCoreUrl: allowNavigation ? data.homeCoreUrl : null,
-    authorityId: allowNavigation ? (data.authorityId ?? null) : null,
+    centralIssuer: allowNavigation ? (data.centralIssuer ?? null) : null,
   };
 }
 

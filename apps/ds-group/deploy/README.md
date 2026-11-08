@@ -1,6 +1,6 @@
 # DSCord 服务器部署
 
-服务器提供聊天核心、PWA、Matrix 和 Web Push 接口。Bot 节点通过公网 HTTPS 或内网地址连接核心，可以分别运行在其他机器。服务器数据保存在 Docker 命名卷中。
+服务器提供聊天核心、PWA、Matrix 和 Web Push 接口。账号不在聊天服务器上：人和 Bot 都用中央服务器的账号登录，聊天服务器只保存自己的消息和文件。这套 Compose 自带一台中央服务器，也可以改连已有的中央。Bot 节点通过公网 HTTPS 或内网地址连接核心，可以分别运行在其他机器。服务器数据保存在 Docker 命名卷中。
 
 本指南对应 DSCord **0.4.0-alpha.2**。服务器、网页和节点使用同一发行版本；安装包与精确 npm 发布号以所选发行说明为准。[安装与连接](npm.md)
 
@@ -33,7 +33,10 @@ cp deploy/.env.example deploy/.env
 DS_GROUP_SERVER_NAME=chat.example.com
 DS_GROUP_PUBLIC_URL=https://chat.example.com
 DS_GROUP_MATRIX_PUBLIC_URL=https://chat.example.com
+DS_GROUP_CENTRAL_URL=https://id.example.com
 ```
+
+`DS_GROUP_CENTRAL_URL` 是账号所在的中央服务器。保留模板默认的 `http://localhost:18200` 时使用自带的中央；填别人已部署的中央地址时，可以不启动 `central` 服务，账号由那台中央管理。
 
 仅在服务器本机试用时，可以保留模板的 `localhost` 默认值。默认监听 `127.0.0.1`；其他设备不能通过自己的 `localhost` 访问这台服务器。内网直接访问时，将 `DS_GROUP_BIND` 设为服务器内网 IP，两个公开 URL 分别设置为可达的 `http://IP:18100` 和 `http://IP:18008`。若更改宿主端口，同时修改 `DS_GROUP_HTTP_PORT`、`DS_GROUP_MATRIX_PORT` 和对应 URL。
 
@@ -46,17 +49,19 @@ curl --fail http://127.0.0.1:18100/readyz
 
 在浏览器打开配置的公开地址；默认本机入口为 `http://localhost:18100`。Core 的网页模式默认为 `bundled`，选择 `api-only` 时使用单独部署的聊天客户端。
 
-### 注册与个人 Bot
+### 账号与个人 Bot
 
-在登录窗口选择“注册账号”，填写自己的用户名、显示名称和密码。Bot 在自己的 DSH 节点显式创建或选择，登录同一账号后加入服务器；网页“我的 Bot”管理这些成员。显示名称可以重复，完整账号 ID 用于区分成员。所属 Bot 可由所有者邀请进群，也可私聊。
+登录窗口里的账号和密码属于中央服务器：网页先在中央登录或注册，再拿一张只对这台聊天服务器有效的身份令牌换取聊天会话。用户名就是这台服务器上的 Matrix 账号名，例如中央账号 `alice` 在这里是 `@alice:chat.example.com`。账号规则、注册开关和改密码都在中央，见[中央服务器说明](../central/README.md)。自带中央的注册开关是 `DSCORD_CENTRAL_REGISTRATION`（`open` 或 `closed`），只在第一次启动时写进中央数据卷的 `central-config.json`，之后改这个文件并重启 `central`。
 
-注册默认开放。管理员可在 Core 数据卷的 `/data/core-config.json` 中设置 `registrationMode` 为 `closed`，再重启 Core 关闭注册；恢复为 `open` 后重新开放。初始化会保留已有配置。每次客户端登录拥有独立设备会话，退出一台设备只注销该会话。独立管理后台的账号与普通聊天账号分别管理，初始化方法见[后台说明](../admin/README.md)。
+Bot 也是中央账号，归属创建它的人。Bot 在自己的 DSH 节点创建：DSH 用所属人的中央账号建 Bot，再用设备码授权让节点拿到 Bot 自己的会话，以 Bot 身份登录聊天服务器。网页“我的 Bot”列出这些成员。显示名称可以重复，完整账号 ID 用于区分成员。所属 Bot 可由所有者邀请进群，也可私聊。
+
+每次客户端登录拥有独立设备会话，退出一台设备只注销该会话。在中央撤销对这台服务器的授权后，下次续期就拿不到身份令牌。独立管理后台的账号与普通聊天账号分别管理，初始化方法见[后台说明](../admin/README.md)。
 
 <a id="initial-accounts"></a>
 
 ### 可选初始化成员
 
-新服务器默认使用空成员 registry。注册自己的账号后再连接 Bot。已有 registry 保留原成员，重跑 bootstrap 不用新模板覆盖它。
+新服务器默认使用空成员 registry。用中央账号登录后再连接 Bot。已有 registry 保留原成员，重跑 bootstrap 不用新模板覆盖它。
 
 需要本地演示时，可在首次 bootstrap 前显式设置 `DS_GROUP_BOOTSTRAP_DEMO=true`，创建示例成员；这不是生产部署的必需步骤。Compose 把该变量传给 bootstrap 服务，默认 `false`。
 
@@ -64,7 +69,7 @@ curl --fail http://127.0.0.1:18100/readyz
 
 Compose 使用自定义成员文件时，还需通过自己的 overlay 将私有 JSON 挂载到 bootstrap 容器，并把变量设置为容器内路径；仅填写宿主路径不会自动挂载文件。初始化成员不是模型、服务器地址或凭据模板。
 
-`credentials` 只能读取初始化成员保存的初始凭据，不提供后来注册用户的密码查询。仅在自己的管理员终端使用，不将输出写入公开日志。
+初始化成员由同名的中央账号认领：中央账号 `alice` 第一次登录时接手 `@alice:服务器` 这个成员，之后这个成员只认它。种类要一致，人类成员只能由人认领，Bot 成员只能由 Bot 认领。`credentials` 只能读取初始化成员在 Matrix 上的初始凭据，与中央账号的密码无关。仅在自己的管理员终端使用，不将输出写入公开日志。
 
 <a id="configuration"></a>
 
@@ -74,7 +79,7 @@ Compose 使用自定义成员文件时，还需通过自己的 overlay 将私有
 | --- | --- | --- |
 | Matrix 身份域 | 模板使用 `localhost` | 首次启动前决定自己的 `DS_GROUP_SERVER_NAME`，已有实例保留原值。 |
 | 公开地址与监听 | 本机 Core `18100`、Matrix `18008` | 填写用户和 Bot 都能访问的地址；端口可通过 Compose 变量调整。 |
-| 账号与 Bot | 新服默认空成员 registry | 注册自己的账号；演示或自定义初始化成员需显式启用。CLI 参数使用完整 Bot ID 的账号部分。 |
+| 账号与 Bot | 账号在中央，新服默认空成员 registry | 用 `DS_GROUP_CENTRAL_URL` 选中央；演示或自定义初始化成员需显式启用。CLI 参数使用完整 Bot ID 的账号部分。 |
 | Node / DSH | Node `>=24.19.0 <25`，固定 SDK 基线 DSH `0.2.2-rc.1` | 支持范围来自 [package.json](../package.json)、[runtime-config.mjs](../scripts/runtime-config.mjs) 和[宿主契约](../dsh-connect/KERNEL.md)；安装位置可通过 PATH 或宿主变量指定。 |
 | DSH 配置来源 | CLI 回退到 `~/.dsh` 的 `desktop` profile | CLI 用 `DS_GROUP_DSH_SOURCE_HOME` 和 `DS_GROUP_DSH_SOURCE_PROFILE` 指定自己的来源；图形连接使用所在 DSH 宿主的实际 home/profile。 |
 | 节点桥接端口 | 仅演示 `finance` / `hr` 预设 `18091` / `18092` | 自定义 CLI Bot 必须设置空闲的 `DS_GROUP_BRIDGE_PORT`；图形连接页自动分配。 |
@@ -107,13 +112,15 @@ DS_GROUP_DOMAIN=chat.example.com
 DS_GROUP_SERVER_NAME=chat.example.com
 DS_GROUP_PUBLIC_URL=https://chat.example.com
 DS_GROUP_MATRIX_PUBLIC_URL=https://chat.example.com
+DS_GROUP_CENTRAL_DOMAIN=id.example.com
+DS_GROUP_CENTRAL_URL=https://id.example.com
 ```
 
 ```sh
 docker compose --env-file deploy/.env -f deploy/compose.yaml -f deploy/compose.https.yaml up --build --detach --wait
 ```
 
-Caddy 会管理公共 HTTPS 证书，并转发同一域名下的 PWA、核心 API 和 Matrix 客户端 API。Synapse 管理路由保持在 Docker 内部网络。已有反向代理的部署可以参照 `Caddyfile` 的路由规则，将流量发往两个本机端口。
+Caddy 会管理公共 HTTPS 证书，并转发同一域名下的 PWA、核心 API 和 Matrix 客户端 API；自带中央用 `DS_GROUP_CENTRAL_DOMAIN` 这个单独的域名。改连已有中央时不填 `DS_GROUP_CENTRAL_DOMAIN`。Synapse 管理路由保持在 Docker 内部网络。已有反向代理的部署可以参照 `Caddyfile` 的路由规则，将流量发往两个本机端口。
 
 ### 代理与登录限流
 
@@ -131,9 +138,9 @@ Core 默认将连接的来源 IP 传给 Synapse，用于按访问地址计算登
 
 ### DSH 图形连接
 
-先在服务器网页注册账号，并在 Bot 机器的 DSH 配置自己的模型。通过 `Plugins → Add plugin` 安装并启用同版本 `dscord`，点击左侧 **DSCord**。
+先准备好中央账号（在服务器网页注册即可），并在 Bot 机器的 DSH 配置自己的模型。通过 `Plugins → Add plugin` 安装并启用同版本 `dscord`，点击左侧 **DSCord**。
 
-先在 DSCord 的本机 Bot 界面创建或选择 Bot，配置它的模型和职责。输入 Core/PWA 的服务器地址、账号和密码，登录后在本机 Bot 列表选择要加入服务器的 Bot。页面显示当前模型和连接状态，并提供断开、重连、打开网页和本机配置目录入口。各 Bot 的服务器连接配置独立保存，原生 Session 与工具继续由同一 DSH home 的唯一 DSCord 内核管理。
+先在 DSCord 的本机 Bot 界面创建或选择 Bot，配置它的模型和职责。输入 Core/PWA 的服务器地址和中央账号的密码，DSH 会从服务器发现它接入的中央并在那里登录。登录后在本机 Bot 列表选择要加入服务器的 Bot：DSH 为它在中央建一个 Bot 账号，并用设备码授权让节点拿到 Bot 自己的中央会话，之后 Bot 以自己的身份登录聊天服务器。页面显示当前模型和连接状态，并提供断开、重连、打开网页和本机配置目录入口。各 Bot 的服务器连接配置独立保存，原生 Session 与工具继续由同一 DSH home 的唯一 DSCord 内核管理。
 
 已有 `ds-bot` 团队升级时，先停用旧插件再重载 DSCord，由自有内核在原目录接管。只读健康接口与单实例检查见[内核运行与检查](kernel-runtime.md)。
 
@@ -221,6 +228,14 @@ dc stop --timeout 45 core administration synapse
 dc run --rm --no-deps -T --user 0:0 config tar -czf - -C /data . > .local/backups/core.tgz
 dc run --rm --no-deps -T --user 0:0 config tar -czf - -C /synapse . > .local/backups/synapse.tgz
 dc run --rm --no-deps -T --user 0:0 config tar -czf - -C /dscord-policy . > .local/backups/governance.tgz
+dc up --detach --wait
+```
+
+使用自带中央时另外备份它的数据卷。中央的签名私钥 `signing-key.json` 和账号库都在里面，丢了私钥所有聊天服务器都要重新读取公钥，丢了账号库所有人要重新注册。
+
+```sh
+dc stop central
+dc run --rm --no-deps -T --user 0:0 central tar -czf - -C /central . > .local/backups/central.tgz
 dc up --detach --wait
 ```
 

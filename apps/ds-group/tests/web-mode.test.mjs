@@ -19,7 +19,7 @@ async function fixture(t, webMode) {
   for (const file of ['index.html', 'assets/client.js', 'manifest.webmanifest', 'sw.js', 'theme.js']) await writeFile(path.join(webRoot, file), `fixture:${file}`);
   const matrix = http.createServer((req, res) => { req.resume(); res.end(JSON.stringify({ versions: ['v1.16'] })); });
   const homeserverUrl = await listen(matrix);
-  const config = { nodeSecret: 'synthetic-web-mode-secret', demoLogin: false, ...(webMode === undefined ? {} : { webMode }) };
+  const config = { nodeSecret: 'synthetic-web-mode-secret', ...(webMode === undefined ? {} : { webMode }) };
   const setup = { homeserverUrl, serverName: 'mode.test', participants: [] };
   const core = await createCore({ dataRoot: path.join(directory, 'core'), webRoot, setup, config, enablePush: false });
   const base = await listen(core.server);

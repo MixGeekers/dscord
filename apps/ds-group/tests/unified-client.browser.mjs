@@ -127,27 +127,33 @@ let clientOrigin;
 let homeOrigin;
 let unknownOrigin;
 let trapOrigin;
+let centralOrigin;
 let browser;
 let page;
 let failure;
 
 function publicConfig(origin = homeOrigin) {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
+    contractVersion: "2.0.0",
     name: "DSCord",
-    authorityId: "urn:uuid:fixture-home",
     home: {
       serverName: "home.test",
       coreUrl: origin,
       matrixUrl: "https://matrix.home.test",
     },
-    auth: { mode: "matrix-password", cookieCredentials: false },
+    central: { issuer: centralOrigin },
+    auth: {
+      mode: "central-identity-token",
+      audience: origin,
+      sessionPath: "/api/session",
+      cookieCredentials: false,
+    },
   };
 }
 function identity(userId) {
   return {
-    authorityId: "urn:uuid:fixture-home",
-    subjectId: `subject-${userId}`,
+    globalId: `${userId.slice(1, userId.indexOf(":"))}@central.test`,
     matrixUserId: userId,
     kind: "human",
   };
@@ -293,8 +299,6 @@ async function apiHandler(request, response, origin = homeOrigin) {
       roomId: homeRoom,
       roomName: "General",
       participants: people.slice(0, 2),
-      demoLogin: false,
-      registration: { enabled: true, mode: "open" },
       attachments: { maxBytes: 10000000, maxPerMessage: 10 },
     });
   if (url.pathname === "/api/status")
@@ -304,22 +308,17 @@ async function apiHandler(request, response, origin = homeOrigin) {
     });
   if (url.pathname === "/api/push/config")
     return json(response, 200, { enabled: false });
-  if (url.pathname === "/api/login") {
-    const input = JSON.parse(await readBody(request));
-    if (input.user === "redirect") {
-      response.writeHead(307, { Location: trapOrigin + "/credential-trap" });
-      response.end();
-      return;
-    }
-    if (
-      !["alice", "bob"].includes(input.user) ||
-      input.password !== "synthetic-password"
-    )
-      return json(response, 401, { error: "Invalid synthetic credentials" });
+  if (url.pathname === "/api/session") {
+    // Identity tokens from the synthetic central name the central session they came from.
+    const { identityToken } = JSON.parse(await readBody(request));
+    const [, username, audience] =
+      /^identity:central-(alice|bob):(.+)$/.exec(identityToken) ?? [];
+    if (!username || audience !== origin)
+      return json(response, 401, { error: "Invalid synthetic identity token" });
     return json(
       response,
       200,
-      session(input.user === "alice" ? homeUser : "@bob:home.test", origin),
+      session(username === "alice" ? homeUser : "@bob:home.test", origin),
     );
   }
   if (!userId)
@@ -629,7 +628,6 @@ try {
     return json(response, 200, {
       ...publicConfig(unknownOrigin),
       name: "Public discovery",
-      authorityId: "urn:uuid:unknown",
       home: {
         serverName: "unknown.test",
         coreUrl: unknownOrigin,
@@ -653,6 +651,44 @@ try {
     });
     return json(response, 200, {});
   }, 24363);
+  centralOrigin = await listen(async (request, response) => {
+    const url = new URL(request.url, centralOrigin);
+    records.push({
+      origin: centralOrigin,
+      method: request.method,
+      path: url.pathname,
+      authorization: request.headers.authorization,
+      cookie: request.headers.cookie,
+    });
+    response.setHeader("Access-Control-Allow-Origin", "*");
+    response.setHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    response.setHeader("Access-Control-Allow-Headers", "Authorization, Content-Type");
+    if (request.method === "OPTIONS") {
+      response.writeHead(204);
+      response.end();
+      return;
+    }
+    if (url.pathname === "/.well-known/dscord/central")
+      return json(response, 200, { issuer: centralOrigin, domain: "central.test", registration: "open" });
+    if (url.pathname === "/api/login") {
+      const input = JSON.parse(await readBody(request));
+      if (input.username === "redirect") {
+        response.writeHead(307, { Location: trapOrigin + "/credential-trap" });
+        response.end();
+        return;
+      }
+      if (!["alice", "bob"].includes(input.username) || input.password !== "synthetic-password")
+        return json(response, 401, { error: "Invalid synthetic credentials" });
+      return json(response, 200, { token: `central-${input.username}` });
+    }
+    const token = request.headers.authorization?.replace(/^Bearer /, "");
+    if (url.pathname === "/api/identity-tokens") {
+      const { audience } = JSON.parse(await readBody(request));
+      return json(response, 200, { token: `identity:${token}:${audience}` });
+    }
+    if (url.pathname === "/api/logout") return json(response, 200, { loggedOut: true });
+    return json(response, 404, { error: "Unknown central route" });
+  }, 24364);
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({
     viewport: { width: 1440, height: 1000 },
@@ -1326,7 +1362,7 @@ try {
   });
   await page.waitForFunction(() => navigator.serviceWorker.controller);
   await page.evaluate(
-    ({ homeOrigin, homeRoom }) =>
+    ({ homeOrigin, homeRoom, centralOrigin }) =>
       navigator.serviceWorker.dispatchEvent(
         new MessageEvent("message", {
           source: navigator.serviceWorker.controller,
@@ -1335,15 +1371,15 @@ try {
             roomId: homeRoom,
             userId: "@stranger:home.test",
             homeCoreUrl: homeOrigin,
-            authorityId: "urn:uuid:fixture-home",
+            centralIssuer: centralOrigin,
           },
         }),
       ),
-    { homeUser, homeOrigin, homeRoom },
+    { homeUser, homeOrigin, homeRoom, centralOrigin },
   );
   assert.equal(await page.locator("#room-title").textContent(), "B channel");
   await page.evaluate(
-    ({ homeUser, homeOrigin, homeRoom }) =>
+    ({ homeUser, homeOrigin, homeRoom, centralOrigin }) =>
       navigator.serviceWorker.dispatchEvent(
         new MessageEvent("message", {
           source: navigator.serviceWorker.controller,
@@ -1352,11 +1388,11 @@ try {
             roomId: homeRoom,
             userId: homeUser,
             homeCoreUrl: homeOrigin,
-            authorityId: "urn:uuid:fixture-home",
+            centralIssuer: centralOrigin,
           },
         }),
       ),
-    { homeUser, homeOrigin, homeRoom },
+    { homeUser, homeOrigin, homeRoom, centralOrigin },
   );
   await page.locator("#room-title").filter({ hasText: "General" }).waitFor();
   checks.push(
@@ -1500,6 +1536,7 @@ try {
     .waitFor();
   assert.equal(trapRequests.length, 0);
   await page.locator("#login-user").fill("bob");
+  await page.locator("#login-password").fill("synthetic-password");
   await page.locator("#login-submit").click();
   await page.locator("#login-dialog").waitFor({ state: "hidden" });
   await page.waitForFunction(
@@ -1523,7 +1560,7 @@ try {
   const privateSession = bindSession(
     { user_id: homeUser, access_token: "legacy-fixture-token" },
     privateConfig,
-    { authorityId: "urn:uuid:fixture-home" },
+    { central: { issuer: centralOrigin } },
   );
   await privateContext.addInitScript(
     (stored) => {
@@ -1653,7 +1690,9 @@ try {
   assert.ok(
     records
       .filter((row) => row.authorization)
-      .every((row) => [homeOrigin, clientOrigin].includes(row.origin)),
+      .every((row) =>
+        [homeOrigin, clientOrigin, centralOrigin].includes(row.origin),
+      ),
   );
   assert.equal(trapRequests.length, 0);
   assert.deepEqual(pageErrors, []);

@@ -23,7 +23,7 @@ test('core publishes identities, keeps secrets local, and records a unique Bot r
   const base = `http://127.0.0.1:${core.server.address().port}`;
   const headers = { 'Content-Type': 'application/json', Authorization: 'Bearer synthetic-node-secret' };
   try {
-    for (const route of ['/internal/model/claim', '/internal/nodes/heartbeat', '/api/login', '/api/register']) {
+    for (const route of ['/internal/model/claim', '/internal/nodes/heartbeat']) {
       for (const body of ['null', '[]', '"invalid"']) {
         assert.equal((await fetch(base + route, { method: 'POST', headers, body })).status, 400);
       }
@@ -58,7 +58,6 @@ test('core publishes identities, keeps secrets local, and records a unique Bot r
     assert.equal(replaced.nodes[0].id, 'node-b');
     assert.equal(replaced.nodes[0].status, 'idle');
     assert.equal((await fetch(base + '/internal/nodes/heartbeat', { method: 'POST', headers, body: JSON.stringify({ ...replacement, id: 'node-c', runtimeId: 'run-three' }) })).status, 409);
-    assert.equal((await fetch(base + '/api/demo-login?user=finance')).status, 404);
     assert.equal((await fetch(base + '/api/rooms/demo/messages')).status, 401);
   } finally {
     await core.close();

@@ -7,6 +7,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { bootstrapOptions, bootstrapServer } from '../scripts/server-bootstrap.mjs';
 import { createCore } from '../src/core.mjs';
+import { startCentral } from './helpers/central.mjs';
 
 async function fixture(t, { interruptRegistration = false, registrationError } = {}) {
   const dataRoot = await mkdtemp(path.join(os.tmpdir(), 'dscord-bootstrap-'));
@@ -112,20 +113,21 @@ test('fresh server bootstrap is empty and makes no Matrix account or room reques
   assert.deepEqual(await context.setup(), saved, 'reruns preserve an initialized registry even when demo is later selected');
 });
 
-test('an empty server accepts its first normal human registration without seeded accounts', async t => {
+test('an empty server accepts its first central account without seeded accounts', async t => {
   const context = await fixture(t);
+  const central = await startCentral(t);
   await bootstrapServer({ ...context.options, demo: false });
   const core = await createCore({ setup: await context.setup(), dataRoot: context.options.dataRoot,
-    config: { nodeSecret: 'synthetic-bootstrap-core', demoLogin: false }, enablePush: false });
+    config: { nodeSecret: 'synthetic-bootstrap-core', publicUrl: 'https://bootstrap.test', identity: { central: central.url } }, enablePush: false });
   t.after(() => core.close());
   await new Promise(resolve => core.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${core.server.address().port}`;
   const initial = await (await fetch(`${base}/api/bootstrap`)).json();
   assert.deepEqual(initial.participants, []);
-  assert.equal(initial.demoLogin, false);
-  const response = await fetch(`${base}/api/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ username: 'first-owner', displayName: 'First Owner', password: 'synthetic-user-chosen-password' }) });
-  assert.equal(response.status, 201, JSON.stringify(await response.clone().json()));
+  const identityToken = await central.identityToken(await central.person('first-owner', 'First Owner'), 'https://bootstrap.test');
+  const response = await fetch(`${base}/api/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ identityToken }) });
+  assert.equal(response.status, 200, JSON.stringify(await response.clone().json()));
   const result = await response.json();
   assert.equal(result.user_id, '@first-owner:bootstrap.test');
   assert.deepEqual(context.calls.register, ['first-owner']);
