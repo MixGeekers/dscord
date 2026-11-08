@@ -8,6 +8,7 @@ import { readJsonBody } from '../src/http-json.mjs';
 import { Router } from '../src/core/router.mjs';
 import { usernameRule, publicRule } from './rules.mjs';
 import { CentralStore, failure } from './store.mjs';
+import { ServerDirectory } from './directory.mjs';
 import { IDENTITY_TOKEN_TTL_SECONDS, loadSigningKey, publicJwks, signIdentityToken } from './tokens.mjs';
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -27,13 +28,20 @@ function audienceOf(value) {
   catch { throw failure(400, 'AUDIENCE_INVALID', 'Name the chat server by its HTTPS origin'); }
 }
 
+function serverOrigin(value) {
+  try { return origin(typeof value === 'string' ? value : '', 'origin'); }
+  catch { throw failure(400, 'SERVER_ORIGIN_INVALID', 'Name the chat server by its HTTPS origin'); }
+}
+
 export function centralOptions(config = {}) {
   const issuer = origin(config.issuer, 'issuer');
   const domain = config.domain ?? new URL(issuer).hostname;
   if (typeof domain !== 'string' || !/^[a-z0-9.-]+$/.test(domain)) throw new Error('domain must be a lowercase host name');
   if (config.registration !== undefined && !['open', 'closed'].includes(config.registration)) throw new Error('registration must be open or closed');
   const clientOrigins = (config.clientOrigins ?? []).map(value => origin(value, 'clientOrigins'));
-  return { issuer, domain, registration: config.registration ?? 'open', rule: usernameRule(config.usernameRule), clientOrigins };
+  const serverFetchUrls = Object.fromEntries(Object.entries(config.serverFetchUrls ?? {})
+    .map(([key, value]) => [origin(key, 'serverFetchUrls'), new URL(String(value)).href.replace(/\/$/, '')]));
+  return { issuer, domain, registration: config.registration ?? 'open', rule: usernameRule(config.usernameRule), clientOrigins, serverFetchUrls };
 }
 
 /**
@@ -51,7 +59,10 @@ export async function loadConfig(dataRoot, env = process.env) {
   return config;
 }
 
-export async function createCentral({ dataRoot = localPath('central'), config, now = Date.now } = {}) {
+const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
+
+export async function createCentral({ dataRoot = localPath('central'), config, now = Date.now, fetch = globalThis.fetch,
+  refreshIntervalMs = REFRESH_INTERVAL_MS } = {}) {
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   config ||= await loadConfig(dataRoot);
   const options = centralOptions(config);
@@ -59,12 +70,13 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   const filename = path.join(dataRoot, 'central.sqlite');
   const store = new CentralStore({ filename, rule: options.rule, domain: options.domain, now });
   await chmod(filename, 0o600);
+  const directory = new ServerDirectory({ db: store.db, store, issuer: options.issuer, now, fetch, fetchVia: options.serverFetchUrls });
   const jwks = publicJwks(key);
   const discovery = {
     issuer: options.issuer, domain: options.domain, registration: options.registration,
     usernameRule: publicRule(options.rule), globalIdFormat: `{username}@${options.domain}`,
     jwksUri: `${options.issuer}/.well-known/jwks.json`, identityTokenTtlSeconds: IDENTITY_TOKEN_TTL_SECONDS,
-    deviceVerificationUri: `${options.issuer}/device`,
+    deviceVerificationUri: `${options.issuer}/device`, serverIndexUri: `${options.issuer}/api/servers`,
   };
 
   const router = new Router();
@@ -94,7 +106,8 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   });
   router.post('/api/logout', ({ request, send }) => { store.closeSession(signedIn(request).session); send(200, { loggedOut: true }); });
   router.get('/api/me', ({ request, send }) => send(200, { account: store.view(signedIn(request).account) }));
-  router.delete('/api/me', ({ request, send }) => { store.closeAccount(person(request).account); send(200, { closed: true }); });
+  const close = account => { store.closeAccount(account); directory.forget(account); };
+  router.delete('/api/me', ({ request, send }) => { close(person(request).account); send(200, { closed: true }); });
 
   // The one way to sign in to a chat server, for people and Bots alike.
   router.post('/api/identity-tokens', async ({ request, body, send }) => {
@@ -121,7 +134,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   });
   router.get('/api/bots', ({ request, send }) => send(200, { bots: store.botsOf(person(request).account).map(bot => store.view(bot)) }));
   router.delete(/^\/api\/bots\/([^/]+)$/, ({ request, send }, botId) => {
-    store.closeAccount(store.ownedBot(person(request).account, botId));
+    close(store.ownedBot(person(request).account, botId));
     send(200, { closed: true });
   });
   router.get(/^\/api\/bots\/([^/]+)\/grants$/, ({ request, send }, botId) =>
@@ -154,6 +167,29 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     send(200, { token, account: store.view(account) });
   });
 
+  // The server index. Anyone may search it; a person lists a server by proving they control its origin.
+  router.get('/api/servers', ({ url, response, send }) => {
+    response.setHeader('Access-Control-Allow-Origin', '*');
+    send(200, { servers: directory.search(Object.fromEntries(url.searchParams)) });
+  });
+  router.post('/api/servers', async ({ request, body, send }) => {
+    const { account } = person(request);
+    send(200, directory.claim(account, serverOrigin((await body()).origin)));
+  });
+  router.get('/api/servers/mine', ({ request, send }) => send(200, { servers: directory.mine(person(request).account) }));
+  router.post(/^\/api\/servers\/([^/]+)\/verify$/, async ({ request, send }, value) =>
+    send(200, { server: await directory.verify(person(request).account, serverOrigin(value)) }));
+  router.post(/^\/api\/servers\/([^/]+)\/refresh$/, async ({ request, send }, value) => {
+    const { account } = person(request);
+    const server = serverOrigin(value);
+    directory.owned(account, server);
+    send(200, { server: directory.ownedView(await directory.refresh(server)) });
+  });
+  router.delete(/^\/api\/servers\/([^/]+)$/, ({ request, send }, value) => {
+    directory.remove(person(request).account, serverOrigin(value));
+    send(200, { removed: true });
+  });
+
   function cors(request, response) {
     const from = request.headers.origin;
     if (!from || !options.clientOrigins.includes(from)) return;
@@ -182,8 +218,15 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
       if (status === 500) console.error(error);
     });
   });
-  return { server, store, discovery, jwks, close: async () => {
+  let refreshing = Promise.resolve();
+  const timer = refreshIntervalMs > 0 ? setInterval(() => {
+    refreshing = refreshing.then(() => directory.refreshAll()).catch(error => console.error(error));
+  }, refreshIntervalMs) : undefined;
+  timer?.unref();
+  return { server, store, directory, discovery, jwks, close: async () => {
+    clearInterval(timer);
     await new Promise(resolve => server.close(resolve));
+    await refreshing;
     store.close();
   } };
 }

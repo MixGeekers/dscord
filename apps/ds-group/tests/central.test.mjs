@@ -10,10 +10,20 @@ import { verifyIdentityToken } from '../central/tokens.mjs';
 const CHAT_A = 'https://chat-a.example.org';
 const CHAT_B = 'https://chat-b.example.org';
 
-async function fixture(t, config = {}) {
+async function fixture(t, config = {}, { pages = new Map(), refreshIntervalMs = 0 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-'));
   let clock = Date.parse('2026-11-08T12:00:00Z');
-  const central = await createCentral({ dataRoot: root, now: () => clock,
+  const fetched = [];
+  // Chat servers' public pages, by URL; a function value is called on each read.
+  const fakeFetch = async (url, init) => {
+    fetched.push({ url: String(url), redirect: init?.redirect });
+    const page = pages.get(String(url));
+    if (page === undefined) throw new TypeError('fetch failed');
+    const value = typeof page === 'function' ? page() : page;
+    if (value instanceof Response) return value;
+    return Response.json(value);
+  };
+  const central = await createCentral({ dataRoot: root, now: () => clock, fetch: fakeFetch, refreshIntervalMs,
     config: { issuer: 'https://id.example.org', ...config } });
   await new Promise(resolve => central.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${central.server.address().port}`;
@@ -21,14 +31,14 @@ async function fixture(t, config = {}) {
   const call = async (method, pathname, { token, body } = {}) => {
     const response = await fetch(base + pathname, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, headers: response.headers, body: await response.json() };
   };
   const register = async (username, extra = {}) => {
     const result = await call('POST', '/api/register', { body: { username, password: 'correct horse', ...extra } });
     assert.equal(result.status, 201, JSON.stringify(result.body));
     return result.body;
   };
-  return { central, root, call, register, advance: ms => { clock += ms; } };
+  return { central, root, call, register, pages, fetched, advance: ms => { clock += ms; } };
 }
 
 test('the central server publishes its account rule and keys, and the rule only narrows Matrix localparts', async t => {
@@ -187,3 +197,104 @@ test('first start seeds the saved configuration from the environment and the fil
   await assert.rejects(loadConfig(await mkdtemp(path.join(root, 'bad-')), { DSCORD_CENTRAL_ISSUER: 'ftp://id.example.org' }));
 });
 
+
+const serverPage = (origin, challenge, extra = {}) => ({ schemaVersion: 1, central: 'https://id.example.org', origin, challenge, listed: true,
+  name: 'Chat A', description: 'A place for robotics', tags: ['Robotics', 'hardware'], join: 'central-account',
+  members: { people: 12, bots: 3 }, rooms: [{ name: 'general' }], ...extra });
+
+test('a person lists a chat server by publishing its challenge on the server origin; the index reads the page from there', async t => {
+  const { call, register, pages, fetched } = await fixture(t);
+  const alice = await register('alice');
+  const bob = await register('bob');
+  const enc = encodeURIComponent(CHAT_A);
+  assert.equal((await call('POST', '/api/servers', { token: alice.token, body: { origin: `${CHAT_A}/path` } })).body.code, 'SERVER_ORIGIN_INVALID');
+  const claim = (await call('POST', '/api/servers', { token: alice.token, body: { origin: CHAT_A } })).body;
+  assert.match(claim.challenge, /^dscord-server-/);
+  assert.equal(claim.page, `${CHAT_A}/.well-known/dscord/server`);
+  assert.equal((await call('POST', '/api/servers', { token: alice.token, body: { origin: CHAT_A } })).body.challenge, claim.challenge, 'a claim keeps its challenge');
+
+  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'SERVER_UNREACHABLE');
+  pages.set(claim.page, new Response('{}', { status: 404 }));
+  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'SERVER_PAGE_MISSING');
+  pages.set(claim.page, serverPage(CHAT_A, claim.challenge, { central: 'https://other.example.org' }));
+  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'CENTRAL_MISMATCH');
+  pages.set(claim.page, serverPage(CHAT_A, 'something else'));
+  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'CHALLENGE_MISMATCH');
+  pages.set(claim.page, serverPage(CHAT_B, claim.challenge));
+  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'SERVER_PAGE_INVALID');
+  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: bob.token })).body.code, 'CLAIM_REQUIRED');
+
+  pages.set(claim.page, serverPage(CHAT_A, claim.challenge));
+  const verified = await call('POST', `/api/servers/${enc}/verify`, { token: alice.token });
+  assert.equal(verified.status, 200, JSON.stringify(verified.body));
+  assert.deepEqual([verified.body.server.name, verified.body.server.tags, verified.body.server.members], ['Chat A', ['robotics', 'hardware'], { people: 12, bots: 3 }]);
+  assert.ok(fetched.every(entry => entry.redirect === 'error'), 'the index never follows a redirect away from the origin');
+
+  const found = (await call('GET', '/api/servers?q=ROBOT')).body.servers;
+  assert.deepEqual(found.map(server => [server.origin, server.owner, server.join]), [[CHAT_A, 'alice@id.example.org', 'central-account']]);
+  assert.equal(found[0].challenge, undefined, 'search never shows the challenge');
+  assert.deepEqual((await call('GET', '/api/servers?q=robotics+gardening')).body.servers, [], 'every word must match');
+  assert.equal((await call('GET', '/api/servers?tag=hardware')).body.servers.length, 1);
+  assert.deepEqual((await call('GET', '/api/servers/mine', { token: alice.token })).body.servers.map(server => [server.origin, server.verified]), [[CHAT_A, true]]);
+  assert.equal((await call('POST', `/api/servers/${enc}/refresh`, { token: bob.token })).body.code, 'SERVER_NOT_FOUND', 'only the owner refreshes');
+
+  // Whoever proves control of the origin later takes the listing over.
+  const bobClaim = (await call('POST', '/api/servers', { token: bob.token, body: { origin: CHAT_A } })).body;
+  assert.deepEqual((await call('GET', '/api/servers/mine', { token: bob.token })).body.servers.map(server => server.verified), [false]);
+  pages.set(claim.page, serverPage(CHAT_A, bobClaim.challenge));
+  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: bob.token })).status, 200);
+  assert.equal((await call('GET', '/api/servers')).body.servers[0].owner, 'bob@id.example.org');
+  assert.deepEqual((await call('GET', '/api/servers/mine', { token: alice.token })).body.servers.map(server => server.verified), [false]);
+  assert.equal((await call('DELETE', `/api/servers/${enc}`, { token: bob.token })).status, 200);
+  assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
+});
+
+test('the index keeps reading listed servers; unlisted, changed or silent servers drop out of search', async t => {
+  const { call, register, pages, central, advance } = await fixture(t);
+  const alice = await register('alice');
+  const claim = (await call('POST', '/api/servers', { token: alice.token, body: { origin: CHAT_A } })).body;
+  let page = serverPage(CHAT_A, claim.challenge);
+  pages.set(claim.page, () => page);
+  await call('POST', `/api/servers/${encodeURIComponent(CHAT_A)}/verify`, { token: alice.token });
+  assert.equal((await call('GET', '/api/servers')).body.servers.length, 1);
+
+  page = { ...page, name: 'Chat A renamed', listed: false };
+  await central.directory.refreshAll();
+  assert.deepEqual((await call('GET', '/api/servers')).body.servers, [], 'an operator can hide a server from its own admin page');
+  page = { ...page, listed: true };
+  await central.directory.refreshAll();
+  assert.equal((await call('GET', '/api/servers')).body.servers[0].name, 'Chat A renamed');
+
+  // A page that stops showing the owner's challenge keeps the last listing until it goes stale.
+  page = { ...page, challenge: 'someone else', name: 'Hijacked' };
+  await central.directory.refreshAll();
+  const mine = (await call('GET', '/api/servers/mine', { token: alice.token })).body.servers[0];
+  assert.deepEqual([mine.name, mine.lastError], ['Chat A renamed', 'CHALLENGE_MISMATCH']);
+  advance(3 * 24 * 60 * 60 * 1000 + 1);
+  assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
+
+  page = { ...page, challenge: claim.challenge, name: 'Chat A' };
+  const refreshed = await call('POST', `/api/servers/${encodeURIComponent(CHAT_A)}/refresh`, { token: alice.token });
+  assert.equal(refreshed.body.server.lastError, null);
+  assert.equal((await call('GET', '/api/servers')).body.servers[0].name, 'Chat A');
+
+  // Closing the account takes its listings with it.
+  assert.equal((await call('DELETE', '/api/me', { token: alice.token })).status, 200);
+  assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
+});
+
+test('search ranks by people, caps results and is open to any web page', async t => {
+  const { call, register, pages } = await fixture(t, { serverFetchUrls: { [CHAT_B]: 'http://chat-b.internal:8080' } });
+  const alice = await register('alice');
+  for (const [origin, base, people] of [[CHAT_A, CHAT_A, 3], [CHAT_B, 'http://chat-b.internal:8080', 40]]) {
+    const claim = (await call('POST', '/api/servers', { token: alice.token, body: { origin } })).body;
+    pages.set(`${base}/.well-known/dscord/server`, serverPage(origin, claim.challenge, { name: origin, members: { people, bots: 0 } }));
+    assert.equal((await call('POST', `/api/servers/${encodeURIComponent(origin)}/verify`, { token: alice.token })).status, 200);
+  }
+  const all = await call('GET', '/api/servers');
+  assert.deepEqual(all.body.servers.map(server => server.origin), [CHAT_B, CHAT_A]);
+  assert.equal(all.headers.get('access-control-allow-origin'), '*');
+  assert.equal((await call('GET', '/api/servers/mine', { token: alice.token })).headers.get('access-control-allow-origin'), null);
+  assert.deepEqual((await call('GET', '/api/servers?limit=1')).body.servers.map(server => server.origin), [CHAT_B]);
+  assert.equal((await call('GET', '/.well-known/dscord/central')).body.serverIndexUri, 'https://id.example.org/api/servers');
+});
