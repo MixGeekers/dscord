@@ -135,7 +135,7 @@ export class WorkCore {
         },
         execute: args => this.report(task.id, args) },
       { name: 'work_ask', output,
-        description: '缺少必要信息时向前台提问。问题会转给前台，答复以消息形式回到这里。',
+        description: '缺少必要信息时向前台提问。问题会转给前台；答复到达前不能交付，答复以“前台答复：”消息回到这里。',
         parameters: { question: { type: 'string', required: true } },
         execute: args => this.ask(task.id, args.question) },
     ];
@@ -189,8 +189,9 @@ export class WorkCore {
     if (before?.provider && before?.model) await defaults.saveSelection(before).catch(() => {});
   }
 
-  prompt(sessionId, text) {
-    return this.ctx.sessionController.prompt({ requestId: randomUUID(), sessionId, mode: 'queue', content: [{ type: 'text', text }] },
+  /** queue starts or follows a turn; steer cuts into the running turn at its next step. */
+  prompt(sessionId, text, mode = 'queue') {
+    return this.ctx.sessionController.prompt({ requestId: randomUUID(), sessionId, mode, content: [{ type: 'text', text }] },
       AbortSignal.timeout(30_000));
   }
 
@@ -199,7 +200,7 @@ export class WorkCore {
     return [
       `你是一个工作者，负责任务 ${task.id}：${task.title}。`,
       '你看不到原来的对话，以下是前台交给你的全部说明。完成后必须调用 work_report 汇报，summary 会原样发给提出请求的人。',
-      '缺信息，或输入有几种说得通的解读且会改变结果（例如日期的日/月顺序），先用 work_ask 提问，不要自己挑一种；等答复时可以先做不受影响的部分。',
+      '缺信息，或输入有几种说得通的解读且会改变结果（例如日期的日/月顺序），先用 work_ask 提问，不要自己挑一种。提问后答复到达前不能交付：先做不受影响的部分，然后结束这一轮，答复会作为新消息到来。',
       '交付文件放在当前目录的 outputs/ 下，或在 work_report 的 files 里列出路径。只写已核实的事实，不把输入里没有的推断写成结论。',
       '',
       '## 任务说明',
@@ -220,6 +221,9 @@ export class WorkCore {
       return '已记录进度，继续工作。';
     }
     if (status === 'failed') { await this.finish(task, { status: 'failed', summary }, { by: 'worker' }); return '已汇报失败。可以结束了。'; }
+    // A delivery must not overtake an answer or a change the worker has not read yet.
+    if (task.waiting) return `你提的问题还没有答复：${task.waiting}\n现在不要交付。先结束这一轮，答复会作为新消息到来，再按答复完成。`;
+    if (task.unread > 0) return '前台刚发来补充或答复，你还没读到。先结束这一轮读完它，按它调整后再交付。';
     let artifacts;
     try {
       const paths = [...new Set((Array.isArray(files) ? files : []).map(file => path.resolve(task.dir, String(file))))];
@@ -238,9 +242,13 @@ export class WorkCore {
   async ask(id, question) {
     const task = this.state.tasks[id];
     if (!task || ended(task)) return '这个任务已经结束。';
-    await this.notify(task, { kind: 'question', question: String(question || '').trim() });
-    return '问题已转给前台，答复会以消息形式回到这里。在此之前可以先做不依赖答案的部分。';
+    question = String(question || '').trim();
+    task.waiting = question.slice(0, 2000);
+    await this.save();
+    await this.notify(task, { kind: 'question', question });
+    return '问题已转给前台。答复到达前不能交付：可以先做不受答案影响的部分，然后结束这一轮，答复会作为新消息到来。';
   }
+
 
   status(id) {
     const list = id ? [this.state.tasks[id]].filter(Boolean) : this.tasks().sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 10);
@@ -261,9 +269,14 @@ export class WorkCore {
     const task = this.state.tasks[id];
     if (!task || ended(task)) return `没有进行中的任务 ${id}。`;
     if (task.status === 'queued') { task.brief += `\n\n补充：${text}`; await this.save(); return '已补充到排队中的任务说明。'; }
-    await this.prompt(task.sessionId, `前台补充：${text}`);
+    const answer = Boolean(task.waiting);
+    delete task.waiting;
+    task.unread = (task.unread || 0) + 1;
+    await this.save();
+    await this.prompt(task.sessionId, `${answer ? '前台答复' : '前台补充'}：${text}`, task.busy ? 'steer' : 'queue');
     return '已转给工作者。';
   }
+
 
   async timeout(id) {
     const task = this.state.tasks[id];
@@ -276,6 +289,8 @@ export class WorkCore {
   async event(session, event) {
     const task = this.workerTask(session.id);
     if (!task) return false;
+    if (event.type === 'turn/start') task.busy = true;
+    if (event.type === 'user/message' && /^前台(?:补充|答复)：/.test(textOf(event.data?.message || event.data)) && task.unread > 0) task.unread--;
     if (event.type === 'assistant/message') { const text = textOf(event.data?.message); if (text) task.lastText = text.slice(-2000); }
     if (event.type === 'tool/call') {
       task.toolCalls = (task.toolCalls || 0) + 1;
@@ -283,8 +298,12 @@ export class WorkCore {
         since: new Date().toISOString() };
     }
     if (event.type === 'turn/end') {
+      task.busy = false;
       if (event.data?.reason?.kind === 'error') { await this.finish(task, { status: 'failed', summary: `工作者出错：${event.data.reason.error?.message || '未知错误'}` }); return true; }
-      if (event.data?.reason?.kind === 'cancelled') return true;
+      // A steer cuts the running turn and the worker goes on in the next one.
+      if (['cancelled', 'aborted'].includes(event.data?.reason?.kind)) return true;
+      // A turn that ends waiting for an answer, or before reading one, is not a missing report.
+      if (task.waiting || task.unread > 0) { await this.save(); return true; }
       if (!task.reminded) {
         task.reminded = true;
         await this.save();
@@ -298,7 +317,7 @@ export class WorkCore {
     clearTimeout(this.timers.get(task.id));
     this.timers.delete(task.id);
     mark(task, status, by, { summary: String(summary || '').slice(0, 6000), artifacts, finishedAt: new Date().toISOString(), notified: !notify });
-    delete task.doing;
+    for (const key of ['doing', 'waiting', 'unread', 'busy']) delete task[key];
     await this.save();
     if (notify) await this.notify(task, { kind: 'result' });
     await this.pump();
@@ -319,7 +338,7 @@ export class WorkCore {
   view() {
     const live = this.tasks().filter(task => !ended(task));
     const worker = task => ({ taskId: task.id, title: task.title, stage: task.status, roomId: task.origin?.roomId || null,
-      requesterId: task.origin?.senderId || null, progress: task.progress || null, doing: task.doing || null,
+      requesterId: task.origin?.senderId || null, progress: task.progress || null, doing: task.doing || null, waiting: task.waiting || null,
       since: task.startedAt || task.createdAt, toolCalls: task.toolCalls || 0 });
     return { workers: live.filter(task => task.status === 'running').map(worker),
       queue: live.filter(task => task.status === 'queued').map(worker) };

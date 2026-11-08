@@ -17,7 +17,7 @@ async function fixture(t, options = {}) {
     tools: { guard(fn) { guard = fn; return () => { guard = undefined; }; } },
     sessionController: {
       create: async ({ cwd }) => ({ sessionId: `worker-${++created}`, cwd }),
-      prompt: async ({ sessionId, content }) => { prompts.push({ sessionId, text: content[0].text }); },
+      prompt: async ({ sessionId, content, mode }) => { prompts.push({ sessionId, text: content[0].text, mode }); },
       selectModel: async () => ({}),
     },
   };
@@ -133,4 +133,33 @@ test('a file listed twice, or listed and staged under the same name and content,
   await writeFile(path.join(task.dir, 'outputs', 'a.txt'), '1');
   await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'ok', files: ['outputs/a.txt', path.join(task.dir, 'outputs', 'a.txt'), './outputs/a.txt'] });
   assert.deepEqual(task.artifacts.map(file => file.name), ['a.txt']);
+});
+
+test('a worker that asked cannot deliver before the answer arrives, and a note cuts into its running turn', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  await run(f, 'front', 'dispatch_work', { title: '日期', brief: '统一日期' });
+  const task = Object.values(f.state.tasks)[0];
+  const worker = { id: 'worker-1' };
+  await f.core.event(worker, { type: 'turn/start', data: { turn: 1 } });
+  await run(f, 'worker-1', 'work_ask', { question: 'C004 是日/月还是月/日？' });
+  await writeFile(path.join(task.dir, 'outputs', 'dates_clean.csv'), 'id,date\n');
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '先交了' }), /还没有答复/);
+  assert.equal(task.status, 'running');
+  // Ending the turn while waiting is not a missing report.
+  const before = f.prompts.length;
+  await f.core.event(worker, { type: 'turn/end', data: { turn: 1, reason: { kind: 'completed' } } });
+  assert.equal(f.prompts.length, before); assert.equal(task.reminded, undefined);
+  await run(f, 'front', 'task_note', { id: task.id, text: '都按日/月/年' });
+  assert.equal(f.prompts.at(-1).text, '前台答复：都按日/月/年'); assert.equal(f.prompts.at(-1).mode, 'queue');
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '还没读' }), /还没读到/);
+  await f.core.event(worker, { type: 'turn/start', data: { turn: 2 } });
+  await f.core.event(worker, { type: 'user/message', data: { content: [{ type: 'text', text: '前台答复：都按日/月/年' }] } });
+  // A change while the worker is busy steers into its turn.
+  await run(f, 'front', 'task_note', { id: task.id, text: '改成英文表头' });
+  assert.equal(f.prompts.at(-1).mode, 'steer');
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'x' }), /还没读到/);
+  await f.core.event(worker, { type: 'user/message', data: { content: [{ type: 'text', text: '前台补充：改成英文表头' }] } });
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '按日/月/年统一了' }), /已汇报完成/);
+  assert.equal(task.status, 'done'); assert.equal(task.waiting, undefined);
 });
