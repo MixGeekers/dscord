@@ -225,6 +225,24 @@ test('a second message asking for the same work joins the task and gets its own 
   assert.equal(f.results.length, 3);
 });
 
+test('a plain-language requester who joins gets only the files and reply lines fit for them', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.origin = { roomId: '!r2', eventId: '$su', senderId: '@su', senderName: '苏' };
+  await run(f, 'front', 'dispatch_work', { audience: '苏：开发，要完整调用链', title: '查崩溃', brief: '看 crash.log' });
+  const task = Object.values(f.state.tasks)[0];
+  f.core.origin = { roomId: '!r4', eventId: '$xiaoman', senderId: '@xiaoman', senderName: '小满' };
+  await run(f, 'front', 'task_join', { id: task.id, audience: '玩家小满：通俗说明', plain: true });
+  await writeFile(path.join(task.dir, 'outputs', 'crash-analysis.md'), '# 分析\nSystem.NullReferenceException at SaveLoader.Restore (SaveLoader.cs:412)\n');
+  await writeFile(path.join(task.dir, 'outputs', '给小满-回复.md'), '先别读那个存档，下个补丁会修。\n');
+  await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'ok',
+    reply: '技术版：空引用在 SaveLoader.Restore (SaveLoader.cs:412)\n玩家版：先别读那个存档，下个补丁会修。' });
+  const [first, second] = f.results.map(result => result.task);
+  assert.deepEqual(first.artifacts.map(file => file.name).sort(), ['crash-analysis.md', '给小满-回复.md']);
+  assert.deepEqual(second.artifacts.map(file => file.name), ['给小满-回复.md']);
+  assert.equal(second.reply, '玩家版：先别读那个存档，下个补丁会修。');
+});
+
 test('work a Bot does for another Bot goes back through the asking Bot to the room message behind the request', async t => {
   const dev = await fixture(t, { nativeBotId: 'dev', origin: null });
   const planner = await fixture(t, { nativeBotId: 'planner', origin: null });

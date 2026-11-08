@@ -77,6 +77,16 @@ const mark = (task, to, by, extra = {}) => {
   Object.assign(task, extra, { status: to });
 };
 
+/** The files fit for a plain-language requester: text files that carry technical internals are left out. */
+async function plainArtifacts(artifacts) {
+  const fit = [];
+  for (const file of artifacts) {
+    if (TEXT_FILE.test(file.name) && file.size <= 2_000_000 && internalsIn(await readFile(file.path, 'utf8').catch(() => '')).length) continue;
+    fit.push(file);
+  }
+  return fit;
+}
+
 /** Files a worker left in its directory outside outputs/, as relative paths. */
 async function looseFiles(dir, prefix = '', depth = 0, found = []) {
   let entries = [];
@@ -155,8 +165,10 @@ export class WorkCore {
         execute: args => this.dispatch(args) },
       { name: 'task_join', output,
         description: '当前消息要的东西已经有任务在做或做完了（例如另一个人刚问过同一个问题）时用，不要重复派工：把当前消息登记为这个任务的又一位请求者，结果会同样回复到这条消息。任务已经结束时立刻回复。',
-        parameters: { id: { type: 'string', required: true, description: '任务编号' } },
-        execute: args => this.join(args.id) },
+        parameters: { id: { type: 'string', required: true, description: '任务编号' },
+          audience: { type: 'string', description: '这位请求者是谁、要什么口径，和原任务不同时写' },
+          plain: { type: 'boolean', description: '这位请求者不该看到技术内部信息时为 true：带堆栈、异常类型、源码位置或日志原文的交付文本文件不会发给他' } },
+        execute: args => this.join(args.id, args) },
       { name: 'task_status', output,
         description: '查看本 Bot 最近的工作者任务和状态。',
         parameters: { id: { type: 'string', description: '任务编号；不填列出最近的任务' } },
@@ -212,7 +224,7 @@ export class WorkCore {
   }
 
   /** Another message asking for what a task already does: it gets the same result. */
-  async join(id) {
+  async join(id, { audience, plain } = {}) {
     let task = this.state.tasks[String(id || '')];
     if (task?.joined) task = this.state.tasks[task.id.replace(/-\d+$/, '')];
     if (!task) return '没有这个任务。用 task_status 看最近的任务编号。';
@@ -220,7 +232,8 @@ export class WorkCore {
     if (!origin) return '现在没有要回复的消息，不能登记。';
     const origins = [task.origin, ...(task.followers || [])];
     if (origins.some(other => other?.eventId === origin.eventId && other?.via === origin.via)) return `这条消息已经是 ${task.id} 的请求者。`;
-    task.followers = [...(task.followers || []), origin];
+    task.followers = [...(task.followers || []), { ...origin, ...(audience ? { audience: String(audience).trim().slice(0, 500) } : {}),
+      ...(plain === true ? { plain: true } : {}) }];
     if (origin.exchangeId) this.contacts?.settle(origin.exchangeId, { status: 'dispatched', taskId: task.id });
     await this.save();
     if (ended(task) && task.notified) {
@@ -465,7 +478,16 @@ export class WorkCore {
     for (let index = task.notifiedOrigins ?? (task.notified ? 1 : 0); index < origins.length; index++) {
       let copy = { ...task, followers: [], notifiedOrigins: 0 };
       // A joined requester's copy is kept in the ledger, where the node's delivery turn looks it up.
-      if (index) copy = this.state.tasks[`${task.id}-${index}`] = { ...copy, id: `${task.id}-${index}`, origin: origins[index], joined: true, notified: true, notifiedOrigins: 1 };
+      if (index) {
+        const { audience, plain, ...origin } = origins[index];
+        // Each requester gets only the files meant for them: a plain-language one is not sent technical write-ups.
+        const artifacts = plain ? await plainArtifacts(task.artifacts || []) : task.artifacts;
+        // The reply was written for the first requester; lines with technical internals stay out of a plain one.
+        const reply = plain && task.reply ? task.reply.split('\n').filter(line => !internalsIn(line).length).join('\n').trim()
+          || '结论已经出来，技术细节交给了负责排查的同事；需要的话我可以用简单的话再解释。' : task.reply;
+        copy = this.state.tasks[`${task.id}-${index}`] = { ...copy, id: `${task.id}-${index}`, origin, joined: true, notified: true, notifiedOrigins: 1,
+          artifacts, ...(reply ? { reply } : {}), ...(audience ? { audience } : {}), ...(plain ? { plain: true } : {}) };
+      }
       if (!await this.deliverTo(copy)) return;
       task.notifiedOrigins = index + 1;
       task.notified = true;
