@@ -16,7 +16,7 @@ async function checkDirectory(directory) {
     } else if (/\.tsx?$/.test(entry.name) && !entry.name.endsWith('.d.ts') && lintable(filename)) lintFiles.push(path.relative(packageRoot, filename));
   }
 }
-for (const folder of ['bin', 'src', 'memory', 'scripts', 'web', 'admin', 'ui', 'tests', 'dsh-plugin', 'dsh-connect']) await checkDirectory(path.join(packageRoot, folder));
+for (const folder of ['bin', 'src', 'central', 'memory', 'scripts', 'web', 'admin', 'ui', 'tests', 'dsh-plugin', 'dsh-connect']) await checkDirectory(path.join(packageRoot, folder));
 // Lint rules live in .oxlintrc.json. Files are passed explicitly so an extracted release inside an ignored directory is still linted.
 const lint = spawnSync(process.execPath, [path.join(packageRoot, 'node_modules', 'oxlint', 'bin', 'oxlint'), '--quiet', ...lintFiles], { cwd: packageRoot, stdio: 'inherit' });
 if (lint.status !== 0) process.exit(lint.status ?? 1);
