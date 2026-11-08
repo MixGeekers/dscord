@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.1"><img src="https://img.shields.io/badge/release-0.4.0--alpha.1-344BFF?style=flat-square" alt="Versión DSCord 0.4.0-alpha.1"></a>
+  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2"><img src="https://img.shields.io/badge/release-0.4.0--alpha.2-344BFF?style=flat-square" alt="Versión DSCord 0.4.0-alpha.2"></a>
   <a href="apps/ds-group/deploy/npm.md#安装"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="Instalar DSCord con npm"></a>
   <a href="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml"><img src="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml/badge.svg?branch=main" alt="Estado de CI en main"></a>
   <a href="apps/ds-group/deploy/README.md"><img src="https://img.shields.io/badge/Linux-amd64%20%7C%20arm64-0B1B52?style=flat-square" alt="Despliegue de servidores Linux amd64 y arm64"></a>
@@ -78,7 +78,7 @@ Selecciona tu Bot en un grupo, adjunta un archivo y empieza con una petición co
 
 ## Primeros pasos
 
-Esta guía corresponde a **DSCord 0.4.0-alpha.1**. Usa la misma versión para Core, el cliente web y los nodos Bot. El archivo fuente, el paquete npm y las sumas de verificación están disponibles en la página de esta versión. [Descargas](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.1) · [Instalación y actualización](apps/ds-group/deploy/npm.md)
+Esta guía corresponde a **DSCord 0.4.0-alpha.2**. Usa la misma versión para Core, el cliente web y los nodos Bot. El archivo fuente, el paquete npm y las sumas de verificación están disponibles en la página de esta versión. [Descargas](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2) · [Instalación y actualización](apps/ds-group/deploy/npm.md)
 
 Si ya tienes un servidor, pasa a [Conectar tu Bot](#connect-bot). Las direcciones, puertos y rutas siguientes son ejemplos sustituibles. `localhost` siempre se refiere al equipo que realiza la petición.
 
@@ -87,7 +87,7 @@ Si ya tienes un servidor, pasa a [Conectar tu Bot](#connect-bot). Las direccione
 Con Node `>=24.19.0 <25`, instala el paquete directamente desde GitHub Releases mediante npm. La CLI permite gestionar servidores y nodos independientes. Comprueba la versión después de instalarla.
 
 ```sh
-npm install --global https://github.com/MixGeekers/dscord/releases/download/ds-group-v0.4.0-alpha.1/dscord-0.4.0-alpha.1.tgz
+npm install --global https://github.com/MixGeekers/dscord/releases/download/ds-group-v0.4.0-alpha.2/dscord-0.4.0-alpha.2.tgz
 dscord --version
 ```
 
@@ -116,7 +116,7 @@ Abre [localhost:18100](http://localhost:18100) en el servidor o tu dirección p�
 ### Conectar tu Bot
 
 1. Prepara un DSH compatible. La base SDK fijada es `@deepseek-ai/dsh@0.2.2-rc.1`; el código y la CLI declaran Node `>=24.19.0 <25`. Son las versiones admitidas por [package.json](apps/ds-group/package.json) y el [contrato del host](apps/ds-group/dsh-connect/KERNEL.md), no una garantía para otros hosts.
-2. Obtén o compila el `.tgz` correspondiente a 0.4.0-alpha.1 según la [guía de instalación](apps/ds-group/deploy/npm.md#安装). Instala y activa `dscord` desde `Plugins → Add plugin` en DSH. Configura tu propio modelo de trabajo y sus credenciales.
+2. Obtén o compila el `.tgz` correspondiente a 0.4.0-alpha.2 según la [guía de instalación](apps/ds-group/deploy/npm.md#安装). Instala y activa `dscord` desde `Plugins → Add plugin` en DSH. Configura tu propio modelo de trabajo y sus credenciales.
 3. Abre **DSCord** en DSH e inicia sesión en tu servidor. En “Bots on this node”, crea explícitamente un Bot, elige un modelo configurado y describe su función, o selecciona un Bot existente.
 4. Pulsa “Add to server”. En la web podrás escribirle, consultar su configuración o invitarlo a un grupo. Para añadir un Bot existente desde la web, su nodo debe estar conectado con la misma cuenta.
 
