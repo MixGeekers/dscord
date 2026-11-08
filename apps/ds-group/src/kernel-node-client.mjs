@@ -74,6 +74,7 @@ export class KernelNodeClient {
         const operation = {
           'memory-profiles': this.operations.memoryProfiles,
           'memory-profile': this.operations.memoryProfile,
+          contacts: this.operations.contacts,
         }[command.operation];
         if (!operation) throw Object.assign(new Error('Unsupported kernel operation'), { code: 'KERNEL_CONTROL_UNAVAILABLE' });
         result = await this.readOperation(operation, command.args || {}, command.expiresAt);

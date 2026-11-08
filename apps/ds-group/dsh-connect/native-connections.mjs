@@ -9,6 +9,7 @@ import { MatrixClient } from '../src/matrix-client.mjs';
 import { readOptionalJson } from '../scripts/server-init.mjs';
 import { savePrivateJson } from '../scripts/server-init.mjs';
 import { NativeBridge } from './native-bridge.mjs';
+import { localBot } from './work-core.mjs';
 import { DecisionSettings } from './decision-settings.mjs';
 import { KernelNodeClient } from '../src/kernel-node-client.mjs';
 
@@ -69,7 +70,7 @@ export class NativeConnections {
       store = new NodeStore(path.join(directory, 'node.sqlite'), node.id);
       const savedAttention = await readOptionalJson(path.join(node.directory, 'attention.json'));
       const botNode = new BotNode({ participant, participants: setup.participants, roomId: setup.roomId, matrix, store, bridge, work,
-        executionMode: 'native', attention: savedAttention || node.attention || { mode: 'mention' },
+        executionMode: 'native', localBots: localBot, attention: savedAttention || node.attention || { mode: 'mention' },
         decisionProvider: this.decisionSettings?.provider,
         observe: input => this.observe(entry, input),
         readAttentionView: input => bridge.readAttentionView(input),
@@ -90,6 +91,7 @@ export class NativeConnections {
         },
       });
       Object.assign(entry, { bridge, botNode });
+      bridge.core.contacts = botNode.contacts;
       await botNode.start();
       await bridge.serveFront();
       await bridge.onWorkerResult((task, message, text) => botNode.acceptWorkerResult(task, message, text));
@@ -100,6 +102,7 @@ export class NativeConnections {
             configureAttention: setting => this.applyAttention(entry, setting),
             memoryProfiles: options => bridge.memoryProfiles(options),
             memoryProfile: options => bridge.memoryProfile(options),
+            contacts: options => botNode.contacts.view(options),
           }, onError: code => { entry.controlError = code; } });
         entry.control.start();
       }

@@ -167,7 +167,7 @@ const delegating = f => {
   f.bridge.turn = async () => ({ status: 'completed', sessionId: 'native-room-session', artifacts: [], toolReceipts: [],
     text: JSON.stringify({ text: '我去问 Peer。', delegate: { to: '@peer:b.node.test', body: '请核对' } }) });
   // The cross-server room is the only one this Bot shares with Peer; its own home room has neither.
-  f.runtime.roomRosters.set(roomId, [{ id: botId, kind: 'bot' }, { id: humanId, kind: 'human' }, { id: '@peer:b.node.test', kind: 'bot' }]);
+  f.runtime.contacts.seeRoom(roomId, [{ id: botId, kind: 'bot' }, { id: humanId, kind: 'human' }, { id: '@peer:b.node.test', kind: 'bot' }]);
 };
 const drain = async node => { for (let i = 0; i < 10 && await node.processOne(); i++); };
 
@@ -179,12 +179,15 @@ test('a delegation goes to a room the delegate is actually in, not the node home
   assert.equal(request.roomId, roomId);
   assert.equal(request.options.replyTo, '$node-request');
   assert.deepEqual(f.sent.map(message => message.options.deliveryRole), ['ack', 'delegate']);
+  const [exchange] = f.runtime.contacts.view().exchanges;
+  assert.deepEqual([exchange.direction, exchange.peerId, exchange.via, exchange.roomId, exchange.status, exchange.origin.eventId],
+    ['out', '@peer:b.node.test', 'matrix', roomId, 'sent', '$node-request']);
+  assert.deepEqual(f.runtime.contacts.contact('@peer:b.node.test').rooms, [roomId]);
 });
 
 test('when the delegation cannot be sent, the requester is told it did not go out', async t => {
   const f = await fixture(t);
   delegating(f);
-  f.runtime.roomRosters.clear();
   const errors = [];
   f.runtime.onError = message => errors.push(message);
   const send = f.matrix.send;
@@ -199,4 +202,5 @@ test('when the delegation cannot be sent, the requester is told it did not go ou
   assert.equal(notice.options.replyTo, '$node-request');
   assert.match(notice.body, /没有发出去.*Peer不会处理/);
   assert.match(errors.join('\n'), /Matrix delivery failed/);
+  assert.equal(f.runtime.contacts.view().exchanges[0].status, 'failed');
 });

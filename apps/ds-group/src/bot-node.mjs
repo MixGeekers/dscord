@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { MatrixClient } from './matrix-client.mjs';
+import { ContactBook } from './contact-book.mjs';
 import { localPath, packageRoot } from './paths.mjs';
 import { NodeStore } from './node-store.mjs';
 import { NodeFiles, eventAttachments } from './node-files.mjs';
@@ -156,7 +157,7 @@ export function deliveriesFor(event, output, botId, participants, collaborationR
 export class BotNode {
   constructor({ participant, participants, roomId, matrix, store, bridge, heartbeat, files, tasks, delivery, roster, work, pollTimeout = 10000,
     transferAttempts = 3, transferRetryDelayMs = 500, controlIntervalMs = 500, onError = console.error,
-    attention = {}, decisionProvider, readAttentionView, observe, executionMode, nativeBinding }) {
+    attention = {}, decisionProvider, readAttentionView, observe, executionMode, nativeBinding, localBots }) {
     this.participant = participant;
     this.participants = participants;
     this.roomId = roomId;
@@ -175,6 +176,8 @@ export class BotNode {
     this.nativeBinding = nativeBinding;
     this.roomRosters = new Map();
     this.roomRosterTimes = new Map();
+    // This Bot's own contact book; every route to another Bot is looked up here.
+    this.contacts = new ContactBook({ db: store.db, self: participant, people: () => this.participants, local: localBots });
     this.transferAttempts = transferAttempts;
     this.transferRetryDelayMs = transferRetryDelayMs;
     this.controlIntervalMs = controlIntervalMs;
@@ -389,24 +392,15 @@ export class BotNode {
 
   senderName(id, room) { return speakerOf(id, this.participants, room).name; }
 
-  /**
-   * Where a delegation is sent: a room both this Bot and the delegate are known to be
-   * in. The node's own collaboration room first, then the room the request came from,
-   * then any other room seen with both. A cross-server Bot usually shares only the
-   * source room; the node's room is the last resort when nothing is known.
-   */
+  /** Where a delegation is sent: a room this Bot's contact book says both Bots are in, the node room first. */
   collaborationRoomFor(event, to) {
-    if (!to) return this.roomId;
-    // This Bot is in a room it received the request from or read a roster of (rosters are
-    // only readable by members), or one its member state says it joined.
-    const joined = (room, id) => room.memberProfiles?.[id]?.membership === 'join';
-    const shared = roomId => {
-      const room = this.roomContextFor(roomId);
-      if (room.membership === 'leave') return false;
-      const self = roomId === event.room_id || this.roomRosters.has(roomId) || joined(room, this.participant.id);
-      return self && (room.members?.length ? room.members.includes(to) : joined(room, to));
-    };
-    return [this.roomId, event.room_id, ...this.roomRosters.keys()].find(shared) || this.roomId;
+    return (to && this.contacts.roomFor(to, [this.roomId, event.room_id])) || this.roomId;
+  }
+
+  noteMembers(roomId, events) {
+    for (const event of events) {
+      if (event.type === 'm.room.member' && event.state_key) this.contacts.member(roomId, event.state_key, event.content?.membership, event.content?.displayname);
+    }
   }
 
   roomContextFor(roomId) {
@@ -522,6 +516,7 @@ export class BotNode {
           const { participants } = await this.work.directory(roomId);
           this.roomRosters.set(roomId, participants);
           this.roomRosterTimes.set(roomId, Date.now());
+          this.contacts.seeRoom(roomId, participants);
           for (const person of participants) this.mergeRoomIdentity(person);
         } catch (error) {
           // Preserve the sync position and inbox. Admission rechecks the exact sender before any work.
@@ -569,7 +564,7 @@ export class BotNode {
       || '根据请求者的要求处理对话和工作，使用已有工具完成任务';
     return `你是 DS-Group 中独立的${this.participant.name}，身份 ${this.participant.id}。你的职责是${duties}。保留自己的经历并区分每个人的身份。\n`
       + `消息源附有发送者、房间、原消息、任务和回复关系。按这些关系回答当前发送者。可协作的 Bot 为 ${peers}。\n`
-      + '当前身份与可协作成员以每轮 event.botIdentity 和 event.availableBots 为准。\n'
+      + '当前身份以每轮 event.botIdentity 为准；能找到的 Bot 和找法以 event.contacts（你的通讯录）为准。\n'
       + '你也是群聊中的正式成员，可以分享与自身身份、兴趣和经历相符的看法，参与生活和工作聊天。context.attention 表示本次是自然参与，沿当前话题自然接话，不必把每句话变成受理任务；旁听决策本身不构成新的工具或外部操作授权。\n'
       + '每轮输出一个 JSON 对象，格式为 {"text":"给请求者的回答"}。确实需要其他 Bot 完成工作时，使用 {"text":"你的受理说明","delegate":{"to":"目标 Bot 的完整 ID","body":"具体工作要求及所需事实"}}。\n'
       + '使用宿主提供的文件与终端工具完成工作。附件已下载到任务工作目录，先实际读取内容，再计算或编辑，检查成果后交付。文件修改工作要生成可下载的新文件。最终回复使用 JSON，生成的文件列入 artifacts 数组，每项包含 path 和 name。\n'
@@ -615,11 +610,14 @@ export class BotNode {
     for (const [roomId, room] of Object.entries(response.rooms?.join || {})) {
       this.store.noteRoomState(roomId, room.state?.events || []);
       this.store.noteRoomMembership(roomId, 'join');
+      this.contacts.member(roomId, this.participant.id, 'join');
+      this.noteMembers(roomId, [...(room.state?.events || []), ...(room.timeline?.events || [])]);
       events.push(...await this.collectRoomEvents(roomId, room));
     }
     for (const [roomId, room] of Object.entries(response.rooms?.leave || {})) {
       this.store.noteRoomState(roomId, room.state?.events || []);
       this.store.noteRoomMembership(roomId, 'leave');
+      this.contacts.member(roomId, this.participant.id, 'leave');
       events.push(...(room.timeline?.events || []).map(event => ({ ...event, room_id: roomId })));
     }
     await this.ingestEvents(events, response.next_batch);
@@ -665,6 +663,10 @@ export class BotNode {
     const inRoom = value => value?.room_id === event.room_id ? value : undefined;
     const room = this.roomContextFor(event.room_id);
     const sourceRoom = this.store.roomContextForEvent(event);
+    if (meta.kind === 'task.request' && meta.returnTo === event.sender && this.participants.some(person => person.id === event.sender && person.kind === 'bot')) {
+      this.contacts.open({ id: `in:${event.event_id}`, direction: 'in', peer: event.sender, via: 'matrix', roomId: event.room_id,
+        taskId: meta.taskId, status: 'received', origin: { roomId: meta.originRoomId, eventId: meta.originEventId, senderId: meta.originSenderId } });
+    }
     return { requestId: `matrix-${digest(`${this.participant.id}\0${event.event_id}`)}`, botId: this.participant.id,
       ...(this.executionMode === 'native' ? { mode: 'native', executionMode: 'native' } : {}),
       context: item.attention?.kind === 'natural' ? item.attention.context : conversationContext({ event, participants: this.participants, room, sourceRoom, history,
@@ -673,8 +675,7 @@ export class BotNode {
         threadRoot: inRoom(this.store.message(threadOf(event))), threadRootRoom: this.store.roomContextForEvent(threadOf(event)) }),
       event: { eventId: event.event_id, roomId: event.room_id, senderId: event.sender, senderName: this.senderName(event.sender, sourceRoom),
         botIdentity: { id: this.participant.id, name: this.senderName(this.participant.id, room), role: this.roleOf() },
-        availableBots: this.participants.filter(person => person.kind === 'bot' && person.id !== this.participant.id)
-          .map(person => ({ id: person.id, name: this.senderName(person.id, room), role: this.roleOf(person) })),
+        contacts: this.contacts.reachableBots().map(contact => ({ ...contact, name: this.senderName(contact.id, room), role: this.roleOf(this.participants.find(person => person.id === contact.id) || contact) })),
         senderKind: this.participants.find(person => person.id === event.sender)?.kind,
         body: event.content['m.new_content']?.body ?? event.content.body, to: Array.isArray(meta.to) ? meta.to : [], attachments: uniqueAttachments([...ownFiles, ...referencedFiles, ...followupFiles]),
         delivery: this.delivery.publicRoute(item),
@@ -895,6 +896,13 @@ export class BotNode {
       const published = { ...response, publishedArtifacts: attachments, deliveredArtifacts, delegated: Boolean(output.delegate),
         ...(output.delegate ? { delegate: output.delegate } : {}) };
       this.store.generated(item.event_id, published, deliveries);
+      const handoff = deliveries.find(delivery => delivery.options.deliveryRole === 'delegate');
+      if (handoff) {
+        const { options } = handoff;
+        this.contacts.open({ id: `${options.taskId}>${output.delegate.to}`, direction: 'out', peer: output.delegate.to, via: 'matrix',
+          roomId: handoff.roomId, taskId: options.taskId, status: 'sending',
+          origin: { roomId: options.originRoomId, eventId: options.originEventId, senderId: options.originSenderId } });
+      }
       this.taskUpdate(item, { stage: 'delivering', summary: '正在发送成果', artifacts: deliveredArtifacts });
       this.lastError = null;
     } catch (error) {
@@ -945,6 +953,12 @@ export class BotNode {
       this.lastAttentionSpokeAt = Date.now();
     }
     const meta = metadataOf(item.event);
+    if (['task.result', 'task.failure'].includes(delivery.options.kind)) {
+      this.contacts.settle(`in:${item.event_id}`, { status: delivery.options.kind === 'task.result' ? 'returned' : 'failed' });
+    }
+    if (['task.result', 'task.failure'].includes(meta.kind) && meta.taskId) {
+      this.contacts.settle(`${meta.taskId}>${item.event.sender}`, { status: meta.kind === 'task.result' ? 'returned' : 'failed' });
+    }
     if (!delegated && ['task.result', 'task.failure'].includes(meta.kind) && meta.originEventId) {
       const parent = this.store.item(meta.originEventId);
       if (parent && parent.event_id !== item.event_id && parent.response?.delegated) {
@@ -1003,6 +1017,7 @@ export class BotNode {
           return send();
         });
         this.store.sent(delivery.transaction_id, receipt.event_id, () => this.finishDeliveryState(delivery));
+        if (delivery.options.deliveryRole === 'delegate') this.contacts.settle(`${delivery.options.taskId}>${delivery.options.to?.[0]}`, { status: 'sent' });
         this.lastError = null;
         await this.flushTaskUpdates();
       } catch (error) {
@@ -1020,7 +1035,10 @@ export class BotNode {
           const item = this.store.item(delivery.source_event_id);
           this.taskUpdate(item, { status: 'failed', stage: 'delivering', summary: error.message });
           await this.flushTaskUpdates();
-          if (delivery.options.deliveryRole === 'delegate') await this.retractDelegation(item, delivery, error);
+          if (delivery.options.deliveryRole === 'delegate') {
+            this.contacts.settle(`${delivery.options.taskId}>${delivery.options.to?.[0]}`, { status: 'failed', detail: error.message });
+            await this.retractDelegation(item, delivery, error);
+          }
           this.onError(this.lastError);
           return true;
         }

@@ -47,10 +47,17 @@ const compileTools = async defs => {
   defineTool ||= (await import('@deepseek-ai/dsh-tools')).defineTool;
   return defs.map(def => defineTool(def));
 };
-// The program cores of the Bots in this DSH, by native Bot ID. A Bot asked by
-// another Bot (message_bot) has no room of its own for the work; its result goes
-// back through the asking Bot, to the message that started the request.
+// The program cores of the Bots in this DSH, by native Bot ID: the host's answer to
+// "is this contact in my DSH". A Bot asked by another Bot (message_bot) has no room
+// of its own for the work; its result goes back through the asking Bot, to the
+// message that started the request, as both Bots' contact books record.
 const cores = new Map();
+const coreOf = matrixId => [...cores.values()].find(core => core.node.id === matrixId);
+/** A Bot in this DSH by its full identity ID, with the name message_bot calls it by. */
+export const localBot = matrixId => {
+  const core = coreOf(matrixId);
+  return core ? { name: core.botName || core.node.localpart || matrixId, nativeBotId: core.node.nativeBotId } : undefined;
+};
 // Every status change is kept on the task as its timeline.
 const mark = (task, to, by, extra = {}) => {
   (task.events ||= []).push({ at: new Date().toISOString(), from: task.status ?? null, to, by });
@@ -65,6 +72,8 @@ export class WorkCore {
     this.served = new WeakSet();
     this.timers = new Map();
     this.origin = null;
+    // The Bot's own contact book, attached once its node is connected.
+    this.contacts = null;
     // Results delivered since the front's last turn, so it knows what its workers handed over.
     this.state.frontNotes ||= [];
     this.onResult = null;
@@ -89,6 +98,7 @@ export class WorkCore {
   async serveFront(agent) {
     const id = agent?.session?.id;
     if (!id) return;
+    this.botName = (await this.native.bot(this.node.nativeBotId).catch(() => null))?.name || this.botName;
     this.frontSessions.add(id);
     const tools = agent.ctx?.tools;
     if (!tools || this.served.has(agent)) return;
@@ -155,6 +165,7 @@ export class WorkCore {
     const task = this.state.tasks[id] = { id, title, brief, ...(deliverables ? { deliverables: String(deliverables) } : {}),
       origin, inputFiles: origin?.files || [], createdAt: new Date().toISOString(), notified: false, toolCalls: 0 };
     mark(task, 'queued', 'front');
+    if (origin?.exchangeId) this.contacts?.settle(origin.exchangeId, { status: 'dispatched', taskId: id });
     await this.save();
     await this.pump();
     if (task.status === 'running') return `已派工：${id}（${title}），工作者已开始，结果会由核心直接交付给对方。现在简短告诉对方已开始即可。`;
@@ -294,10 +305,10 @@ export class WorkCore {
   }
 
   /** Worker Session events: a turn that ends without a report gets one reminder, then fails. */
-  /** The room message behind the current Bot-to-Bot request, captured when the request arrived. */
+  /** The room message behind the Bot-to-Bot request this Bot has not acted on yet, from its contact book. */
   askedOrigin() {
-    const asked = this.asked;
-    return asked?.origin && Date.now() - asked.at < 30 * 60_000 ? { ...asked.origin, via: asked.from } : null;
+    const asked = this.contacts?.awaiting();
+    return asked?.origin ? { ...asked.origin, via: asked.peerId, exchangeId: asked.id } : null;
   }
 
   /** The room message this Bot is answering now, or the one it just finished answering. */
@@ -309,13 +320,16 @@ export class WorkCore {
 
   async event(session, event) {
     const source = event.data?.message?.source || event.data?.source;
-    // Snapshot the asking Bot's room message now: by the time this Bot dispatches, the
-    // asking Bot may have finished its turn. A newer request replaces it; a room turn of
-    // this Bot's own sets this.origin, which dispatch prefers.
-    if (event.type === 'user/message' && this.frontSessions.has(session.id) && source?.kind === 'bot' && source.role === 'request' && source.senderSessionId) {
+    // Both Bots write the exchange into their contact books when the request arrives,
+    // with the asking Bot's room message as it is now: by the time this Bot
+    // dispatches, the asking Bot may have finished its turn.
+    if (event.type === 'user/message' && this.frontSessions.has(session.id) && source?.kind === 'bot' && source.role === 'request'
+      && source.senderSessionId) {
       const asker = cores.get(source.senderSessionId);
       const origin = asker && asker !== this ? asker.currentOrigin() : null;
-      this.asked = { from: source.senderSessionId, exchangeId: source.exchangeId || null, at: Date.now(), origin: origin ? structuredClone(origin) : null };
+      const exchange = { id: source.exchangeId || `${source.senderSessionId}@${Date.now()}`, via: 'message_bot', origin: origin && structuredClone(origin) };
+      this.contacts?.open({ ...exchange, direction: 'in', peer: asker?.node.id || source.senderSessionId, status: 'received' });
+      if (asker && asker !== this && this.node.id) asker.contacts?.open({ ...exchange, direction: 'out', peer: this.node.id, status: 'sent' });
     }
     const task = this.workerTask(session.id);
     if (!task) return false;
@@ -354,10 +368,15 @@ export class WorkCore {
   }
 
   async notify(task, message) {
-    const asker = message.kind === 'result' && task.origin?.via ? cores.get(task.origin.via) : undefined;
+    const asker = message.kind === 'result' && task.origin?.via ? coreOf(task.origin.via) : undefined;
     if (asker && asker !== this && asker.onResult) {
       const bot = await this.native.bot(this.node.nativeBotId).catch(() => null);
       await asker.adopt({ ...structuredClone(task), by: bot?.name || null });
+      const exchangeId = task.origin.exchangeId;
+      if (exchangeId) {
+        this.contacts?.settle(exchangeId, { status: task.status === 'done' ? 'delivered' : 'failed', taskId: task.id });
+        asker.contacts?.settle(exchangeId, { status: task.status === 'done' ? 'returned' : 'failed', taskId: task.id });
+      }
       task.notified = true; await this.save();
       return;
     }

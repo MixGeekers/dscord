@@ -3,7 +3,9 @@ import assert from 'node:assert/strict';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
-import { WorkCore, FRONT_REFUSAL, FRONT_TOOLS, WORKER_DENY } from '../dsh-connect/work-core.mjs';
+import { DatabaseSync } from 'node:sqlite';
+import { WorkCore, FRONT_REFUSAL, FRONT_TOOLS, WORKER_DENY, localBot } from '../dsh-connect/work-core.mjs';
+import { ContactBook } from '../src/contact-book.mjs';
 
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'work-core-'));
@@ -24,7 +26,11 @@ async function fixture(t, options = {}) {
   const native = { bot: async () => ({ id: 'native', name: 'Lin', sessionId: 'front', model: 'p/m' }), agent: async id => agentFor(id) };
   const state = { tasks: {} }; let saves = 0;
   const { nativeBotId = 'native', ...rest } = options;
-  const core = new WorkCore({ ctx, native, node: { nativeBotId, directory }, state, save: async () => { saves++; }, ...rest });
+  const id = `@${nativeBotId}:dsh.test`;
+  const core = new WorkCore({ ctx, native, node: { id, nativeBotId, directory }, state, save: async () => { saves++; }, ...rest });
+  const db = new DatabaseSync(':memory:');
+  core.contacts = new ContactBook({ db, self: { id }, local: localBot });
+  t.after(() => db.close());
   const results = [];
   core.onResult = async (task, message) => { results.push({ task: structuredClone(task), message, text: core.resultText(task, message) }); };
   t.after(() => core.dispose());
@@ -178,7 +184,7 @@ test('work a Bot does for another Bot goes back through the asking Bot to the ro
   dev.core.origin = null;
   await run(planner, 'front', 'dispatch_work', { title: '写 known-issues.md', brief: '整理已知问题' });
   const task = Object.values(planner.state.tasks)[0];
-  assert.deepEqual([task.origin.roomId, task.origin.eventId, task.origin.via], ['!r1', '$g5', 'dev']);
+  assert.deepEqual([task.origin.roomId, task.origin.eventId, task.origin.via], ['!r1', '$g5', '@dev:dsh.test']);
   await writeFile(path.join(task.dir, 'outputs', 'known-issues.md'), '# 已知问题\n');
   await run(planner, 'worker-1', 'work_report', { status: 'done', summary: '整理了 3 个已知问题' });
   assert.equal(planner.results.length, 0);
@@ -187,6 +193,13 @@ test('work a Bot does for another Bot goes back through the asking Bot to the ro
   assert.deepEqual(dev.results[0].task.artifacts.map(file => file.name), ['known-issues.md']);
   assert.match(dev.results[0].text, /^Lin：「写 known-issues\.md」完成了/);
   assert.equal(task.notified, true);
+  // Both contact books keep the exchange: who asked whom, for which room message, and how it ended.
+  const asked = planner.core.contacts.exchange('x1');
+  assert.deepEqual([asked.direction, asked.peerId, asked.via, asked.origin.eventId, asked.status, asked.taskId],
+    ['in', '@dev:dsh.test', 'message_bot', '$g5', 'delivered', task.id]);
+  const sent = dev.core.contacts.exchange('x1');
+  assert.deepEqual([sent.direction, sent.peerId, sent.status], ['out', '@planner:dsh.test', 'returned']);
+  assert.deepEqual(dev.core.contacts.contact('@planner:dsh.test').reach, 'message_bot');
 });
 
 test('each Bot-to-Bot request keeps its own room message, even when the asking Bot is already done', async t => {
@@ -209,11 +222,12 @@ test('each Bot-to-Bot request keeps its own room message, even when the asking B
   await run(planner, 'front', 'dispatch_work', { title: '自己的活', brief: 'c' });
   planner.core.origin = null;
   const [forOps, own] = Object.values(planner.state.tasks);
-  assert.deepEqual([forOps.origin.roomId, forOps.origin.via], ['!r2', 'ops']);
+  assert.deepEqual([forOps.origin.roomId, forOps.origin.via], ['!r2', '@ops:dsh.test']);
+  assert.equal(planner.core.contacts.exchange('x2').status, 'dispatched');
   assert.deepEqual([own.origin.roomId, own.origin.via], ['!r3', undefined]);
   // The first request still had 开发助理's room message on record when it arrived.
   await ask('dev', 'x3');
   await run(planner, 'front', 'dispatch_work', { title: '开发的活', brief: 'a' });
   const forDev = Object.values(planner.state.tasks)[2];
-  assert.deepEqual([forDev.origin.roomId, forDev.origin.via], ['!r1', 'dev']);
+  assert.deepEqual([forDev.origin.roomId, forDev.origin.via], ['!r1', '@dev:dsh.test']);
 });
