@@ -307,3 +307,28 @@ test('work started from another Bot\'s result answers the message that started t
   assert.deepEqual([origin.roomId, origin.eventId, origin.senderId, origin.threadRootId], ['!r2:home.test', '$g18', '@tang:home.test', '$thread']);
   assert.match(origin.body, /策划 交回的结果/);
 });
+
+test('the steer after a Bot reply starts the turn whose answer completes the request', async t => {
+  let event;
+  const f = await fixture(t, { send: async ({ event: emit, turn }) => {
+    event = emit;
+    await emit('user/message', { source: { kind: 'bot', role: 'request', senderSessionId: 'native-one', exchangeId: 'ask' } }, 'native-peer');
+    await emit('assistant/message', { turn, message: { content: [{ type: 'text', text: '我去问一下宣发。' }] } });
+    await emit('turn/end', { turn, reason: { kind: 'completed' } });
+    setTimeout(async () => {
+      await emit('turn/start', { turn: 2 });
+      await emit('user/message', { source: { kind: 'bot', role: 'reply', replyTo: 'ask' } });
+    }, 10);
+  } });
+  // As the host does: the steer aborts the running turn and starts a new one with the note.
+  f.bridge.core.ctx.sessionController = { prompt: async request => {
+    await event('turn/end', { turn: 2, reason: { kind: 'aborted', source: 'ds-bot/steer' } });
+    await event('turn/start', { turn: 3 });
+    await event('user/message', { content: request.content, source: { kind: 'user' } });
+    await event('assistant/message', { turn: 3, message: { content: [{ type: 'text', text: '小满，宣发说下周发。' }] } });
+    await event('turn/end', { turn: 3, reason: { kind: 'completed' } });
+  } };
+  const result = await f.bridge.turn(f.request('steered'));
+  assert.equal(result.status, 'completed');
+  assert.equal(result.text, '小满，宣发说下周发。');
+});

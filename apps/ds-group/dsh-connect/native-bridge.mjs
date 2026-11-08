@@ -190,7 +190,9 @@ export class NativeBridge {
           run.exchanges.delete(source.replyTo);
           // The answer to a Bot this front asked comes back as its own message; the turn
           // it starts still ends in the reply to the person who asked in the room.
-          const note = `DSCord：上面是你为${run.sender}去问来的答复。这一轮的最后一条回复会发给${run.sender}，直接对${run.sender}说，不要回复那个 Bot。`;
+          // The steer ends this turn and starts the next one with the note; the request marker
+          // makes that turn this request's, so its answer and completion are the ones kept.
+          const note = `${run.marker}\nDSCord：上面是你为${run.sender}去问来的答复。这一轮的最后一条回复会发给${run.sender}，直接对${run.sender}说，不要回复那个 Bot。`;
           Promise.resolve().then(() => this.core.prompt(session.id, note, 'steer')).catch(() => {});
         }
       }
