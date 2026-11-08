@@ -545,3 +545,38 @@ test('a room can override the Bot participation mode: natural in one room, menti
   assert.deepEqual(f.node.attentionStatus().rooms, {});
   assert.throws(() => f.node.configureAttention({ rooms: { [roomId]: 'loud' } }), /Invalid room participation/);
 });
+
+test('the responder reports the turn it is in and the timeline merges requests, decisions, task stages and exchanges', async t => {
+  let during;
+  const f = fixture(t, { turn: () => { during = f.node.responderStatus(); return { status: 'completed', text: '{"text":"好呀"}', sessionId: 'native-session' }; } });
+  assert.deepEqual(f.node.responderStatus(), { state: 'idle', roomId: null, requesterId: null, since: null });
+  const sentAt = Date.now();
+  await f.node.ingestEvents([message('$photo', '识雨，周末一起拍照吧。', { timestamp: sentAt })]);
+  assert.equal(await f.node.processAttentionOnce(), true);
+  await f.node.processOne();
+  await f.node.processOne();
+  assert.equal(during.state, 'replying');
+  assert.equal(during.roomId, roomId);
+  assert.equal(during.requesterId, alice.id);
+  assert.equal(typeof during.since, 'number');
+  assert.equal(f.node.responderStatus().state, 'idle');
+  f.node.contacts.open({ id: 'task-1>@yuhe:test', direction: 'out', peer: peer.id, via: 'matrix', roomId, origin: { roomId, eventId: '$photo', senderId: alice.id }, status: 'sent', taskId: 'task-1' });
+  const tasks = [
+    { id: 'task-1', title: '整理照片', origin: { roomId, senderId: alice.id }, events: [{ at: new Date(2_000).toISOString(), from: null, to: 'queued', by: 'front' }, { at: new Date(3_000).toISOString(), from: 'queued', to: 'running', by: 'core' }] },
+    { id: 'task-1-1', joined: true, events: [{ at: new Date(4_000).toISOString(), from: null, to: 'done', by: 'core' }] },
+  ];
+  const timeline = f.node.timeline({ limit: 50 }, tasks);
+  const kinds = timeline.items.map(item => item.kind);
+  assert.deepEqual([...new Set(kinds)].sort(), ['decision', 'exchange', 'request', 'task']);
+  assert.equal(kinds.filter(kind => kind === 'task').length, 2, 'a joined copy is not shown twice');
+  assert.deepEqual(timeline.items.map(item => item.at), timeline.items.map(item => item.at).toSorted((a, b) => b - a));
+  const request = timeline.items.find(item => item.kind === 'request');
+  assert.deepEqual([request.peerId, request.text, request.status, request.at], [alice.id, '识雨，周末一起拍照吧。', 'completed', sentAt]);
+  assert.equal(timeline.items.find(item => item.kind === 'decision').action, 'SPEAK');
+  assert.equal(timeline.next, null);
+  const first = f.node.timeline({ limit: 2 }, tasks);
+  assert.equal(first.items.length, 2);
+  const rest = f.node.timeline({ limit: 50, before: first.next }, tasks);
+  assert.ok(rest.items.every(item => item.at < first.next));
+  assert.equal(first.items.length + rest.items.length <= timeline.items.length, true);
+});

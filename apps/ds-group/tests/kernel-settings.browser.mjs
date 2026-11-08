@@ -20,36 +20,60 @@ const style = `<meta name="viewport" content="width=device-width, initial-scale=
 const webHtml = `<!doctype html><html><head>${style}</head><body><div id="root"></div><script type="module">
   import React from 'react'; import { createRoot } from 'react-dom/client';
   import { MyBotsDialog } from '/src/components/MyBotsDialog.tsx';
+  import { BotHome } from '/src/components/BotHome.tsx';
   import { MemberDialog } from '/src/components/BasicDialogs.tsx';
+  import { ApiError } from '/src/api.ts';
   import { setLocalePreference } from '/i18n.js';
   const owner = {id:'@alice:home.test',name:'Alice',kind:'human'};
   const bot = {id:'@helper:home.test',name:'Shiyu',kind:'bot',ownerId:owner.id,nativeBinding:{hostId:'node-a',nativeBotId:'local-shiyu',botId:'@helper:home.test'}};
   const person = {id:'@bob:home.test',name:'Bob',kind:'human'};
+  const planner = {id:'@planner:home.test',name:'Planner',kind:'bot'};
   const room = {roomId:'!project:home.test',name:'Garden project',kind:'group',participantIds:[owner.id,bot.id,person.id]};
   const fixture = window.fixture = {calls:[],offline:false,failSave:false,direct:[],mode:'natural',desired:null};
   const source = {id:'source-2',revision:2,authorId:person.id,authorKind:'human',eventId:'$updated-plan',roomId:room.roomId,timestamp:1793898000000};
   const claim = {id:'claim-1',revision:2,text:'Bob proposed planting herbs on Saturday.',claimState:'proposal',kind:'reported',saidBy:owner.id,scope:'room:'+room.roomId,sources:[source],sourceRefs:[{id:source.id,revision:2}],conflicts:['claim-conflicting-date']};
+  const at = 1793898000000;
+  const timeline = [
+    {id:'request:$ask',kind:'request',at:at+4000,roomId:room.roomId,peerId:person.id,status:'running',text:'Can we plant herbs on Saturday?'},
+    {id:'decision:d1',kind:'decision',at:at+3000,roomId:room.roomId,peerId:person.id,action:'SPEAK',status:'decided',outcome:'delivered'},
+    {id:'task:task-1:1',kind:'task',at:at+2000,taskId:'task-1',title:'Plan the herb bed',from:'queued',to:'running',by:'core',roomId:room.roomId,peerId:owner.id},
+    {id:'exchange:task-1>planner',kind:'exchange',at:at+1000,direction:'out',peerId:planner.id,roomId:room.roomId,status:'returned',taskId:'task-1',detail:'Asked for a planting calendar'},
+  ];
+  const earlier = {id:'task:task-0:0',kind:'task',at:at-60000,taskId:'task-0',title:'Measure the bed',from:null,to:'done',by:'core',roomId:room.roomId,peerId:owner.id};
+  const offline = () => { if (fixture.offline) throw new ApiError('Connect this Bot before reading its memory', 503, 0, 'BOT_OFFLINE'); };
   const api = async (route, options={}) => {
     fixture.calls.push({route,method:options.method,body:options.body,timeout:options.timeout});
-    if(route.endsWith('/kernel')) return {runtime:{id:fixture.offline?null:'dscord-kernel',version:fixture.offline?null:'0.4.0',available:!fixture.offline},online:!fixture.offline,updatedAt:Date.now(),desiredAttention:fixture.desired,attention:fixture.offline?{mode:fixture.desired?.mode??null,activity:null,provider:{configured:null,available:null,model:null},queue:null}:{mode:fixture.mode,activity:'waiting',provider:{configured:true,available:null,health:'unknown',model:'participation-model'},queue:{pending:2,waiting:1,evaluating:0,errors:0}},work:{status:fixture.offline?'unknown':'waiting',activeTasks:fixture.offline?null:0,waiting:fixture.offline?null:1},memorySummary:{people:fixture.offline?null:1,projects:fixture.offline?null:1,pendingReview:fixture.offline?null:0}};
+    const url = new URL(route,'http://fixture.test');
+    if(route.endsWith('/kernel')) return {runtime:{id:fixture.offline?null:'dscord-kernel',version:fixture.offline?null:'0.4.0',available:!fixture.offline},online:!fixture.offline,updatedAt:Date.now(),desiredAttention:fixture.desired,
+      attention:fixture.offline?{mode:fixture.desired?.mode??null,activity:null,provider:{configured:null,available:null,model:null},queue:null,lastDecision:null}:{mode:fixture.mode,activity:'waiting',provider:{configured:true,available:null,health:'unknown',model:'participation-model'},queue:{pending:2,waiting:1,evaluating:0,errors:0},lastDecision:{action:'SPEAK',at:at+3000,outcome:'delivered'}},
+      responder:fixture.offline?null:{state:'replying',roomId:room.roomId,requesterId:person.id,since:at+4000},
+      work:{status:fixture.offline?'unknown':'waiting',activeTasks:fixture.offline?null:1,waiting:fixture.offline?null:1,
+        workers:fixture.offline?[]:[{taskId:'task-1',title:'Plan the herb bed',stage:'running',roomId:room.roomId,requesterId:owner.id,doing:{tool:'read',target:'garden.md'},since:new Date(at+2000).toISOString(),toolCalls:3}],
+        queue:fixture.offline?[]:[{taskId:'task-2',title:'Order seeds',stage:'queued',requesterId:owner.id}]}};
     if(route.endsWith('/attention')) {if(fixture.failSave)throw new Error('Synthetic uncertain save'); fixture.desired={mode:options.body.mode,revision:1,status:'pending',applied:false,online:!fixture.offline};return fixture.desired;}
+    if(url.pathname.endsWith('/timeline')) { offline(); return url.searchParams.has('before') ? {items:[earlier],next:null} : {items:timeline,next:timeline.at(-1).at}; }
+    if(url.pathname.endsWith('/contacts')) { offline(); const contact=url.searchParams.get('contact');
+      const exchanges=[{id:'task-1>planner',at:at+1000,direction:'out',peerId:planner.id,roomId:room.roomId,status:'returned',taskId:'task-1',detail:'Asked for a planting calendar'},{id:'in:$bob',at:at,direction:'in',peerId:person.id,roomId:room.roomId,status:'received'}];
+      return {contacts:[{...person,rooms:[room.roomId],lastExchangeAt:at},{...planner,reach:'matrix',rooms:[room.roomId],lastExchangeAt:at+1000}],exchanges:exchanges.filter(exchange=>!contact||exchange.peerId===contact),next:null}; }
+    if(url.pathname.endsWith('/memory/changes')) { offline(); return {rows:[{id:'c1',time:new Date(at).toISOString(),op:'add',scope:'own',text:'Bob prefers herbs.',by:'Shiyu'}],more:null}; }
     if(route.includes('/memory/profile')) {
       if(fixture.holdMemory) await new Promise(resolve=>{fixture.releaseMemory=resolve;});
-      const query=new URL(route,'http://fixture.test').searchParams;
-      const kind=query.get('kind');const id=query.get('id');
+      const kind=url.searchParams.get('kind');const id=url.searchParams.get('id');
       if(!id)return {kind,items:[{id:kind==='person'?person.id:'project:garden',name:kind==='person'?'Bob':'Garden',kind,currentCount:1,historyCount:1,scopes:['room:'+room.roomId]}],more:false};
       return {kind,id,identity:{id,name:kind==='person'?'Bob':'Garden',kind},view:{currentClaims:[claim],preferences:[],projectFacts:[],changes:[{...claim,id:'claim-old',text:'The old draft said Friday.',claimState:'statement',kind:'legacy',derivation:'superseded',conflicts:[]}],recentSources:[source],historyGaps:[]}};
     }
     throw new Error('Unexpected fixture route '+route);
   };
-  function Fixture(){const [open,setOpen]=React.useState(true);const [member,setMember]=React.useState(null);const [user,setUser]=React.useState(owner.id);const [selected,setSelected]=React.useState(null);
-    fixture.locale=setLocalePreference;fixture.switchUser=setUser;
+  const status = {nodes:[{id:'n',botId:bot.id,name:bot.name,status:'waiting'}]};
+  function Fixture(){const [open,setOpen]=React.useState(true);const [member,setMember]=React.useState(null);const [user,setUser]=React.useState(owner.id);const [home,setHome]=React.useState(null);
+    fixture.locale=setLocalePreference;fixture.switchUser=setUser;fixture.closeHome=()=>setHome(null);
     const session={user_id:user,access_token:'synthetic-token'};
     return React.createElement(React.Fragment,null,
       React.createElement('button',{id:'open-profile',onClick:()=>setMember(bot)},'Profile'),
-      React.createElement('button',{id:'open-bots',onClick:()=>{setSelected(null);setOpen(true);}},'Bots'),
-      React.createElement(MyBotsDialog,{open,bots:[bot],status:{nodes:[{id:'n',botId:bot.id,name:bot.name,status:'waiting'}]},session,api,rooms:[room],participants:[owner,person,bot],initialBotId:selected,onClose:()=>setOpen(false),onCreate:()=>{},onDirect:id=>fixture.direct.push(id)}),
-      React.createElement(MemberDialog,{member,session,room,roles:[],botStatus:'waiting',owner,onClose:()=>setMember(null),onDirect:()=>{},onMention:()=>{},onManageBot:id=>{setMember(null);setSelected(id);setOpen(true);}}));
+      React.createElement('button',{id:'open-bots',onClick:()=>setOpen(true)},'Bots'),
+      React.createElement(MyBotsDialog,{open,bots:[bot],status,session,onClose:()=>setOpen(false),onCreate:()=>{},onHome:id=>{setOpen(false);setHome(id);},onDirect:id=>fixture.direct.push(id)}),
+      home && React.createElement('section',{id:'bots-panel',className:'home-panel bots-panel'},React.createElement(BotHome,{key:home,bot,session,api,status,rooms:[room],participants:[owner,person,bot,planner],opening:false,onDirect:id=>fixture.direct.push(id)})),
+      React.createElement(MemberDialog,{member,session,room,roles:[],botStatus:'waiting',owner,onClose:()=>setMember(null),onDirect:()=>{},onMention:()=>{},onManageBot:id=>{setMember(null);setHome(id);}}));
   }createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 </script></body></html>`;
 const dshHtml = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;height:100dvh"><div id="root" style="height:100%"></div><script type="module">
@@ -83,10 +107,6 @@ let page;
 let controller;
 let updates;
 async function screenshot(name) { const filename = path.join(output, name); await page.screenshot({ path: filename }); report.screenshots.push(filename); }
-async function fits(selector) {
-  const bounds = await page.locator(selector).evaluate(element => { const r = element.getBoundingClientRect(); return { left: r.left, right: r.right, width: r.width, scroll: element.scrollWidth, client: element.clientWidth, viewport: innerWidth, top: r.top, bottom: r.bottom, height: innerHeight }; });
-  assert.ok(bounds.left >= 0 && bounds.right <= bounds.viewport + 1 && bounds.scroll <= bounds.client + 1 && bounds.top >= 0 && bounds.bottom <= bounds.height + 1, JSON.stringify(bounds));
-}
 try {
   await server.listen(); browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1120, height: 850 }, locale: 'en-US' });
@@ -95,15 +115,23 @@ try {
   page = await context.newPage(); page.on('pageerror', error => errors.push(error.message));
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   await page.goto(`${origin}/__kernel`);
-  await page.locator('[data-bot-settings-button]').click();
-  await page.locator('[data-activity="waiting"]').waitFor();
-  assert.match(await page.locator('[data-bot-panel="overview"]').innerText(), /Alice/);
-  assert.match(await page.locator('[data-bot-panel="overview"]').innerText(), /normal state/);
+  await page.locator('[data-bot-home-button]').click();
+  await page.locator('[data-bot-home] [data-activity="waiting"]').waitFor();
+  const now = page.locator('[data-bot-panel="now"]');
+  assert.match(await now.innerText(), /Alice/);
+  assert.match(await now.innerText(), /normal state/);
+  assert.match(await page.locator('[data-bot-responder="replying"]').innerText(), /Replying to Bob in Garden project/);
+  assert.match(await page.locator('[data-task-id="task-1"]').innerText(), /Plan the herb bed[\s\S]*Asked by Alice[\s\S]*3 tool calls[\s\S]*Doing: read garden\.md/);
+  assert.match(await page.locator('[data-task-id="task-2"]').innerText(), /Order seeds/);
+  assert.match(await now.innerText(), /Decided to speak/);
   assert.equal(await page.getByRole('alert').count(), 0);
-  assert.match(await page.locator('.bot-settings-identity').innerText(), /@helper:home.test/);
-  checks.push('stableBotAndOwnerIdentityWithWaitingAsNormalActivity');
-  await screenshot('bot-overview-dark-en.png');
-  await page.getByRole('button', { name: 'Participation', exact: true }).click();
+  assert.match(await page.locator('.bot-home-header').innerText(), /@helper:home.test/);
+  checks.push('statusPageShowsResponderWorkersQueueDecisionAndOwner');
+  await screenshot('bot-home-now-dark-en.png');
+  await page.locator('[data-bot-direct]').click();
+  assert.deepEqual(await page.evaluate(() => window.fixture.direct), ['@helper:home.test']);
+  checks.push('statusPageOpensTheDirectConversation');
+  await page.locator('[data-bot-tab="settings"]').click();
   assert.equal(await page.getByRole('radio', { name: /Join naturally/ }).isChecked(), true);
   assert.equal(await page.locator('input[type="password"]').count(), 0);
   await page.getByRole('radio', { name: /Observe quietly/ }).check();
@@ -114,7 +142,6 @@ try {
   assert.deepEqual(patch.body, { mode: 'shadow' });
   assert.equal(patch.route, '/api/bots/%40helper%3Ahome.test/attention');
   checks.push('ownerModeSaveUsesRealContractAndKeepsPendingDistinctFromApplied');
-  await page.locator('.bot-settings-content').evaluate(element => { element.scrollTop = 0; });
   await screenshot('bot-participation-dark-en.png');
   await page.evaluate(() => { window.fixture.failSave = true; });
   await page.getByRole('radio', { name: /When mentioned/ }).check();
@@ -122,7 +149,24 @@ try {
   await page.getByRole('status').filter({ hasText: 'not confirmed' }).waitFor();
   assert.equal(await page.getByRole('radio', { name: /When mentioned/ }).isDisabled(), true);
   checks.push('uncertainSaveLocksFurtherWritesUntilRefreshed');
-  await page.getByRole('button', { name: 'Memory', exact: true }).click();
+  await page.locator('[data-bot-tab="timeline"]').click();
+  const request = page.locator('[data-bot-panel="timeline"] [data-kind="request"]');
+  await request.waitFor();
+  assert.match(await request.innerText(), /Bob asked[\s\S]*Garden project[\s\S]*Can we plant herbs on Saturday\?/);
+  assert.match(await page.locator('[data-bot-panel="timeline"]').innerText(), /Participation: Decided to speak[\s\S]*Task “Plan the herb bed”: running[\s\S]*Asked Planner/);
+  await page.locator('[data-load-more="timeline"]').click();
+  await page.locator('[data-bot-panel="timeline"]').getByText('Task “Measure the bed”: done').waitFor();
+  assert.equal(await page.locator('[data-bot-panel="timeline"] .bot-timeline-item').count(), 5);
+  assert.ok(await page.evaluate(() => window.fixture.calls.some(call => call.route.endsWith('/timeline?before=1793898001000'))));
+  checks.push('timelineShowsOriginalWordsAllEventKindsAndPagesEarlier');
+  await screenshot('bot-timeline-dark-en.png');
+  await page.locator('[data-bot-tab="conversations"]').click();
+  await page.locator('[data-contact-id="@planner:home.test"]').click();
+  await page.locator('[data-bot-panel="conversations"]').getByText('Asked for a planting calendar').waitFor();
+  assert.ok(await page.evaluate(() => window.fixture.calls.some(call => call.route.endsWith('/contacts?contact=%40planner%3Ahome.test'))));
+  assert.doesNotMatch(await page.locator('[data-bot-panel="conversations"] .bot-timeline').innerText(), /Bob asked/);
+  checks.push('conversationsListContactsAndFilterExchangesByContact');
+  await page.locator('[data-bot-tab="memory"]').click();
   await page.locator('[data-memory-profile="@bob:home.test"]').click();
   await page.locator('[data-memory-record="claim-1"]').waitFor();
   const record = page.locator('[data-memory-record="claim-1"]');
@@ -131,38 +175,44 @@ try {
   assert.match(await record.innerText(), /Bob/); assert.match(await record.innerText(), /Garden project/); assert.match(await record.innerText(), /\$updated-plan/);
   assert.match(await page.locator('.bot-memory-profile').innerText(), /not presented as current facts/);
   assert.equal(await page.evaluate(() => window.fixture.calls.find(call => call.route.includes('/memory/profile')).timeout), 20000);
-  checks.push('memoryKeepsOriginalSourcesReportedClaimsConflictsAndHistoricalChanges');
+  assert.match(await page.locator('[data-bot-memory-changes]').innerText(), /Added Bob prefers herbs\.[\s\S]*by Shiyu/);
+  checks.push('memoryKeepsOriginalSourcesReportedClaimsConflictsHistoricalChangesAndRecentEdits');
   await screenshot('bot-memory-dark-en.png');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.evaluate(() => { window.fixture.locale('zh-CN'); window.DSGroupTheme.setPreference('light'); });
-  await page.getByRole('button', { name: '参与方式', exact: true }).waitFor();
-  await fits('#my-bots-dialog');
+  await page.locator('[data-bot-tab="settings"]', { hasText: '设置' }).waitFor();
+  const overflow = await page.evaluate(() => ({ page: document.documentElement.scrollWidth, viewport: innerWidth, home: document.querySelector('[data-bot-home]').getBoundingClientRect().right }));
+  assert.ok(overflow.page <= overflow.viewport + 1 && overflow.home <= overflow.viewport + 1, JSON.stringify(overflow));
   await screenshot('bot-memory-light-zh-mobile.png');
-  checks.push('mobileLightThemeAndChineseKeepDialogInsideViewport');
-  await page.getByRole('button', { name: '概览', exact: true }).click();
+  checks.push('mobileLightThemeAndChineseKeepStatusPageInsideViewport');
+  await page.locator('[data-bot-tab="now"]').click();
   await page.evaluate(() => { window.fixture.offline = true; window.fixture.failSave = false; });
   await page.getByRole('button', { name: '刷新', exact: true }).click();
-  await page.locator('[data-activity="unknown"]').waitFor();
-  assert.match(await page.locator('[data-bot-panel="overview"]').innerText(), /离线/);
-  await page.getByRole('button', { name: '参与方式', exact: true }).click();
+  await page.locator('[data-bot-home] [data-activity="unknown"]').waitFor();
+  assert.match(await page.locator('[data-bot-responder]').innerText(), /离线/);
+  assert.match(await page.locator('.bot-home-header').innerText(), /离线/);
+  await page.locator('[data-bot-tab="timeline"]').click();
+  await page.locator('[data-bot-panel="timeline"]').getByRole('alert').filter({ hasText: '连上 Bot 后才能查看' }).waitFor();
+  await page.locator('[data-bot-tab="settings"]').click();
   assert.doesNotMatch(await page.locator('.bot-decision-status').innerText(), /未配置/);
   assert.match(await page.locator('[data-bot-panel="participation"]').innerText(), /当前参与方式 · 未知/);
   await page.getByRole('radio', { name: /自然参与/ }).check();
   await page.locator('#save-bot-participation').click();
   await page.getByRole('status').filter({ hasText: '下次同步' }).first().waitFor();
-  checks.push('offlineActivityStaysUnknownAndDesiredModeCanBeSaved');
-  await page.getByRole('button', { name: '关闭', exact: true }).click();
+  checks.push('offlineActivityStaysUnknownHistoryExplainsWhereItLivesAndDesiredModeCanBeSaved');
+  await page.evaluate(() => window.fixture.closeHome());
+  await page.locator('[data-bot-home]').waitFor({ state: 'detached' });
   await page.locator('#open-profile').click();
   assert.match(await page.locator('.bot-profile-owner').innerText(), /Alice/);
-  await page.locator('#member-bot-settings').click();
-  await page.locator('[data-bot-settings]').waitFor();
-  checks.push('memberProfileShowsOwnerAndOpensOwnedBotSettings');
-  await page.getByRole('navigation', { name: 'Bot 设置' }).getByRole('button', { name: '记忆', exact: true }).click();
+  await page.locator('#member-bot-home').click();
+  await page.locator('[data-bot-home]').waitFor();
+  checks.push('memberProfileShowsOwnerAndOpensOwnedBotStatusPage');
+  await page.locator('[data-bot-tab="memory"]').click();
   await page.evaluate(() => { window.fixture.holdMemory = true; });
   await page.locator('[data-memory-profile]').click();
   await page.waitForFunction(() => !!window.fixture.releaseMemory);
   await page.evaluate(() => { window.fixture.switchUser('@bob:home.test'); window.fixture.releaseMemory(); });
-  await page.locator('[data-bot-settings]').waitFor({ state: 'detached' });
+  await page.locator('[data-bot-home]').waitFor({ state: 'detached' });
   assert.equal(await page.locator('[data-memory-record]').count(), 0);
   checks.push('lateMemoryReadCannotPublishIntoAnotherOwnersAccount');
 
@@ -200,7 +250,7 @@ try {
   await updates.check({ fresh: true });
   controller = await new ConnectController({ directory: path.join(temporary, 'controller'), native, models: {}, updates, processes: {
     available: async () => nativeState.runtime,
-    async kernelState(nativeBotId) { return { runtime: { id: 'dscord-kernel', available: true }, decisionProvider: decisionSettings.publicStatus(), ...(nativeBotId ? { attention: { mode: 'mention', activity: 'unknown', online: false, provider: decisionSettings.publicStatus() }, work: { activeTasks: 0, waiting: 0 }, memorySummary: { people: null, projects: null, pendingReview: null } } : {}) }; },
+    async kernelState(nativeBotId) { return { runtime: { id: 'dscord-kernel', available: true }, decisionProvider: decisionSettings.publicStatus(), ...(nativeBotId ? { attention: { mode: 'mention', activity: 'unknown', online: false, provider: decisionSettings.publicStatus() }, work: { activeTasks: 0, waiting: 0 } } : {}) }; },
     saveDecisionProvider: settings => decisionSettings.save(settings),
     stop: async () => {},
   } }).initialize();

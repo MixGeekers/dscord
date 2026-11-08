@@ -129,7 +129,6 @@ export class NativeBridge {
           stage: record.stage || null, summary: record.summary || '', roomId: record.source?.roomId || null })),
         activity: activity || null, waiting: waiting ? Array.isArray(waiting) ? waiting.length : 1 : 0,
         waitDetails: waiting, ...this.core?.view() },
-      memorySummary: { people: null, projects: null, pendingReview: null },
     };
   }
 
@@ -155,6 +154,11 @@ export class NativeBridge {
 
   memoryProfile(options = {}) {
     return this.native.call('memory-profile', { ...options, botId: this.node.nativeBotId });
+  }
+
+  /** What the Bot's memory recorded, revised or dropped, newest first, paged by `before`. */
+  memoryChanges({ before } = {}) {
+    return this.native.call('memory-history', { botId: this.node.nativeBotId, ...(before ? { before } : {}) });
   }
 
   async event(session, event) {

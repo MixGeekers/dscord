@@ -38,12 +38,115 @@ export interface BotKernelView {
     status: string | null;
     activeTasks: number | null;
     waiting: number | boolean | null;
+    workers?: WorkerTask[];
+    queue?: WorkerTask[];
   } | null;
-  memorySummary: {
-    people: number | null;
-    projects: number | null;
-    pendingReview: number | null;
+  responder: ResponderStatus | null;
+}
+/** The front, which answers people: replying to one request, deciding whether to speak, or idle. */
+export interface ResponderStatus {
+  state?: "replying" | "deciding" | "idle" | "offline" | string;
+  roomId?: string | null;
+  requesterId?: string | null;
+  since?: number | null;
+}
+/** A task the program core is running or holding in its queue. */
+export interface WorkerTask {
+  taskId: string;
+  title?: string;
+  stage?: string;
+  roomId?: string | null;
+  requesterId?: string | null;
+  progress?: string | null;
+  doing?: {
+    tool?: string;
+    target?: string;
+    said?: string;
+    since?: string;
   } | null;
+  waiting?: unknown;
+  since?: string | null;
+  toolCalls?: number;
+}
+export interface BotStatus {
+  botId: string;
+  online: boolean;
+  updatedAt: number | null;
+  activity: BotActivity | null;
+  responder: ResponderStatus | null;
+  workers: WorkerTask[];
+  queue: WorkerTask[];
+  lastDecision: BotAttention["lastDecision"];
+}
+export type TimelineItem = {
+  id: string;
+  at: number;
+  roomId?: string | null;
+  peerId?: string | null;
+  status?: string | null;
+} & (
+  | { kind: "request"; text?: string; error?: string | null }
+  | {
+      kind: "decision";
+      action?: "LISTEN" | "WAIT" | "SPEAK" | null;
+      outcome?: string | null;
+    }
+  | {
+      kind: "task";
+      taskId: string;
+      title?: string;
+      from?: string | null;
+      to?: string;
+      by?: string | null;
+    }
+  | {
+      kind: "exchange";
+      direction: "in" | "out";
+      taskId?: string | null;
+      detail?: string | null;
+    }
+);
+export interface TimelinePage {
+  items: TimelineItem[];
+  next: number | null;
+}
+export interface BotContact {
+  id: string;
+  name?: string;
+  kind?: string;
+  role?: string;
+  rooms?: string[];
+  reach?: string | null;
+  firstSeenAt?: number | null;
+  lastExchangeAt?: number | null;
+}
+export interface ContactExchange {
+  id: string;
+  at: number;
+  direction: "in" | "out";
+  peerId: string;
+  roomId?: string | null;
+  status?: string;
+  taskId?: string | null;
+  detail?: string | null;
+}
+export interface ContactsPage {
+  contacts: BotContact[];
+  exchanges: ContactExchange[];
+  next: number | null;
+}
+export interface MemoryChange {
+  id: string;
+  time?: string;
+  op?: "add" | "remove" | "replace" | string;
+  scope?: "own" | "team" | "group" | string;
+  text?: string;
+  by?: string;
+  restored?: boolean;
+}
+export interface MemoryChangesPage {
+  rows: MemoryChange[];
+  more: string | null;
 }
 export interface AttentionReceipt {
   mode: ParticipationMode;

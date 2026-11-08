@@ -257,6 +257,12 @@ async function readBody(request) {
   for await (const chunk of request) parts.push(chunk);
   return Buffer.concat(parts);
 }
+/** An owned Bot's row opens its status page; the page's message button opens the direct conversation. */
+async function openOwnedBotDirect(page, id) {
+  await page.locator(`#owned-bots [data-owned-bot-id="${id}"]`).click();
+  await page.locator(`[data-bot-home="${id}"] [data-bot-direct]`).click();
+}
+
 function json(response, status, value) {
   response.writeHead(status, {
     "Content-Type": "application/json",
@@ -1004,7 +1010,8 @@ try {
       ),
     [botId, secondBotId],
   );
-  await page.locator(`[data-work-grants-button="${botId}"]`).click();
+  await page.locator(`[data-bot-home-button="${botId}"]`).click();
+  await page.locator(`[data-bot-home="${botId}"] [data-bot-tab="settings"]`).click();
   await page.waitForFunction(
     () => !document.querySelector("#add-work-grant").disabled,
   );
@@ -1110,7 +1117,7 @@ try {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: path.join(output, "owner-grants-mobile.png") });
   assert.ok(
-    await page.locator("#my-bots-dialog").evaluate((element) => {
+    await page.locator("[data-bot-home]").evaluate((element) => {
       const box = element.getBoundingClientRect();
       return box.left >= 0 && box.right <= innerWidth + 1;
     }),
@@ -1120,7 +1127,6 @@ try {
   checks.push(
     "ownerGrantConflictDenialUnknownSaveAndExplicitRevocationKeepAuthoritativeState",
   );
-  await page.locator("#my-bots-dialog .dialog-heading button").click();
   checks.push(
     "personalSettingsAndOwnedBotManagementExcludeDeploymentAndForeignBotControls",
   );
@@ -1157,12 +1163,13 @@ try {
     started: firstDirectStarted,
     wait: new Promise((resolve) => { releaseFirstDirect = resolve; }),
   };
-  await page.locator(`#owned-bots [data-owned-bot-id="${botId}"]`).click();
+  await openOwnedBotDirect(page, botId);
   await firstPendingDirect;
   await page.waitForTimeout(3200);
   assert.equal(await page.locator("#bots-panel").isVisible(), true);
   assert.match(await page.locator("#bot-open-status").textContent(), /Opening your conversation with Helper/);
   assert.equal(await page.locator(`#owned-bots [data-owned-bot-id="${botId}"]`).getAttribute("aria-busy"), "true");
+  assert.equal(await page.locator(`[data-bot-home="${botId}"] [data-bot-direct]`).getAttribute("aria-busy"), "true");
   await page.screenshot({ path: path.join(output, "desktop-owned-bot-opening.png"), animations: "disabled" });
   releaseFirstDirect();
   await page.locator("#room-title").filter({ hasText: "Helper" }).waitFor();
@@ -1199,7 +1206,7 @@ try {
   await page.locator("#global-bots-button").click();
   await page.waitForFunction(() => new URL(location.href).searchParams.get("roomId") === "!dm-bot-owned:home.test");
   assert.equal(await page.locator("#message-input").textContent(), "Owned Bot draft");
-  await page.locator(`#owned-bots [data-owned-bot-id="${secondBotId}"]`).click();
+  await openOwnedBotDirect(page, secondBotId);
   // Navigation updates the URL before the refreshed room list renders its identity.
   await page.waitForFunction(
     ({ roomId, participantId }) =>
@@ -1233,7 +1240,7 @@ try {
   await page.waitForFunction(() => new URL(location.href).searchParams.get("roomId") === "!dm-bot-foreign:home.test" && document.querySelector("#room-subtitle")?.textContent === "@bot-foreign:a.test");
   assert.equal(await page.locator("#global-bots-button").getAttribute("aria-current"), "page");
   assert.equal(await page.locator(".server-list .server-icon.active").count(), 0);
-  await page.locator(`#owned-bots [data-owned-bot-id="${botId}"]`).click();
+  await openOwnedBotDirect(page, botId);
   await page.waitForFunction(() => new URL(location.href).searchParams.get("roomId") === "!dm-bot-owned:home.test");
   assert.equal(await page.locator("#message-input").textContent(), "Owned Bot draft");
   checks.push("ownedBotRailUsesExactIdentityHomeDmSeparateDraftsUnreadAndReloadWithoutServerHighlight");
@@ -1278,7 +1285,7 @@ try {
     started: directStarted,
     wait: new Promise((resolve) => { releaseDirect = resolve; }),
   };
-  await page.locator(`#owned-bots [data-owned-bot-id="${secondBotId}"]`).click();
+  await openOwnedBotDirect(page, secondBotId);
   await pendingDirect;
   await page.locator('[data-server="a.test"]').click();
   releaseDirect();

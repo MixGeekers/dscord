@@ -75,7 +75,7 @@ test('Core exposes owner-only kernel and attention endpoints using full account 
   assert.equal(response.status, 200);
   assert.equal(response.body.online, false);
   assert.equal(response.body.runtime.version, null);
-  assert.equal(response.body.memorySummary.people, null);
+  assert.equal(response.body.responder, null);
   assert.equal(response.body.work.status, 'unknown');
   assert.equal((await app.request(botPath + '/attention', { token: 'synthetic-other-token', method: 'PATCH', body: { mode: 'natural' } })).status, 403);
   assert.equal((await app.request(botPath + '/attention', { method: 'PATCH', body: { mode: 'unbounded' } })).status, 400);
@@ -100,7 +100,8 @@ test('Core reads actual node memory over HTTP and keeps all kernel details out o
     runtime: { id: 'dscord', version: '0.4.0', upstreamVersion: '0.3.1', available: true },
     attention: { mode: 'shadow', activity: 'waiting', provider: { configured: true, available: false, model: 'route/model', decisionKey: 'private-provider-key' },
       queue: { pending: 1, waiting: 2, evaluating: 0, errors: 0 } },
-    work: { status: 'working', activeTasks: 2, waiting: 1 }, memorySummary: { people: 4, projects: 2, pendingReview: 1 }, raw: 'private',
+    work: { status: 'working', activeTasks: 2, waiting: 1, workers: [{ taskId: 't1', title: 'Report', stage: 'running', doing: { tool: 'read' } }] },
+    responder: { state: 'replying', roomId: '!room:kernel.test', requesterId: ownerId, since: 5 }, raw: 'private',
   } });
   assert.equal(heartbeat.status, 200);
   const kernel = await app.request(botPath + '/kernel');
@@ -108,7 +109,14 @@ test('Core reads actual node memory over HTTP and keeps all kernel details out o
   assert.equal(kernel.body.attention.provider.configured, true);
   assert.equal(kernel.body.attention.provider.available, false);
   assert.equal(kernel.body.attention.activity, 'waiting');
-  assert.equal(kernel.body.memorySummary.people, 4);
+  assert.equal(kernel.body.responder.state, 'replying');
+  assert.equal(kernel.body.work.workers[0].doing.tool, 'read');
+  const status = await app.request('/api/bots/status');
+  assert.equal(status.status, 200);
+  assert.deepEqual(status.body.bots.map(bot => [bot.botId, bot.online, bot.activity, bot.responder.state, bot.workers.length]),
+    [[botId, true, 'waiting', 'replying', 1]]);
+  assert.deepEqual((await app.request('/api/bots/status', { token: 'synthetic-other-token' })).body.bots.map(bot => [bot.botId, bot.online]),
+    [['@other:kernel.test', false]]);
   assert.equal(JSON.stringify(kernel.body).includes('private'), false);
   for (const route of ['/api/status', '/api/bootstrap']) {
     const publicSnapshot = await app.request(route, { token: null });
@@ -134,6 +142,23 @@ test('Core reads actual node memory over HTTP and keeps all kernel details out o
   assert.equal(profile.status, 200);
   assert.equal(profile.body.id, id);
   assert.equal(profile.body.view.currentClaims[0].source.eventId, '$observed');
+  for (const [route, operation, args, result] of [
+    ['/timeline?limit=20&before=99&extra=x', 'timeline', { limit: 20, before: 99 }, { items: [{ id: 'request:$e', kind: 'request', at: 9, text: 'hello' }], next: null }],
+    ['/contacts?contact=' + encodeURIComponent(ownerId) + '&limit=0', 'contacts', { contact: ownerId }, { contacts: [], exchanges: [], next: null }],
+    ['/memory/changes?before=c1', 'memory-changes', { before: 'c1' }, { rows: [{ id: 'c0', op: 'add', text: 'Likes tea' }], more: false }],
+  ]) {
+    const read = app.request(botPath + route);
+    command = await app.nextCommand();
+    assert.equal(command.operation, operation);
+    assert.deepEqual(command.args, args);
+    assert.equal((await app.nodeRequest('/internal/kernel/result', { ...command, status: 'completed', result })).status, 200);
+    assert.deepEqual(await read, { status: 200, body: result });
+  }
+  const malformed = app.request(botPath + '/timeline');
+  command = await app.nextCommand();
+  assert.equal((await app.nodeRequest('/internal/kernel/result', { ...command, status: 'completed', result: ['not', 'an', 'object'] })).status, 502);
+  assert.equal((await app.nodeRequest('/internal/kernel/result', { ...command, status: 'completed', result: { items: [], next: null } })).status, 200);
+  assert.deepEqual((await malformed).body, { items: [], next: null });
 });
 
 test('HTTP memory errors distinguish offline, unsupported, unknown evidence, failed runtime and timed out RPC', async t => {

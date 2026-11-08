@@ -15,6 +15,7 @@ import { Icon } from "./Icons";
 import { AccountMenu } from "./AccountMenu";
 import { GlobalBotsNav, GlobalBotsSidebar } from "./GlobalBotsNav";
 import type { CollaborationSpace } from "../spaces";
+import type { BotStatus } from "../bot-kernel";
 
 export interface ShellProps {
   bootstrap: Bootstrap | null;
@@ -31,6 +32,9 @@ export interface ShellProps {
   ownedBots: Participant[];
   ownedBotsKnown: boolean;
   openingDirectId: string | null;
+  botStatuses?: Record<string, BotStatus>;
+  homeBotId?: string | null;
+  botHome?: ReactNode;
   mentionables: Mentionables;
   status: ServerStatus | null;
   view: "home" | "chat" | "bots";
@@ -41,6 +45,7 @@ export interface ShellProps {
   onDirect(id: string): Promise<void> | void;
   onHome(): void;
   onBots(): void;
+  onBotHome(id: string): void;
   onServer(serverName: string): void;
   onSpaces?(): void;
   onManageBots?(): void;
@@ -435,9 +440,17 @@ export function Shell(props: ShellProps) {
               bots={ownedBots}
               known={ownershipKnown}
               rooms={props.allRooms ?? props.rooms}
+              people={participants}
+              statuses={props.botStatuses ?? {}}
               selectedRoom={selectedBot ? props.room : null}
+              homeBotId={
+                props.view === "bots" ? (props.homeBotId ?? null) : null
+              }
               openingBotId={props.openingDirectId}
-              onDirect={openDirect}
+              onSelect={(id) => {
+                closePanels();
+                props.onBotHome(id);
+              }}
               onManage={props.onManageBots ?? (() => {})}
               onCreate={props.onCreateBot}
             />
@@ -649,20 +662,22 @@ export function Shell(props: ShellProps) {
             className="home-panel bots-panel"
             hidden={props.view !== "bots"}
           >
-            <div className="bots-panel-empty">
-              <Icon name="bot" />
-              <h2>{t("myBots")}</h2>
-              <p
-                id={openingBot ? "bot-open-status" : undefined}
-                role={openingBot ? "status" : undefined}
-              >
-                {openingBot
-                  ? t("openingBot", { name: openingBot.name })
-                  : ownershipKnown
-                    ? t("selectBot")
-                    : t("loadingBotOwnership")}
-              </p>
-            </div>
+            {props.botHome ?? (
+              <div className="bots-panel-empty">
+                <Icon name="bot" />
+                <h2>{t("myBots")}</h2>
+                <p
+                  id={openingBot ? "bot-open-status" : undefined}
+                  role={openingBot ? "status" : undefined}
+                >
+                  {openingBot
+                    ? t("openingBot", { name: openingBot.name })
+                    : ownershipKnown
+                      ? t("selectBot")
+                      : t("loadingBotOwnership")}
+                </p>
+              </div>
+            )}
           </section>
           <section
             id="ownership-loading"

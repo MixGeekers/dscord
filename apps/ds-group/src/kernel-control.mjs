@@ -52,9 +52,26 @@ export function publicKernelSummary(input) {
         latencyMs: count(decision.latencyMs),
       } : null,
     },
-    work: { status: text(input?.work?.status, 80) || 'unknown', activeTasks: count(input?.work?.activeTasks), waiting: count(input?.work?.waiting) },
-    memorySummary: { people: count(input?.memorySummary?.people), projects: count(input?.memorySummary?.projects), pendingReview: count(input?.memorySummary?.pendingReview) },
+    // The front and its workers pass through as the node reports them, bounded and without secrets:
+    // a newer kernel can show more here without a server upgrade.
+    responder: object(input?.responder) ? publicValue(input.responder) : null,
+    work: { status: text(input?.work?.status, 80) || 'unknown', activeTasks: count(input?.work?.activeTasks), waiting: count(input?.work?.waiting),
+      workers: list(input?.work?.workers), queue: list(input?.work?.queue) },
   };
+}
+const list = value => Array.isArray(value) ? value.slice(0, 20).filter(object).map(item => publicValue(item)) : [];
+
+// Owner reads the node answers through the management channel, besides memory profiles.
+const READS = new Set(['contacts', 'timeline', 'memory-changes']);
+const readArgs = {
+  contacts: input => ({ ...(text(input.contact, 1024) ? { contact: input.contact } : {}), ...page(input) }),
+  timeline: input => page(input),
+  'memory-changes': input => (text(input.before, 200) ? { before: input.before } : {}),
+};
+function page(input) {
+  const limit = Number(input.limit), before = Number(input.before);
+  return { ...(Number.isSafeInteger(limit) && limit > 0 ? { limit: Math.min(limit, 200) } : {}),
+    ...(Number.isSafeInteger(before) && before > 0 ? { before } : {}) };
 }
 
 function memoryResult(operation, args, result) {
@@ -121,7 +138,10 @@ export class KernelControl {
     return this;
   }
 
-  handles(pathname) { return /^\/api\/bots\/[^/]+\/(?:kernel|attention|memory\/profile)$/.test(pathname) || ['/internal/kernel/poll', '/internal/kernel/result'].includes(pathname); }
+  handles(pathname) {
+    return pathname === '/api/bots/status' || /^\/api\/bots\/[^/]+\/(?:kernel|attention|memory\/profile|memory\/changes|contacts|timeline)$/.test(pathname)
+      || ['/internal/kernel/poll', '/internal/kernel/result'].includes(pathname);
+  }
 
   owner(userId, botId) {
     this.accounts.human(userId);
@@ -151,6 +171,16 @@ export class KernelControl {
     if (!online) result.runtime.available = false;
     result.attention.mode ??= desiredAttention?.mode ?? null;
     return { ...result, online, updatedAt: node?.heartbeatAt ?? null, desiredAttention };
+  }
+
+  /** What each of the owner's Bots is doing now, for the Bot list. */
+  statuses(userId) {
+    this.accounts.human(userId);
+    return this.accounts.ownedBots(userId).map(bot => {
+      const { online, updatedAt, responder, work, attention } = this.snapshot(bot.id);
+      return { botId: bot.id, online, updatedAt, activity: attention.activity, responder,
+        workers: work.workers, queue: work.queue, lastDecision: attention.lastDecision };
+    });
   }
 
   observeNode(botId) {
@@ -287,6 +317,9 @@ export class KernelControl {
           throw failure(400, 'INVALID_ATTENTION_RESULT', 'Confirm the applied attention mode, rooms and revision');
         }
         receipt = { status, result: { mode: args.mode, rooms: args.rooms || {}, revision: row.revision } };
+      } else if (READS.has(row.operation)) {
+        if (!object(input.result)) throw failure(502, 'KERNEL_INVALID_RESULT', 'The Bot returned an invalid answer');
+        receipt = { status, result: publicValue(input.result) };
       } else receipt = { status, result: memoryResult(row.operation, args, input.result) };
     } else {
       const code = text(input.error?.code, 100);
@@ -316,6 +349,11 @@ export class KernelControl {
 
   readMemory(botId, { kind, id }, signal) {
     if (!['person', 'project'].includes(kind) || (id !== undefined && !text(id, 1024))) throw failure(400, 'INVALID_MEMORY_PROFILE', 'Choose a person or project profile');
+    return this.read(botId, id === undefined ? 'memory-profiles' : 'memory-profile', { kind, ...(id === undefined ? {} : { id }) }, signal);
+  }
+
+  /** One read the Bot's node answers, waiting for its result. */
+  read(botId, operation, args, signal) {
     if (!this.online(botId)) throw failure(503, 'BOT_OFFLINE', 'Connect this Bot before reading its memory');
     if (this.node(botId)?.kernelControl?.version !== 1) throw failure(503, 'KERNEL_CONTROL_UNAVAILABLE', 'This Bot node does not support memory management');
     if (signal?.aborted) throw failure(499, 'KERNEL_QUERY_CANCELLED', 'The memory query was cancelled');
@@ -323,8 +361,7 @@ export class KernelControl {
     if (this.db.prepare(`SELECT COUNT(*) AS count FROM kernel_commands WHERE bot_id=? AND operation<>'attention-set' AND status IN ('queued','leased')`).get(botId).count >= 32) {
       throw failure(429, 'KERNEL_QUEUE_FULL', 'This Bot already has too many pending memory queries');
     }
-    const args = { kind, ...(id === undefined ? {} : { id }) };
-    const commandId = this.createCommand(botId, id === undefined ? 'memory-profiles' : 'memory-profile', args, null, this.now() + this.rpcTimeoutMs);
+    const commandId = this.createCommand(botId, operation, args, null, this.now() + this.rpcTimeoutMs);
     const promise = new Promise((resolve, reject) => {
       const timer = setTimeout(() => this.failCommand(commandId, 'KERNEL_TIMEOUT'), this.rpcTimeoutMs);
       this.waiters.set(commandId, { resolve, reject, timer });
@@ -347,20 +384,28 @@ export class KernelControl {
       const input = await readJsonBody(request);
       return send(200, url.pathname === '/internal/kernel/poll' ? this.poll(input, scope) : this.result(input, scope));
     }
-    const match = url.pathname.match(/^\/api\/bots\/([^/]+)\/(kernel|attention|memory\/profile)$/);
+    if (url.pathname === '/api/bots/status') {
+      if (request.method !== 'GET') return send(405, { error: 'Use GET for Bot status' });
+      return send(200, { bots: this.statuses(userId) });
+    }
+    const match = url.pathname.match(/^\/api\/bots\/([^/]+)\/(kernel|attention|memory\/profile|memory\/changes|contacts|timeline)$/);
     let botId;
     try { botId = decodeURIComponent(match[1]); }
     catch { throw failure(400, 'INVALID_BOT_ID', 'Use a complete Bot identity'); }
     this.owner(userId, botId);
     if (match[2] === 'kernel' && request.method === 'GET') return send(200, this.snapshot(botId));
     if (match[2] === 'attention' && request.method === 'PATCH') return send(200, this.setAttention(botId, await readJsonBody(request)));
-    if (match[2] === 'memory/profile' && request.method === 'GET') {
+    if (request.method === 'GET' && !['kernel', 'attention'].includes(match[2])) {
       const controller = new AbortController();
       const disconnected = () => { if (!response.writableFinished) controller.abort(); };
       response.once('close', disconnected);
       try {
-        const id = url.searchParams.has('id') ? url.searchParams.get('id') : undefined;
-        return send(200, await this.readMemory(botId, { kind: url.searchParams.get('kind'), id }, controller.signal));
+        if (match[2] === 'memory/profile') {
+          const id = url.searchParams.has('id') ? url.searchParams.get('id') : undefined;
+          return send(200, await this.readMemory(botId, { kind: url.searchParams.get('kind'), id }, controller.signal));
+        }
+        const operation = match[2] === 'memory/changes' ? 'memory-changes' : match[2];
+        return send(200, await this.read(botId, operation, readArgs[operation](Object.fromEntries(url.searchParams)), controller.signal));
       } finally { response.off('close', disconnected); }
     }
     return send(405, { error: 'Unsupported Bot management method' });
