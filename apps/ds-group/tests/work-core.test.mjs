@@ -124,3 +124,29 @@ test('a worker question goes to the front without ending the task', async t => {
   assert.equal(f.results[0].message.kind, 'question'); assert.match(f.results[0].text, /\[task\.question\].*日期格式/s);
   assert.equal(Object.values(f.state.tasks)[0].status, 'running');
 });
+
+test('while reporting an unknown or failed result the front cannot redo the work on its own', async t => {
+  const f = await fixture(t, { timeoutMs: 20 });
+  await f.core.serveFront(f.agentFor('front'));
+  await run(f, 'front', 'dispatch_work', { title: 'budget', brief: 'b' });
+  await new Promise(resolve => setTimeout(resolve, 60));
+  const failed = Object.values(f.state.tasks)[0];
+  assert.match(f.results[0].text, /不要自行重做/);
+  f.core.resultTask = failed;
+  assert.match(await run(f, 'front', 'dispatch_work', { title: '重跑 budget', brief: 'b' }), /不能在汇报.*自行重做/);
+  assert.equal(Object.keys(f.state.tasks).length, 1);
+  // Once the person asks again, the next turn reports no result and dispatch works.
+  f.core.resultTask = null;
+  assert.match(await run(f, 'front', 'dispatch_work', { title: '重跑 budget', brief: 'b' }), /T-/);
+  assert.equal(Object.keys(f.state.tasks).length, 2);
+});
+
+test('a file listed twice, or listed and staged under the same name and content, is delivered once', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
+  const task = Object.values(f.state.tasks)[0];
+  await writeFile(path.join(task.dir, 'outputs', 'a.txt'), '1');
+  await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'ok', files: ['outputs/a.txt', path.join(task.dir, 'outputs', 'a.txt'), './outputs/a.txt'] });
+  assert.deepEqual(task.artifacts.map(file => file.name), ['a.txt']);
+});

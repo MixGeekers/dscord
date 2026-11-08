@@ -306,6 +306,7 @@ export class NativeBridge {
       const files = await prepareWorkFiles({ dataDir: this.node.directory, requestId: input.requestId, workdir: input.workdir, files: input.files });
       check();
       const workerTask = input.event.workerTask && this.state.tasks[input.event.workerTask];
+      this.core.resultTask = workerTask || null;
       this.core.origin = workerTask?.origin || { requestId: input.requestId, roomId: input.event.roomId, eventId: input.event.eventId,
         ...(input.event.threadRootId ? { threadRootId: input.event.threadRootId } : {}),
         senderId: input.event.senderId, senderName: input.event.senderName, body: input.event.body,
@@ -360,6 +361,7 @@ export class NativeBridge {
       this.run = null;
       this.waiting = null;
       this.core.origin = null;
+      this.core.resultTask = null;
       record.finishedAt = new Date().toISOString();
       await this.save();
       this.durable.add(record.requestId);

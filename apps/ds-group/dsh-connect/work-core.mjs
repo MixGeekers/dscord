@@ -61,6 +61,8 @@ export class WorkCore {
     this.served = new WeakSet();
     this.timers = new Map();
     this.origin = null;
+    // The task whose result the front is reporting in the current turn, if any.
+    this.resultTask = null;
     this.onResult = null;
     for (const task of Object.values(this.state.tasks)) {
       if (!ended(task)) mark(task, 'unknown', 'restart', { summary: '宿主重启时任务未结束，结果不确定。', finishedAt: new Date().toISOString(), notified: false, doing: undefined });
@@ -143,6 +145,11 @@ export class WorkCore {
     title = String(title || '').trim().slice(0, 120);
     brief = String(brief || '').trim();
     if (!title || !brief) return '需要 title 和 brief。';
+    const reported = this.resultTask;
+    if (reported && ['unknown', 'failed'].includes(reported.status)) {
+      // Redoing is the person's call: an unknown result may already have had its effects.
+      return `不能在汇报 ${reported.id} 的结果时自行重做。如实告诉对方结果${reported.status === 'unknown' ? '不确定' : '失败'}，问是否需要重做，等对方回复后再派工。`;
+    }
     const id = shortId();
     const origin = this.origin;
     const task = this.state.tasks[id] = { id, title, brief, ...(deliverables ? { deliverables: String(deliverables) } : {}),
@@ -219,9 +226,12 @@ export class WorkCore {
     if (status === 'failed') { await this.finish(task, { status: 'failed', summary }, { by: 'worker' }); return '已汇报失败。可以结束了。'; }
     let artifacts;
     try {
-      artifacts = Array.isArray(files) && files.length
-        ? await collectArtifacts(JSON.stringify({ text: summary || 'files', artifacts: files.slice(0, MAX_ARTIFACTS).map(file => ({ path: path.resolve(task.dir, String(file)) })) }), task.dir, { allowExternalPaths: true })
+      const paths = [...new Set((Array.isArray(files) ? files : []).map(file => path.resolve(task.dir, String(file))))];
+      artifacts = paths.length
+        ? await collectArtifacts(JSON.stringify({ text: summary || 'files', artifacts: paths.slice(0, MAX_ARTIFACTS).map(file => ({ path: file })) }), task.dir, { allowExternalPaths: true })
         : await collectStagedArtifacts(task.dir);
+      // The same file saved in two places is delivered once.
+      artifacts = [...new Map(artifacts.map(file => [`${file.name}\0${file.sha256}`, file])).values()];
     } catch (cause) {
       return `文件核对没有通过（${cause.code || cause.message}）。请确认文件存在、是普通文件，再重新调用 work_report。`;
     }
@@ -327,6 +337,7 @@ export class WorkCore {
       `工作者汇报：${task.summary || '（无）'}`,
       ...(files.length ? ['已核对并会自动附上的文件：', ...files] : []),
       '请用你自己的口吻把结果告诉对方；只转述上面的内容，不要补充没有核实的结论。',
+      ...(['failed', 'unknown'].includes(task.status) ? ['不要自行重做：如实说明情况，问对方是否需要重做，等对方回复后再派工。'] : []),
     ].join('\n');
   }
 
