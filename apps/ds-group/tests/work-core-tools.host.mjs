@@ -30,5 +30,5 @@ test('front and worker tools register as object JSON Schemas under the pinned DS
     assert.doesNotThrow(() => assertObjectJsonSchema(schema), name);
     assert.equal(schema.type, 'object', name);
   }
-  assert.deepEqual(projectToolSchema(registered.get('dispatch_work'), true).parameters.required.sort(), ['brief', 'title']);
+  assert.deepEqual(projectToolSchema(registered.get('dispatch_work'), true).parameters.required.sort(), ['audience', 'brief', 'title']);
 });

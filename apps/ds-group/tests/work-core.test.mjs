@@ -56,7 +56,7 @@ test('dispatch starts a worker with the brief and origin, and a verified report 
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
   f.core.origin = { roomId: '!r', eventId: '$e', senderId: '@ann', senderName: 'Ann', body: '帮我整理成 CSV', files: ['/in/a.xlsx'] };
-  const reply = await run(f, 'front', 'dispatch_work', { title: '整理表格', brief: '把 a.xlsx 转成 CSV' });
+  const reply = await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: '整理表格', brief: '把 a.xlsx 转成 CSV' });
   const task = Object.values(f.state.tasks)[0];
   assert.match(reply, new RegExp(task.id));
   assert.equal(task.status, 'running'); assert.equal(task.sessionId, 'worker-1');
@@ -77,7 +77,7 @@ test('dispatch starts a worker with the brief and origin, and a verified report 
 test('listed files that do not exist are refused so the worker can correct its report', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'x', brief: 'y' });
   const reply = await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: 'ok', files: ['missing.txt'] });
   assert.match(reply, /文件核对没有通过/);
   assert.equal(Object.values(f.state.tasks)[0].status, 'running');
@@ -86,7 +86,7 @@ test('listed files that do not exist are refused so the worker can correct its r
 test('a worker turn without a report is reminded once, then fails with its last words', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'x', brief: 'y' });
   await f.core.event({ id: 'worker-1' }, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text: '我做到一半' }] } } });
   await f.core.event({ id: 'worker-1' }, { type: 'turn/end', data: { reason: { kind: 'completed' } } });
   assert.match(f.prompts.at(-1).text, /还没有调用 work_report/);
@@ -97,8 +97,8 @@ test('a worker turn without a report is reminded once, then fails with its last 
 test('slots queue extra work, cancel stops a worker without a result message, and the queue moves on', async t => {
   const f = await fixture(t, { maxWorkers: 1 });
   await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: 'one', brief: '1' });
-  assert.match(await run(f, 'front', 'dispatch_work', { title: 'two', brief: '2' }), /在排队.*不要说已经开始/);
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'one', brief: '1' });
+  assert.match(await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'two', brief: '2' }), /在排队.*不要说已经开始/);
   const [first, second] = Object.values(f.state.tasks);
   assert.equal(second.status, 'queued');
   assert.match(await run(f, 'front', 'task_note', { id: second.id, text: '用中文' }), /排队中/);
@@ -116,7 +116,7 @@ test('slots queue extra work, cancel stops a worker without a result message, an
 test('timeouts stop the worker and report failure; restarts turn open work into unknown results', async t => {
   const f = await fixture(t, { timeoutMs: 20 });
   await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: 'slow', brief: 's' });
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'slow', brief: 's' });
   await new Promise(resolve => setTimeout(resolve, 60));
   assert.equal(f.results[0].task.status, 'failed'); assert.equal(f.agentFor('worker-1').cancelled, 1);
   const state = { tasks: { 'T-x': { id: 'T-x', title: 'old', status: 'running', createdAt: 'x', origin: { roomId: '!r' } } } };
@@ -129,7 +129,7 @@ test('timeouts stop the worker and report failure; restarts turn open work into 
 test('a worker question goes to the front without ending the task', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: 'q', brief: 'q' });
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'q', brief: 'q' });
   await run(f, 'worker-1', 'work_ask', { question: '用哪个日期格式？' });
   assert.equal(f.results[0].message.kind, 'question'); assert.match(f.results[0].text, /\[task\.question\].*日期格式/s);
   assert.equal(Object.values(f.state.tasks)[0].status, 'running');
@@ -138,7 +138,7 @@ test('a worker question goes to the front without ending the task', async t => {
 test('a file listed twice, or listed and staged under the same name and content, is delivered once', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'x', brief: 'y' });
   const task = Object.values(f.state.tasks)[0];
   await writeFile(path.join(task.dir, 'outputs', 'a.txt'), '1');
   await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: 'ok', files: ['outputs/a.txt', path.join(task.dir, 'outputs', 'a.txt'), './outputs/a.txt'] });
@@ -148,7 +148,7 @@ test('a file listed twice, or listed and staged under the same name and content,
 test('a worker that asked cannot deliver before the answer arrives, and a note cuts into its running turn', async t => {
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
-  await run(f, 'front', 'dispatch_work', { title: '日期', brief: '统一日期' });
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: '日期', brief: '统一日期' });
   const task = Object.values(f.state.tasks)[0];
   const worker = { id: 'worker-1' };
   await f.core.event(worker, { type: 'turn/start', data: { turn: 1 } });
@@ -185,7 +185,7 @@ test('work a Bot does for another Bot goes back through the asking Bot to the ro
     source: { kind: 'bot', role: 'request', senderSessionId: 'dev', exchangeId: 'x1' } } } });
   // 开发助理 finishes its turn before 策划 gets round to dispatching.
   dev.core.origin = null;
-  await run(planner, 'front', 'dispatch_work', { title: '写 known-issues.md', brief: '整理已知问题' });
+  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '写 known-issues.md', brief: '整理已知问题' });
   const task = Object.values(planner.state.tasks)[0];
   assert.deepEqual([task.origin.roomId, task.origin.eventId, task.origin.via], ['!r1', '$g5', '@dev:dsh.test']);
   await writeFile(path.join(task.dir, 'outputs', 'known-issues.md'), '# 已知问题\n');
@@ -219,10 +219,10 @@ test('each Bot-to-Bot request keeps its own room message, even when the asking B
   ops.core.origin = { roomId: '!r2', eventId: '$b' };
   await ask('ops', 'x2');
   ops.core.origin = null;
-  await run(planner, 'front', 'dispatch_work', { title: '运维的活', brief: 'b' });
+  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '运维的活', brief: 'b' });
   // A later room turn of 策划's own goes back to its own room.
   planner.core.origin = { roomId: '!r3', eventId: '$c' };
-  await run(planner, 'front', 'dispatch_work', { title: '自己的活', brief: 'c' });
+  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '自己的活', brief: 'c' });
   planner.core.origin = null;
   const [forOps, own] = Object.values(planner.state.tasks);
   assert.deepEqual([forOps.origin.roomId, forOps.origin.via], ['!r2', '@ops:dsh.test']);
@@ -230,7 +230,27 @@ test('each Bot-to-Bot request keeps its own room message, even when the asking B
   assert.deepEqual([own.origin.roomId, own.origin.via], ['!r3', undefined]);
   // The first request still had 开发助理's room message on record when it arrived.
   await ask('dev', 'x3');
-  await run(planner, 'front', 'dispatch_work', { title: '开发的活', brief: 'a' });
+  await run(planner, 'front', 'dispatch_work', { audience: '提出请求的人', title: '开发的活', brief: 'a' });
   const forDev = Object.values(planner.state.tasks)[2];
   assert.deepEqual([forDev.origin.roomId, forDev.origin.via], ['!r1', '@dev:dsh.test']);
+});
+
+test('a plain-language task cannot hand stack traces or raw logs to the person who asked', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.origin = { roomId: '!players', eventId: '$g13', senderId: '@xiaoman', senderName: '小满', body: '游戏崩了', files: [] };
+  await run(f, 'front', 'dispatch_work', { title: '看崩溃日志', brief: '分析 crash.log', audience: '玩家小满：通俗说明，不贴堆栈', plain: true });
+  const task = Object.values(f.state.tasks)[0];
+  assert.match(f.prompts[0].text, /## 交付对象\n玩家小满/);
+  assert.match(f.prompts[0].text, /核心会检查并退回/);
+  const leaky = await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'x',
+    reply: '是存档问题：NullReferenceException at SaveLoader.RestoreTowerState (SaveLoader.cs:212)' });
+  assert.match(leaky, /异常类型「NullReferenceException」/); assert.match(leaky, /类名\.方法名/); assert.match(leaky, /源码位置「SaveLoader\.cs:212」/);
+  await writeFile(path.join(task.dir, 'outputs', 'triage.md'), '# 分析\n2026-11-08 02:05:11 [ERROR] tower restore failed\n');
+  const file = await run(f, 'worker-1', 'work_report', { status: 'done', summary: '空引用在 SaveLoader.RestoreTowerState', reply: '这是读档时的已知问题，下个补丁会修，先别读那个存档。' });
+  assert.match(file, /交付文件 triage\.md/); assert.match(file, /日志原文/);
+  assert.equal(task.status, 'running');
+  await writeFile(path.join(task.dir, 'outputs', 'triage.md'), '# 处理建议\n先别读那个存档，下个补丁会修。\n');
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '空引用在 SaveLoader.RestoreTowerState', reply: '这是读档时的已知问题，下个补丁会修，先别读那个存档。' }), /已汇报完成/);
+  assert.equal(f.results[0].text, '「看崩溃日志」完成了。\n\n这是读档时的已知问题，下个补丁会修，先别读那个存档。');
 });
