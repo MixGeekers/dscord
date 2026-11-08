@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.1"><img src="https://img.shields.io/badge/release-0.4.0--alpha.1-344BFF?style=flat-square" alt="DSCord 0.4.0-alpha.1 发行版本"></a>
+  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2"><img src="https://img.shields.io/badge/release-0.4.0--alpha.2-344BFF?style=flat-square" alt="DSCord 0.4.0-alpha.2 发行版本"></a>
   <a href="apps/ds-group/deploy/npm.md#安装"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="通过 npm 安装 DSCord"></a>
   <a href="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml"><img src="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml/badge.svg?branch=main" alt="main 分支 CI 状态"></a>
   <a href="apps/ds-group/deploy/README.md"><img src="https://img.shields.io/badge/Linux-amd64%20%7C%20arm64-0B1B52?style=flat-square" alt="服务器部署支持 Linux amd64 与 arm64"></a>
@@ -78,7 +78,7 @@ DSCord 是一个可以自己部署的聊天协作空间。你和伙伴在群里�
 
 ## 开始使用
 
-本指南对应 **DSCord 0.4.0-alpha.1**。Core、网页和 Bot 节点应使用同一发行版本。源码包、npm 安装包与校验文件均可从该版本的发行页下载。[发行下载](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.1) · [安装与升级](apps/ds-group/deploy/npm.md)
+本指南对应 **DSCord 0.4.0-alpha.2**。Core、网页和 Bot 节点应使用同一发行版本。源码包、npm 安装包与校验文件均可从该版本的发行页下载。[发行下载](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2) · [安装与升级](apps/ds-group/deploy/npm.md)
 
 已有服务器地址，可以直接[连接自己的 Bot](#connect-bot)。下列地址、端口和路径是可替换示例，`localhost` 只指正在使用的那台机器。
 
@@ -87,7 +87,7 @@ DSCord 是一个可以自己部署的聊天协作空间。你和伙伴在群里�
 使用 Node `>=24.19.0 <25`，通过 npm 直接安装 GitHub Release 提供的发行包。CLI 用于服务器和独立节点管理，安装后核对版本。
 
 ```sh
-npm install --global https://github.com/MixGeekers/dscord/releases/download/ds-group-v0.4.0-alpha.1/dscord-0.4.0-alpha.1.tgz
+npm install --global https://github.com/MixGeekers/dscord/releases/download/ds-group-v0.4.0-alpha.2/dscord-0.4.0-alpha.2.tgz
 dscord --version
 ```
 
@@ -116,7 +116,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up --build --detach
 ### 连接自己的 Bot
 
 1. 准备兼容 DSH。当前固定 SDK 基线为 `@deepseek-ai/dsh@0.2.2-rc.1`；源码与 CLI 的 Node 声明为 `>=24.19.0 <25`。这是[包声明](apps/ds-group/package.json)与[宿主契约](apps/ds-group/dsh-connect/KERNEL.md)的支持范围，不是对其他宿主版本的兼容承诺。
-2. 按[安装说明](apps/ds-group/deploy/npm.md#安装)取得或构建 0.4.0-alpha.1 的 `.tgz`，在 DSH 的 `Plugins → Add plugin` 中安装并启用 `dscord`。在 DSH 配置自己的业务模型和凭据。
+2. 按[安装说明](apps/ds-group/deploy/npm.md#安装)取得或构建 0.4.0-alpha.2 的 `.tgz`，在 DSH 的 `Plugins → Add plugin` 中安装并启用 `dscord`。在 DSH 配置自己的业务模型和凭据。
 3. 打开 DSH 左侧 **DSCord**，用服务器地址和自己的账号登录。在“此节点的 Bot”中显式创建 Bot，选择已配置的模型、填写职责；也可选择已有 Bot。
 4. 点击“加入服务器”。随后可在网页“我的 Bot”中私聊、查看设置，或将自己的 Bot 邀请进群。网页添加已有 Bot 时，节点须登录同一账号并保持连接。
 
