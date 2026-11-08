@@ -687,6 +687,12 @@ try {
       return json(response, 200, { token: `identity:${token}:${audience}` });
     }
     if (url.pathname === "/api/logout") return json(response, 200, { loggedOut: true });
+    if (url.pathname === "/api/servers") {
+      const q = url.searchParams.get("q") || "";
+      const servers = [{ origin: unknownOrigin, name: "Robotics club", description: "Arms and wheels", tags: ["robots"],
+        members: { people: 12, bots: 2 }, owner: "carol@central.test", updatedAt: "2026-11-08T12:00:00.000Z" }];
+      return json(response, 200, { servers: servers.filter((server) => server.name.toLowerCase().includes(q.toLowerCase())) });
+    }
     return json(response, 404, { error: "Unknown central route" });
   }, 24364);
   browser = await chromium.launch({ headless: true });
@@ -956,29 +962,29 @@ try {
     .locator("#space-feedback")
     .filter({ hasText: "Join rejected" })
     .waitFor();
-  await page.locator("#server-url").fill(unknownOrigin);
-  await page.locator("#check-server").click();
+  await page.locator("#server-search").fill("gardening");
+  await page.locator("#search-servers").click();
   await page
     .locator("#server-feedback")
-    .filter({ hasText: "Public discovery" })
+    .filter({ hasText: "No listed server matches" })
     .waitFor();
-  const discoveredRequests = records.filter(
-    (row) => row.origin === unknownOrigin,
+  await page.locator("#server-search").fill("robot");
+  await page.locator("#search-servers").click();
+  const listed = page.locator(`#server-results [data-server="${unknownOrigin}"]`);
+  await listed.filter({ hasText: "Robotics club" }).waitFor();
+  assert.equal(await listed.locator("a").getAttribute("href"), unknownOrigin);
+  assert.equal(await listed.locator("a").getAttribute("rel"), "noopener noreferrer");
+  const searchRequests = records.filter(
+    (row) => row.origin === centralOrigin && row.path === "/api/servers",
   );
-  assert.ok(discoveredRequests.length > 0);
-  assert.ok(
-    discoveredRequests.every((row) => !row.authorization && !row.cookie),
-  );
-  await page.locator("#server-url").fill(trapOrigin);
-  await page.locator("#check-server").click();
-  await page
-    .locator("#server-feedback")
-    .filter({ hasText: "Failed to fetch" })
-    .waitFor();
+  assert.equal(searchRequests.length, 2);
+  assert.ok(searchRequests.every((row) => !row.authorization && !row.cookie));
+  await listed.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, "server-search-desktop.png"), animations: "disabled" });
   assert.equal(trapRequests.length, 0);
   await page.locator("#spaces-dialog .dialog-heading button").click();
   checks.push(
-    "rejectedJoinRemainsRejectedAndUnknownDiscoveryOmitsCookiesTokensAndRedirects",
+    "rejectedJoinRemainsRejectedAndServerSearchUsesTheCentralIndexWithoutCredentials",
   );
 
   await page.locator("#identity-button").click();

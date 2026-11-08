@@ -8,7 +8,7 @@ import {
   storageKey,
 } from "../web/src/session.ts";
 import { createApi, createRequest } from "../web/src/api.ts";
-import { discoverServer, roomsInSpace } from "../web/src/spaces.ts";
+import { roomsInSpace } from "../web/src/spaces.ts";
 
 class Storage {
   values = new Map();
@@ -281,31 +281,6 @@ test("home discovery validates pinned addresses and never receives a credential"
   globalThis.fetch = async () =>
     Response.json({ ...discovery, auth: { ...discovery.auth, mode: "matrix-password" } });
   await assert.rejects(discoverHome(config), /Invalid home discovery/);
-});
-
-test("unknown-server discovery uses only the entered origin and public endpoints", async () => {
-  const calls = [];
-  globalThis.fetch = async (url, options) => {
-    calls.push({ url: String(url), options });
-    return Response.json({
-      ...discovery,
-      home: {
-        ...discovery.home,
-        coreUrl: "https://advertised-untrusted.example",
-      },
-    });
-  };
-  const result = await discoverServer("https://unknown.example");
-  assert.equal(result.origin, "https://unknown.example");
-  assert.equal(calls.length, 1);
-  assert.equal(
-    calls[0].url,
-    "https://unknown.example/.well-known/dscord/client",
-  );
-  assert.equal(calls[0].options.headers, undefined);
-  assert.equal(calls[0].options.credentials, "omit");
-  assert.equal(calls[0].options.redirect, "error");
-  assert.equal(calls[0].options.referrerPolicy, "no-referrer");
 });
 
 test("space room lists never infer joined from a discovery", () => {

@@ -1267,6 +1267,7 @@ export default function App({
       />
       <SpacesDialog
         open={spacesOpen}
+        centralIssuer={homeDiscovery?.central?.issuer ?? null}
         spaces={spaces}
         selectedServer={serverName}
         onRoles={() => {
