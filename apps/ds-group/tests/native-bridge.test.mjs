@@ -223,8 +223,13 @@ test('ordinary delegation acknowledgements wait for all correlated native replie
       await event('turn/end', { turn: 3, reason: { kind: 'completed' } });
     })();
   } });
+  const steers = [];
+  f.bridge.core.ctx.sessionController = { prompt: async request => { steers.push(request); } };
   const result = await f.bridge.turn(f.request('await-delegation')); await replyWork;
   assert.equal(result.status, 'completed'); assert.equal(result.text, 'Both actual answers: 437 and 391.');
+  // Each reply's turn is told that its answer still goes to the person who asked in the room.
+  assert.equal(steers.length, 2);
+  assert.ok(steers.every(request => request.mode === 'steer' && /最后一条回复会发给/.test(request.content[0].text)));
 });
 
 test('native direct-to-user delegation does not wait for a reply to the originating Bot', async t => {

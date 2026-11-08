@@ -186,7 +186,13 @@ export class NativeBridge {
         run.seen = true;
         run.turn = run.currentTurn;
         run.partContinuation = false;
-        if (source?.replyTo) run.exchanges.delete(source.replyTo);
+        if (source?.replyTo && run.exchanges.has(source.replyTo)) {
+          run.exchanges.delete(source.replyTo);
+          // The answer to a Bot this front asked comes back as its own message; the turn
+          // it starts still ends in the reply to the person who asked in the room.
+          const note = `DSCord：上面是你为${run.sender}去问来的答复。这一轮的最后一条回复会发给${run.sender}，直接对${run.sender}说，不要回复那个 Bot。`;
+          Promise.resolve().then(() => this.core.prompt(session.id, note, 'steer')).catch(() => {});
+        }
       }
     }
     if (!run.seen) return;
@@ -335,7 +341,8 @@ export class NativeBridge {
       let resolve;
       const done = new Promise(done => { resolve = done; });
       const marker = `DSCORD_REQUEST=${input.requestId}`;
-      const run = this.run = { marker, resolve, record, text: '', exchanges: new Set() };
+      const run = this.run = { marker, resolve, record, text: '', exchanges: new Set(),
+        sender: input.event.senderName || input.event.senderId };
       Object.assign(record, { status: 'running', stage: 'working', sessionId: bot.sessionId, model: bot.model,
         contextKey: input.context?.key, source: input.context?.source,
         summary: '原生 Bot 正在处理', startedAt: new Date().toISOString() });

@@ -64,9 +64,12 @@ test('dispatch starts a worker with the brief and origin, and a verified report 
   assert.equal(f.guard({ agent: f.agentFor('worker-1'), name: 'message_bot' }) !== undefined, true);
   assert.equal(f.guard({ agent: f.agentFor('worker-1'), name: 'bash' }), undefined);
   await writeFile(path.join(task.dir, 'outputs', 'out.csv'), 'a,b\n');
-  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '转好了，2 列' }), /核对了 1 个文件/);
+  // The reply is what the requester reads; the summary is the front's record and never goes out.
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '转好了' }), /需要 reply/);
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', reply: '转好了，2 列', summary: 'openpyxl 读取 Sheet1，pandas 写出，2 列 1 行' }), /核对了 1 个文件/);
   assert.equal(task.status, 'done'); assert.equal(task.artifacts[0].name, 'out.csv'); assert.equal(task.notified, true);
   assert.equal(f.results.length, 1); assert.equal(f.results[0].text, '「整理表格」完成了。\n\n转好了，2 列');
+  assert.equal(task.summary, 'openpyxl 读取 Sheet1，pandas 写出，2 列 1 行'); assert.doesNotMatch(f.results[0].text, /openpyxl/);
   assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'again' }), /已经结束/);
   assert.equal(f.results.length, 1);
 });
@@ -75,7 +78,7 @@ test('listed files that do not exist are refused so the worker can correct its r
   const f = await fixture(t);
   await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
-  const reply = await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'ok', files: ['missing.txt'] });
+  const reply = await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: 'ok', files: ['missing.txt'] });
   assert.match(reply, /文件核对没有通过/);
   assert.equal(Object.values(f.state.tasks)[0].status, 'running');
 });
@@ -138,7 +141,7 @@ test('a file listed twice, or listed and staged under the same name and content,
   await run(f, 'front', 'dispatch_work', { title: 'x', brief: 'y' });
   const task = Object.values(f.state.tasks)[0];
   await writeFile(path.join(task.dir, 'outputs', 'a.txt'), '1');
-  await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'ok', files: ['outputs/a.txt', path.join(task.dir, 'outputs', 'a.txt'), './outputs/a.txt'] });
+  await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: 'ok', files: ['outputs/a.txt', path.join(task.dir, 'outputs', 'a.txt'), './outputs/a.txt'] });
   assert.deepEqual(task.artifacts.map(file => file.name), ['a.txt']);
 });
 
@@ -151,7 +154,7 @@ test('a worker that asked cannot deliver before the answer arrives, and a note c
   await f.core.event(worker, { type: 'turn/start', data: { turn: 1 } });
   await run(f, 'worker-1', 'work_ask', { question: 'C004 是日/月还是月/日？' });
   await writeFile(path.join(task.dir, 'outputs', 'dates_clean.csv'), 'id,date\n');
-  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '先交了' }), /还没有答复/);
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: '先交了' }), /还没有答复/);
   assert.equal(task.status, 'running');
   // Ending the turn while waiting is not a missing report.
   const before = f.prompts.length;
@@ -159,15 +162,15 @@ test('a worker that asked cannot deliver before the answer arrives, and a note c
   assert.equal(f.prompts.length, before); assert.equal(task.reminded, undefined);
   await run(f, 'front', 'task_note', { id: task.id, text: '都按日/月/年' });
   assert.equal(f.prompts.at(-1).text, '前台答复：都按日/月/年'); assert.equal(f.prompts.at(-1).mode, 'queue');
-  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '还没读' }), /还没读到/);
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: '还没读' }), /还没读到/);
   await f.core.event(worker, { type: 'turn/start', data: { turn: 2 } });
   await f.core.event(worker, { type: 'user/message', data: { content: [{ type: 'text', text: '前台答复：都按日/月/年' }] } });
   // A change while the worker is busy steers into its turn.
   await run(f, 'front', 'task_note', { id: task.id, text: '改成英文表头' });
   assert.equal(f.prompts.at(-1).mode, 'steer');
-  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: 'x' }), /还没读到/);
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: 'x' }), /还没读到/);
   await f.core.event(worker, { type: 'user/message', data: { content: [{ type: 'text', text: '前台补充：改成英文表头' }] } });
-  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', summary: '按日/月/年统一了' }), /已汇报完成/);
+  assert.match(await run(f, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: '按日/月/年统一了' }), /已汇报完成/);
   assert.equal(task.status, 'done'); assert.equal(task.waiting, undefined);
 });
 
@@ -186,7 +189,7 @@ test('work a Bot does for another Bot goes back through the asking Bot to the ro
   const task = Object.values(planner.state.tasks)[0];
   assert.deepEqual([task.origin.roomId, task.origin.eventId, task.origin.via], ['!r1', '$g5', '@dev:dsh.test']);
   await writeFile(path.join(task.dir, 'outputs', 'known-issues.md'), '# 已知问题\n');
-  await run(planner, 'worker-1', 'work_report', { status: 'done', summary: '整理了 3 个已知问题' });
+  await run(planner, 'worker-1', 'work_report', { status: 'done', reply: 'r', summary: '整理了 3 个已知问题' });
   assert.equal(planner.results.length, 0);
   assert.equal(dev.results.length, 1);
   assert.equal(dev.results[0].task.origin.eventId, '$g5');
