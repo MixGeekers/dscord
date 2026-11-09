@@ -84,6 +84,7 @@ await controller.handle({ action: 'login', serverUrl: 'https://chat.example', us
 const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>html,body,#root{height:100%;margin:0}</style></head><body><div id="root"></div><script type="module">
 import React from 'react';
+import * as JsxRuntime from 'react/jsx-runtime';
 import { createRoot } from 'react-dom/client';
 const dictionaries = new Map();
 const listeners = new Set();
@@ -96,7 +97,7 @@ const locale = {
 };
 window.fixture = { setLanguage(value) { language = value; for (const callback of listeners) callback(); } };
 window.__ModuleLoader__ = { load(descriptor) {
-  const plugin = descriptor.factory(name => name === 'react' ? React : { Button: 'button', Input: 'input', IconPluginPinwheelOutlineRegular: () => null });
+  const plugin = descriptor.factory(name => name === 'react' ? React : name === 'react/jsx-runtime' ? JsxRuntime : { Button: 'button', Input: 'input', IconPluginPinwheelOutlineRegular: () => null });
   plugin.apply({ locale, effect(setup) { disposers.push(setup()); }, slots: {
     inject(_name, setup) { return setup(); },
     register(options, component) { if (options.name === 'main') entry = { options, component }; return () => {}; },
@@ -113,6 +114,8 @@ const pageErrors = [];
 const checks = [];
 const server = await createServer({ configFile: false, root: path.join(packageRoot, 'web'), cacheDir: path.join(temporary, 'vite-cache'),
   server: { host: '127.0.0.1', port: 0 },
+  // The DSH client's modules are known up front, so a late dependency discovery cannot reload the page mid-test.
+  optimizeDeps: { include: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'] },
   plugins: [{ name: 'model-settings-fixture', configureServer(vite) {
     vite.middlewares.use(async (request, response, next) => {
       if (request.url === '/api/dscord') {

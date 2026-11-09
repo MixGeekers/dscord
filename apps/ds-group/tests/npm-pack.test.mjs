@@ -18,7 +18,7 @@ async function fixture(t) {
     'package-lock.json': JSON.stringify({ version: '0.2.0', packages: { '': { version: '0.2.0' } } }),
     LICENSE: 'MIT fixture license',
     'bin/dscord.mjs': '#!/usr/bin/env node\nconsole.log("fixture");',
-    'dsh-connect/index.mjs': 'export {};', 'dsh-connect/client.js': '// DSH client', 'cordis.patch.yml': '[]',
+    'dsh-connect/index.mjs': 'export {};', 'dsh-connect/client.js': '// DSH client', 'dsh-connect/client/index.tsx': 'export {};', 'cordis.patch.yml': '[]',
     'src/core.mjs': 'import "../web/mention-tokens.js";', 'central/service.mjs': 'export {};',
     'memory/native.mjs': 'export {};', 'service/ombre/service.py': '# memory service', 'service/ombre/LICENSE': 'MIT',
     'service/ombre/SOURCE.json': '{}', 'vendor/ds-bot/UPSTREAM.json': '{}',
@@ -73,7 +73,7 @@ test('npm packs the exact source version, runtime and licenses without internal 
     'dist/web/licenses/bundled-dependencies.txt', 'dist/admin/licenses/bundled-dependencies.txt',
     'vendor/ds-bot/NOTICE', 'dsh-plugin/runtime-dependencies-lock.json', 'dsh-connect/index.mjs',
     'dsh-connect/client.js', 'cordis.patch.yml', 'dist/admin/index.html', 'dist/admin/theme.js', 'dist/central-admin/index.html', 'deploy/synapse/dscord_guard.py', 'scripts/admin.mjs']) assert.ok(result.files.includes(name), name);
-  assert.equal(result.files.some(name => /\.local|\.npmrc|artifacts|\.env|\.vite|credentials|personal-config|实施与长程测试|vendor\/ds-bot\/README/.test(name)), false);
+  assert.equal(result.files.some(name => /\.local|\.npmrc|artifacts|\.env|\.vite|credentials|personal-config|实施与长程测试|vendor\/ds-bot\/README|dsh-connect\/client\//.test(name)), false);
   assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).private, true);
   const { stdout } = await promisify(execFile)('tar', ['-xOf', result.archive, 'package/package.json']);
   const manifest = JSON.parse(stdout);

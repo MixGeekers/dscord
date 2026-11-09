@@ -56,7 +56,8 @@ async function rewriteGuideLinks(staging, version) {
 }
 
 async function copyRuntime(root, staging, relative) {
-  if (excludedReleasePath(relative)) return;
+  // dsh-connect/client/ is the TSX source of dsh-connect/client.js; DSH only loads the built file.
+  if (excludedReleasePath(relative) || relative === 'dsh-connect/client') return;
   const source = path.join(root, relative), destination = path.join(staging, relative);
   const stat = await lstat(source);
   if (stat.isSymbolicLink()) throw new Error(`Refusing to package a symlink: ${source}`);

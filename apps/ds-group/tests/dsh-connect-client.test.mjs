@@ -47,7 +47,13 @@ function harness(oracle = () => loggedOut, language = 'zh') {
     useState: value => [value, () => {}],
     createElement: (type, props, ...children) => ({ type, props: props || {}, children: children.flat() }),
     useSyncExternalStore: (_subscribe, getSnapshot) => getSnapshot(),
+    useRef: current => ({ current }),
+    useEffect: () => {},
   };
+  const element = (type, { children, ...props } = {}, key) => ({
+    type, props: key === undefined ? props : { ...props, key }, children: children === undefined ? [] : [children].flat(Infinity),
+  });
+  const jsxRuntime = { Fragment: react.Fragment, jsx: element, jsxs: element };
   vm.runInNewContext(source, {
     window: { __ModuleLoader__: { load(value) { descriptor = value; } } },
     document: { visibilityState: 'visible' },
@@ -65,6 +71,7 @@ function harness(oracle = () => loggedOut, language = 'zh') {
   });
   const plugin = descriptor.factory(name => {
     if (name === 'react') return react;
+    if (name === 'react/jsx-runtime') return jsxRuntime;
     if (name === 'react-dom') return { createPortal: element => element };
     if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: 'button', Input: 'input', IconPluginPinwheelOutlineRegular: () => null };
     throw new Error(`Unexpected dependency ${name}`);

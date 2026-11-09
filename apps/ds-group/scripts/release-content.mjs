@@ -54,7 +54,7 @@ export function includedSourceFile(relative) {
     || /\/(?:SOURCE\.json|requirements(?:\.lock)?\.txt)$/.test(relative);
   if (pluginManifests.has(relative)) return true;
   if (['web', 'admin', 'ui'].includes(directory)) return asset.test(relative) && !relative.endsWith('.json')
-    || ['web/client-config.json', 'admin/tsconfig.json'].includes(relative)
+    || ['web/client-config.json', 'admin/tsconfig.json', 'dsh-connect/client/tsconfig.json'].includes(relative)
     || /\/licenses\/[^/]+\.txt$/.test(relative);
   return false;
 }
