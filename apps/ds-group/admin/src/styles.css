@@ -685,6 +685,10 @@ dl {
   color: var(--color-text-secondary);
   overflow-wrap: anywhere;
 }
+.admin-listing-status {
+  align-items: baseline;
+  white-space: normal;
+}
 .admin-server-number {
   display: grid;
   gap: var(--space-2);

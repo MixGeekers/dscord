@@ -126,7 +126,7 @@ export const adminMessages = {
     directoryTags: "Tags (comma-separated, up to 10)",
     directoryCentral: "List in the central server",
     directoryCentralHint:
-      "Sign in with your central account. The central server checks that this server publishes its challenge, then lists you as its owner. Your central password is used for this request only.",
+      "Submitting sends only this server's address. The central server reads the public page from that address, and its administrators decide whether the server is listed. Submit again to refresh the status shown here.",
     directoryNotListed: "Not listed in a central server yet.",
     directoryDiscovery: "How people find this server",
     discoveryPublic: "Public: in search results and by number",
@@ -136,8 +136,13 @@ export const adminMessages = {
     joinOpen: "Anyone with a central account",
     joinInvite: "Only with an invitation",
     directoryNumber: "Server number",
-    directoryListedAs:
-      "Listed. Server number {number}. Listing again updates the central index right away.",
+    listingPending:
+      "Submitted, waiting for the central administrators to review.",
+    listingListed: "Listed: people can find this server in the central index.",
+    listingRejected:
+      "The central administrators rejected this listing. Submitting again asks for another review.",
+    listingBanned: "The central server has banned this server from its index.",
+    directoryListingNote: "Note from the central administrators: {note}",
     invites: "Invitations",
     invitesHint:
       "An invitation code lets a person who has never joined sign in while the server only takes invited people. Codes last seven days; members can also make their own in the chat client.",
@@ -147,16 +152,17 @@ export const adminMessages = {
     revokeInvite: "Revoke",
     inviteByAdmin: "administrator {name}",
     inviteCreated: "Invitation {code} created.",
-    directoryCentralUsername: "Central username",
-    directoryCentralPassword: "Central password",
-    directoryListAction: "List in central",
-    directorySaveFirst: "Save the policy before listing.",
-    directoryDone: "Listed in {central} as server number {number}.",
+    directoryListAction: "Submit to central",
+    directoryListAgain: "Submit again",
+    directorySaveFirst: "Save the policy before submitting.",
+    directoryDone:
+      "Submitted to {central} as server number {number}. It is listed once the central administrators approve it.",
+    directoryDoneListed: "Listed in {central} as server number {number}.",
     directoryNoCentral:
       "This server does not trust a central server, or its public URL is not set.",
     directoryUnreachable:
       "The central server cannot be reached from this server.",
-    directoryLoginFailed: "Wrong central username or password.",
+    directoryBanned: "The central server has banned this server.",
     directoryPageUnseen:
       "The central server could not read this server's public page. Check that the public URL reaches Core.",
     role: "Role",
@@ -307,7 +313,7 @@ export const adminMessages = {
     directoryTags: "标签（逗号分隔，最多 10 个）",
     directoryCentral: "登记到中央服务器",
     directoryCentralHint:
-      "用你的中央账号登录。中央服务器确认本服务器公开了它给的挑战码后，把你记为本服务器的所属人。中央密码只用于这一次请求。",
+      "登记只把本服务器的地址报给中央。中央会从这个地址读取公开页面，由中央管理员决定是否上架。再点一次登记，可以刷新这里显示的状态。",
     directoryNotListed: "还没有在中央服务器登记。",
     directoryDiscovery: "别人怎么找到本服务器",
     discoveryPublic: "公开：能被搜索，也能凭服务器号找到",
@@ -317,8 +323,11 @@ export const adminMessages = {
     joinOpen: "任何中央账号都能直接加入",
     joinInvite: "只能凭邀请加入",
     directoryNumber: "服务器号",
-    directoryListedAs:
-      "已登记，服务器号 {number}。再登记一次会立即更新中央索引。",
+    listingPending: "已提交，等待中央管理员审核。",
+    listingListed: "已上架，别人可以在中央索引里找到本服务器。",
+    listingRejected: "中央管理员驳回了这次登记。再登记一次会重新提交审核。",
+    listingBanned: "本服务器已被中央封禁，不会出现在索引里。",
+    directoryListingNote: "中央管理员留言：{note}",
     invites: "邀请",
     invitesHint:
       "服务器只接受邀请时，从没加入过的人要凭邀请码才能登录。邀请码 7 天内有效；成员也可以在聊天网页里自己生成。",
@@ -328,14 +337,15 @@ export const adminMessages = {
     revokeInvite: "撤销",
     inviteByAdmin: "管理员 {name}",
     inviteCreated: "已生成邀请码 {code}。",
-    directoryCentralUsername: "中央用户名",
-    directoryCentralPassword: "中央密码",
     directoryListAction: "登记到中央",
+    directoryListAgain: "重新登记",
     directorySaveFirst: "请先保存策略再登记。",
-    directoryDone: "已登记到 {central}，服务器号 {number}。",
+    directoryDone:
+      "已提交到 {central}，服务器号 {number}。中央管理员审核通过后上架。",
+    directoryDoneListed: "已在 {central} 上架，服务器号 {number}。",
     directoryNoCentral: "本服务器没有接入中央服务器，或者没有设置公开地址。",
     directoryUnreachable: "本服务器连不上中央服务器。",
-    directoryLoginFailed: "中央用户名或密码不对。",
+    directoryBanned: "本服务器已被中央封禁。",
     directoryPageUnseen:
       "中央服务器读不到本服务器的公开页面。请确认公开地址能访问到 Core。",
     role: "角色",

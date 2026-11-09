@@ -51,7 +51,7 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml exec administration
 
 页面下方的“邀请”可以生成和撤销邀请码。邀请码 7 天内有效、可以多人使用，撤销后立即失效；成员也能在聊天网页的“协作服务器”里自己生成邀请码和邀请链接（`?invite=邀请码`）。邀请码存在 Core 数据目录的 `invites.sqlite`。
 
-第一次登记时，在同一页填中央账号和密码，点“登记到中央”。管理服务用这个账号登录中央，认领 `core-config.json` 里的 `publicUrl`，把中央给的挑战码写进策略，再请中央读取 Core 的 `/.well-known/dscord/server`，把中央分配的服务器号也记进策略，最后退出中央。中央密码只用于这一次请求，不保存。需要登记前先保存策略；再登记一次会让中央立即重新读取。管理服务访问中央的地址和中央的公开地址不同时（Compose 内），用 `DS_GROUP_CENTRAL_FETCH_URL` 指定前者。中央这一侧的规则见[中央服务器说明](../central/README.md#服务器索引)。
+登记到中央不需要中央账号：保存策略后点“登记到中央”，管理服务只把 `core-config.json` 里的 `publicUrl` 报给中央。Core 一直在 `/.well-known/dscord/server` 公开本服务器的介绍和它信任的中央，中央从那里读取页面。新服务器默认先进入中央的待审核队列，由中央管理员上架、驳回或封禁；中央回答的服务器号、状态和留言会记进策略，显示在这一页。再点一次“重新登记”会让中央立即重新读取并刷新状态，被驳回后再登记会重新进入审核。管理服务访问中央的地址和中央的公开地址不同时（Compose 内），用 `DS_GROUP_CENTRAL_FETCH_URL` 指定前者。中央这一侧的规则见[中央服务器说明](../central/README.md#服务器索引)。
 
 ## Bot 工作限制
 

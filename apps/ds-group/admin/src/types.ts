@@ -48,7 +48,8 @@ export interface Directory {
   name: string;
   description: string;
   tags: string[];
-  challenge: string;
+  listing: "" | "pending" | "listed" | "rejected" | "banned";
+  listingNote: string;
 }
 export interface Administrator {
   username: string;

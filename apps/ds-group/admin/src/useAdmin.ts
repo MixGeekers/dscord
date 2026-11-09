@@ -25,8 +25,8 @@ const knownErrorKeys = {
   "Keep at least one active owner": "keepOwner",
   "This server does not trust a central server": "directoryNoCentral",
   "Central server is unreachable": "directoryUnreachable",
-  "Central server refused: LOGIN_FAILED": "directoryLoginFailed",
-  "Central server refused: CHALLENGE_MISMATCH": "directoryPageUnseen",
+  "Central server refused: SERVER_BANNED": "directoryBanned",
+  "Central server refused: CENTRAL_MISMATCH": "directoryNoCentral",
   "Central server refused: SERVER_PAGE_MISSING": "directoryPageUnseen",
   "Central server refused: SERVER_UNREACHABLE": "directoryPageUnseen",
 } as const;

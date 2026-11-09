@@ -3,12 +3,12 @@ import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { localPath } from '../src/paths.mjs';
+import { localPath, packageRoot } from '../src/paths.mjs';
 import { readJsonBody } from '../src/http-json.mjs';
 import { Router } from '../src/core/router.mjs';
 import { usernameRule, publicRule } from './rules.mjs';
 import { CentralStore, failure } from './store.mjs';
-import { ServerDirectory } from './directory.mjs';
+import { LISTING_MODES, ServerDirectory } from './directory.mjs';
 import { IDENTITY_TOKEN_TTL_SECONDS, loadSigningKey, publicJwks, signIdentityToken } from './tokens.mjs';
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -38,16 +38,20 @@ export function centralOptions(config = {}) {
   const domain = config.domain ?? new URL(issuer).hostname;
   if (typeof domain !== 'string' || !/^[a-z0-9.-]+$/.test(domain)) throw new Error('domain must be a lowercase host name');
   if (config.registration !== undefined && !['open', 'closed'].includes(config.registration)) throw new Error('registration must be open or closed');
+  if (config.listing !== undefined && !LISTING_MODES.includes(config.listing)) throw new Error('listing must be review or open');
+  const admins = (config.admins ?? []).map(name => String(name).trim().toLowerCase()).filter(Boolean);
   const clientOrigins = (config.clientOrigins ?? []).map(value => origin(value, 'clientOrigins'));
   const serverFetchUrls = Object.fromEntries(Object.entries(config.serverFetchUrls ?? {})
     .map(([key, value]) => [origin(key, 'serverFetchUrls'), new URL(String(value)).href.replace(/\/$/, '')]));
-  return { issuer, domain, registration: config.registration ?? 'open', rule: usernameRule(config.usernameRule), clientOrigins, serverFetchUrls };
+  return { issuer, domain, registration: config.registration ?? 'open', listing: config.listing ?? 'review', admins,
+    rule: usernameRule(config.usernameRule), clientOrigins, serverFetchUrls };
 }
 
 /**
  * The saved configuration. On first start a deployment may seed it from the environment
- * (DSCORD_CENTRAL_ISSUER, DSCORD_CENTRAL_REGISTRATION, DSCORD_CENTRAL_CLIENT_ORIGINS, DSCORD_CENTRAL_SERVER_FETCH_URLS);
- * after that the file is the configuration.
+ * (DSCORD_CENTRAL_ISSUER, DSCORD_CENTRAL_REGISTRATION, DSCORD_CENTRAL_LISTING, DSCORD_CENTRAL_ADMINS, DSCORD_CENTRAL_CLIENT_ORIGINS,
+ * DSCORD_CENTRAL_SERVER_FETCH_URLS); after that the file is the configuration. Registration and listing are only the starting
+ * values: administrators change them in the panel, and the saved choice wins from then on.
  */
 export async function loadConfig(dataRoot, env = process.env) {
   const filename = env.DSCORD_CENTRAL_CONFIG_PATH || path.join(dataRoot, 'central-config.json');
@@ -55,7 +59,7 @@ export async function loadConfig(dataRoot, env = process.env) {
   catch (error) { if (error.code !== 'ENOENT' || !env.DSCORD_CENTRAL_ISSUER) throw error; }
   const list = value => (value || '').split(',').map(item => item.trim()).filter(Boolean);
   const config = { issuer: env.DSCORD_CENTRAL_ISSUER, registration: env.DSCORD_CENTRAL_REGISTRATION || 'open',
-    clientOrigins: list(env.DSCORD_CENTRAL_CLIENT_ORIGINS) };
+    listing: env.DSCORD_CENTRAL_LISTING || 'review', admins: list(env.DSCORD_CENTRAL_ADMINS), clientOrigins: list(env.DSCORD_CENTRAL_CLIENT_ORIGINS) };
   // origin=fetch-url pairs, for chat servers whose public origin is not reachable from where central runs.
   const fetchUrls = list(env.DSCORD_CENTRAL_SERVER_FETCH_URLS).map(pair => pair.split('=').map(part => part.trim()));
   if (fetchUrls.length) config.serverFetchUrls = Object.fromEntries(fetchUrls);
@@ -66,8 +70,11 @@ export async function loadConfig(dataRoot, env = process.env) {
 
 const REFRESH_INTERVAL_MS = 60 * 60 * 1000;
 
+const staticTypes = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8',
+  '.svg': 'image/svg+xml', '.txt': 'text/plain; charset=utf-8', '.woff2': 'font/woff2' };
+
 export async function createCentral({ dataRoot = localPath('central'), config, now = Date.now, fetch = globalThis.fetch,
-  refreshIntervalMs = REFRESH_INTERVAL_MS } = {}) {
+  refreshIntervalMs = REFRESH_INTERVAL_MS, adminWebRoot = process.env.DSCORD_CENTRAL_ADMIN_WEB_DIR || path.join(packageRoot, 'dist/central-admin') } = {}) {
   await mkdir(dataRoot, { recursive: true, mode: 0o700 });
   config ||= await loadConfig(dataRoot);
   const options = centralOptions(config);
@@ -75,10 +82,11 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   const filename = path.join(dataRoot, 'central.sqlite');
   const store = new CentralStore({ filename, rule: options.rule, domain: options.domain, now });
   await chmod(filename, 0o600);
-  const directory = new ServerDirectory({ db: store.db, store, issuer: options.issuer, now, fetch, fetchVia: options.serverFetchUrls });
+  const directory = new ServerDirectory({ db: store.db, issuer: options.issuer, now, fetch, fetchVia: options.serverFetchUrls });
   const jwks = publicJwks(key);
+  const settings = () => ({ registration: store.setting('registration', options.registration), listing: store.setting('listing', options.listing) });
   const discovery = {
-    issuer: options.issuer, domain: options.domain, registration: options.registration,
+    issuer: options.issuer, domain: options.domain, registration: settings().registration,
     usernameRule: publicRule(options.rule), globalIdFormat: `{username}@${options.domain}`,
     jwksUri: `${options.issuer}/.well-known/jwks.json`, identityTokenTtlSeconds: IDENTITY_TOKEN_TTL_SECONDS,
     deviceVerificationUri: `${options.issuer}/device`, serverIndexUri: `${options.issuer}/api/servers`,
@@ -95,11 +103,17 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     return signed;
   };
 
+  const administrator = request => {
+    const signed = person(request);
+    if (!options.admins.includes(signed.account.username)) throw failure(403, 'ADMIN_REQUIRED', 'This account does not administer this central');
+    return signed;
+  };
+
   router.get('/.well-known/dscord/central', ({ send }) => send(200, discovery));
   router.get('/.well-known/jwks.json', ({ send }) => send(200, jwks));
 
   router.post('/api/register', async ({ body, send }) => {
-    if (options.registration !== 'open') throw failure(403, 'REGISTRATION_CLOSED');
+    if (settings().registration !== 'open') throw failure(403, 'REGISTRATION_CLOSED');
     const input = await body();
     const account = await store.createHuman(input);
     send(201, { token: store.openSession(account, 'login', 'password'), account: store.view(account) });
@@ -111,8 +125,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   });
   router.post('/api/logout', ({ request, send }) => { store.closeSession(signedIn(request).session); send(200, { loggedOut: true }); });
   router.get('/api/me', ({ request, send }) => send(200, { account: store.view(signedIn(request).account) }));
-  const close = account => { store.closeAccount(account); directory.forget(account); };
-  router.delete('/api/me', ({ request, send }) => { close(person(request).account); send(200, { closed: true }); });
+  router.delete('/api/me', ({ request, send }) => { store.closeAccount(person(request).account); send(200, { closed: true }); });
 
   // The one way to sign in to a chat server, for people and Bots alike.
   router.post('/api/identity-tokens', async ({ request, body, send }) => {
@@ -139,7 +152,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   });
   router.get('/api/bots', ({ request, send }) => send(200, { bots: store.botsOf(person(request).account).map(bot => store.view(bot)) }));
   router.delete(/^\/api\/bots\/([^/]+)$/, ({ request, send }, botId) => {
-    close(store.ownedBot(person(request).account, botId));
+    store.closeAccount(store.ownedBot(person(request).account, botId));
     send(200, { closed: true });
   });
   router.get(/^\/api\/bots\/([^/]+)\/grants$/, ({ request, send }, botId) =>
@@ -172,27 +185,73 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     send(200, { token, account: store.view(account) });
   });
 
-  // The server index. Anyone may search it; a person lists a server by proving they control its origin.
+  // The server index. Anyone may search it, and any chat server may submit itself; this central's administrators decide what is listed.
   router.get('/api/servers', ({ url, response, send }) => {
     response.setHeader('Access-Control-Allow-Origin', '*');
     send(200, { servers: directory.search(Object.fromEntries(url.searchParams)) });
   });
-  router.post('/api/servers', async ({ request, body, send }) => {
-    const { account } = person(request);
-    send(200, directory.claim(account, serverOrigin((await body()).origin)));
+  router.post('/api/servers', async ({ body, send }) =>
+    send(200, { server: await directory.submit(serverOrigin((await body()).origin), { review: settings().listing === 'review' }) }));
+
+  // The administrators named in the configuration run this central from its panel at /admin.
+  router.get('/api/admin/overview', ({ request, send }) => {
+    const { account } = administrator(request);
+    send(200, { account: store.view(account), issuer: options.issuer, settings: settings(), servers: directory.counts(), accounts: store.accountCounts() });
   });
-  router.get('/api/servers/mine', ({ request, send }) => send(200, { servers: directory.mine(person(request).account) }));
-  router.post(/^\/api\/servers\/([^/]+)\/verify$/, async ({ request, send }, value) =>
-    send(200, { server: await directory.verify(person(request).account, serverOrigin(value)) }));
-  router.post(/^\/api\/servers\/([^/]+)\/refresh$/, async ({ request, send }, value) => {
-    const { account } = person(request);
+  router.post('/api/admin/settings', async ({ request, body, send }) => {
+    administrator(request);
+    const input = await body();
+    if (input.registration !== undefined) {
+      if (!['open', 'closed'].includes(input.registration)) throw failure(400, 'REGISTRATION_INVALID');
+      store.saveSetting('registration', input.registration);
+    }
+    if (input.listing !== undefined) {
+      if (!LISTING_MODES.includes(input.listing)) throw failure(400, 'LISTING_INVALID');
+      store.saveSetting('listing', input.listing);
+    }
+    discovery.registration = settings().registration;
+    send(200, { settings: settings() });
+  });
+  router.get('/api/admin/servers', ({ request, url, send }) => {
+    administrator(request);
+    send(200, { servers: directory.list({ status: url.searchParams.get('status') || '' }) });
+  });
+  router.post(/^\/api\/admin\/servers\/([^/]+)\/decision$/, async ({ request, body, send }, value) => {
+    administrator(request);
+    const input = await body();
+    send(200, { server: directory.decide(serverOrigin(value), input.status, input.note ?? '') });
+  });
+  router.post(/^\/api\/admin\/servers\/([^/]+)\/refresh$/, async ({ request, send }, value) => {
+    administrator(request);
     const server = serverOrigin(value);
-    directory.owned(account, server);
-    send(200, { server: directory.ownedView(await directory.refresh(server)) });
+    directory.existing(server);
+    send(200, { server: directory.adminView(await directory.refresh(server)) });
   });
-  router.delete(/^\/api\/servers\/([^/]+)$/, ({ request, send }, value) => {
-    directory.remove(person(request).account, serverOrigin(value));
+  router.delete(/^\/api\/admin\/servers\/([^/]+)$/, ({ request, send }, value) => {
+    administrator(request);
+    directory.remove(serverOrigin(value));
     send(200, { removed: true });
+  });
+  router.get('/api/admin/accounts', ({ request, url, send }) => {
+    administrator(request);
+    send(200, { accounts: store.accounts(Object.fromEntries(url.searchParams)) });
+  });
+  router.post(/^\/api\/admin\/accounts\/([^/]+)\/(disable|enable)$/, ({ request, send }, id, action) => {
+    const { account } = administrator(request);
+    if (id === account.id) throw failure(409, 'ADMIN_SELF', 'An administrator cannot disable their own account');
+    send(200, { account: store.view(store.setDisabled(id, action === 'disable')) });
+  });
+
+  // The panel itself: a static single-page app.
+  router.get(/^\/admin(\/.*)?$/, async ({ response }, rest = '/') => {
+    const relative = path.normalize(rest === '/' || !path.extname(rest) ? '/index.html' : rest);
+    let bytes;
+    try { bytes = await readFile(path.join(adminWebRoot, relative)); }
+    catch (error) { if (error.code === 'ENOENT' || error.code === 'EISDIR') throw failure(404, 'NOT_FOUND', 'Not found'); throw error; }
+    response.writeHead(200, { 'Content-Type': staticTypes[path.extname(relative)] || 'application/octet-stream',
+      'Cache-Control': relative === '/index.html' ? 'no-store' : 'public, max-age=31536000, immutable', 'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY', 'Referrer-Policy': 'no-referrer' });
+    response.end(bytes);
   });
 
   function cors(request, response) {
@@ -228,7 +287,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     refreshing = refreshing.then(() => directory.refreshAll()).catch(error => console.error(error));
   }, refreshIntervalMs) : undefined;
   timer?.unref();
-  return { server, store, directory, discovery, jwks, close: async () => {
+  return { server, store, directory, discovery, jwks, settings, close: async () => {
     clearInterval(timer);
     await new Promise(resolve => server.close(resolve));
     await refreshing;

@@ -1,4 +1,4 @@
-import { randomBytes, randomInt } from 'node:crypto';
+import { randomInt } from 'node:crypto';
 import { failure } from './store.mjs';
 
 export const SERVER_WELL_KNOWN = '/.well-known/dscord/server';
@@ -11,6 +11,10 @@ const MAX_RESULTS = 50;
 export const DISCOVERY = ['public', 'number', 'hidden'];
 /** How people join: anyone with a central account, or only with an invitation from the server. */
 export const JOIN = ['open', 'invite'];
+/** Where a listing stands with this central's administrators. Only listed servers are searchable. */
+export const LISTING_STATUS = ['pending', 'listed', 'rejected', 'banned'];
+/** Whether a newly submitted server waits for an administrator ('review') or is listed at once ('open'). */
+export const LISTING_MODES = ['review', 'open'];
 // Server numbers are eight digits, handed out at random so they say nothing about when a server was listed.
 const NUMBER_MIN = 10_000_000;
 const NUMBER_SPAN = 90_000_000;
@@ -35,7 +39,6 @@ export function readServerPage(value, origin) {
   if (tags.length > 10) throw failure(502, 'SERVER_PAGE_INVALID', 'At most 10 tags');
   return {
     central: typeof value.central === 'string' ? value.central : '',
-    challenge: typeof value.challenge === 'string' ? value.challenge : '',
     discovery: DISCOVERY.includes(value.discovery) ? value.discovery : 'hidden',
     page: {
       name: text(value.name, 80, 'name') || new URL(origin).hostname,
@@ -63,24 +66,18 @@ async function readJson(response) {
 }
 
 /**
- * The server index. An operator claims an origin and gets a challenge; once the chat server publishes that challenge
- * on its own origin, naming this central, the index reads the server's public page from there and keeps reading it.
- * Pulling from the origin is what proves control of the domain, so a chat server never needs a credential to be listed.
+ * The server index. A chat server submits its origin; the index reads the server's public page from that origin and
+ * keeps reading it. A page served at the origin and naming this central is the server's consent to be listed, so
+ * submitting needs no account. This central's administrators decide what is listed: new servers wait for review
+ * unless the central lists them at once.
  */
 export class ServerDirectory {
-  constructor({ db, store, issuer, now = Date.now, fetch = globalThis.fetch, fetchVia = {} }) {
-    Object.assign(this, { db, store, issuer, now, fetch, fetchVia });
-    db.exec(`CREATE TABLE IF NOT EXISTS server_claims (origin TEXT NOT NULL, account_id TEXT NOT NULL REFERENCES accounts(id), challenge TEXT NOT NULL,
-        created_at INTEGER NOT NULL, PRIMARY KEY(origin, account_id));
-      CREATE TABLE IF NOT EXISTS servers (origin TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES accounts(id), challenge TEXT NOT NULL,
-        number INTEGER NOT NULL UNIQUE, discovery TEXT NOT NULL, page_json TEXT NOT NULL, verified_at INTEGER NOT NULL, fetched_at INTEGER, last_error TEXT, checked_at INTEGER NOT NULL);`);
-  }
-
-  claim(account, origin) {
-    const existing = this.db.prepare('SELECT challenge FROM server_claims WHERE origin=? AND account_id=?').get(origin, account.id);
-    const challenge = existing?.challenge || `dscord-server-${randomBytes(18).toString('base64url')}`;
-    if (!existing) this.db.prepare('INSERT INTO server_claims VALUES (?,?,?,?)').run(origin, account.id, challenge, this.now());
-    return { origin, challenge, page: `${origin}${SERVER_WELL_KNOWN}` };
+  constructor({ db, issuer, now = Date.now, fetch = globalThis.fetch, fetchVia = {} }) {
+    Object.assign(this, { db, issuer, now, fetch, fetchVia });
+    db.exec(`CREATE TABLE IF NOT EXISTS servers (origin TEXT PRIMARY KEY, number INTEGER NOT NULL UNIQUE,
+        status TEXT NOT NULL CHECK(status IN ('pending','listed','rejected','banned')), note TEXT NOT NULL DEFAULT '',
+        discovery TEXT NOT NULL, page_json TEXT NOT NULL, submitted_at INTEGER NOT NULL, reviewed_at INTEGER,
+        fetched_at INTEGER, last_error TEXT, checked_at INTEGER NOT NULL);`);
   }
 
   async read(origin) {
@@ -99,47 +96,49 @@ export class ServerDirectory {
     return page;
   }
 
-  /** Reads the page and, when it shows the caller's challenge, makes the caller the server's owner. */
-  async verify(account, origin) {
-    const claim = this.db.prepare('SELECT challenge FROM server_claims WHERE origin=? AND account_id=?').get(origin, account.id);
-    if (!claim) throw failure(404, 'CLAIM_REQUIRED', 'Claim the server first');
-    const read = await this.read(origin);
-    if (read.challenge !== claim.challenge) throw failure(409, 'CHALLENGE_MISMATCH', 'The server page shows a different challenge');
-    const at = this.now();
+  /**
+   * Reads the page and keeps the server. A new server is pending under review and listed at once otherwise;
+   * a rejected server that submits again goes back to pending. A banned origin stays out.
+   */
+  async submit(origin, { review = true } = {}) {
     const existing = this.server(origin);
+    if (existing?.status === 'banned') throw failure(403, 'SERVER_BANNED', 'This central does not list the server');
+    const read = await this.read(origin);
+    const at = this.now();
+    const page = JSON.stringify(read.page);
     if (existing) {
-      this.db.prepare(`UPDATE servers SET owner_id=?, challenge=?, discovery=?, page_json=?, verified_at=?, fetched_at=?, last_error=NULL,
-          checked_at=? WHERE origin=?`).run(account.id, claim.challenge, read.discovery, JSON.stringify(read.page), at, at, at, origin);
+      const status = existing.status === 'rejected' ? 'pending' : existing.status;
+      this.db.prepare(`UPDATE servers SET status=?, discovery=?, page_json=?, submitted_at=CASE WHEN ?<>status THEN ? ELSE submitted_at END,
+          fetched_at=?, last_error=NULL, checked_at=? WHERE origin=?`).run(status, read.discovery, page, status, at, at, at, origin);
     } else {
       // A server keeps its number for as long as it stays in the index.
       for (;;) {
         const number = NUMBER_MIN + randomInt(NUMBER_SPAN);
         try {
-          this.db.prepare('INSERT INTO servers VALUES (?,?,?,?,?,?,?,?,NULL,?)')
-            .run(origin, account.id, claim.challenge, number, read.discovery, JSON.stringify(read.page), at, at, at);
+          this.db.prepare(`INSERT INTO servers(origin,number,status,discovery,page_json,submitted_at,reviewed_at,fetched_at,checked_at)
+              VALUES (?,?,?,?,?,?,?,?,?)`).run(origin, number, review ? 'pending' : 'listed', read.discovery, page, at, review ? null : at, at, at);
           break;
         } catch (error) { if (!String(error.message).includes('UNIQUE')) throw error; }
       }
     }
-    return this.ownedView(this.server(origin));
+    return this.submittedView(this.server(origin));
   }
 
   server(origin) { return this.db.prepare('SELECT * FROM servers WHERE origin=?').get(origin); }
 
-  owned(account, origin) {
+  existing(origin) {
     const row = this.server(origin);
-    if (!row || row.owner_id !== account.id) throw failure(404, 'SERVER_NOT_FOUND');
+    if (!row) throw failure(404, 'SERVER_NOT_FOUND');
     return row;
   }
 
-  /** Reads the page again. A page that no longer shows the owner's challenge, or cannot be read, stops refreshing the listing. */
+  /** Reads the page again. A page that cannot be read keeps the last listing, which drops out of search once stale. */
   async refresh(origin) {
     const row = this.server(origin);
     if (!row) return undefined;
     const at = this.now();
     try {
       const read = await this.read(origin);
-      if (read.challenge !== row.challenge) throw failure(409, 'CHALLENGE_MISMATCH', 'The server page shows a different challenge');
       this.db.prepare('UPDATE servers SET discovery=?, page_json=?, fetched_at=?, last_error=NULL, checked_at=? WHERE origin=?')
         .run(read.discovery, JSON.stringify(read.page), at, at, origin);
     } catch (error) {
@@ -150,51 +149,64 @@ export class ServerDirectory {
   }
 
   async refreshAll() {
-    for (const { origin } of this.db.prepare('SELECT origin FROM servers ORDER BY checked_at').all()) await this.refresh(origin);
+    for (const { origin } of this.db.prepare("SELECT origin FROM servers WHERE status IN ('pending','listed') ORDER BY checked_at").all()) {
+      await this.refresh(origin);
+    }
   }
 
-  remove(account, origin) {
-    const row = this.server(origin);
-    const removed = (row?.owner_id === account.id ? this.db.prepare('DELETE FROM servers WHERE origin=?').run(origin).changes : 0)
-      + this.db.prepare('DELETE FROM server_claims WHERE origin=? AND account_id=?').run(origin, account.id).changes;
-    if (!removed) throw failure(404, 'SERVER_NOT_FOUND');
+  /** An administrator's decision: list, reject or ban a server, with an optional note the server's operators can read. */
+  decide(origin, status, note = '') {
+    if (!['listed', 'rejected', 'banned'].includes(status)) throw failure(400, 'LISTING_STATUS_INVALID');
+    if (typeof note !== 'string' || note.length > 500) throw failure(400, 'NOTE_INVALID');
+    this.existing(origin);
+    this.db.prepare('UPDATE servers SET status=?, note=?, reviewed_at=? WHERE origin=?').run(status, note.trim(), this.now(), origin);
+    return this.adminView(this.server(origin));
   }
 
-  /** A closed account's listings and claims go with it. */
-  forget(account) {
-    this.db.prepare('DELETE FROM servers WHERE owner_id=?').run(account.id);
-    this.db.prepare('DELETE FROM server_claims WHERE account_id=?').run(account.id);
+  /** Drops a server from the index, number and all; a removed server may submit again and gets a new number. */
+  remove(origin) {
+    if (!this.db.prepare('DELETE FROM servers WHERE origin=?').run(origin).changes) throw failure(404, 'SERVER_NOT_FOUND');
   }
 
-  ownedView(row) {
-    return { origin: row.origin, verified: true, number: row.number, challenge: row.challenge, discovery: row.discovery, ...JSON.parse(row.page_json),
-      verifiedAt: iso(row.verified_at), fetchedAt: iso(row.fetched_at), checkedAt: iso(row.checked_at), lastError: row.last_error };
+  /** What a submitting server learns: its number and where its listing stands. */
+  submittedView(row) {
+    return { origin: row.origin, number: row.number, status: row.status, note: row.note, discovery: row.discovery };
   }
 
-  /** The servers the caller owns, and the claims they have not verified yet. */
-  mine(account) {
-    const owned = this.db.prepare('SELECT * FROM servers WHERE owner_id=? ORDER BY origin').all(account.id).map(row => this.ownedView(row));
-    const pending = this.db.prepare(`SELECT c.origin, c.challenge, c.created_at FROM server_claims c LEFT JOIN servers s ON s.origin=c.origin
-        WHERE c.account_id=? AND (s.owner_id IS NULL OR s.owner_id<>?) ORDER BY c.origin`).all(account.id, account.id)
-      .map(row => ({ origin: row.origin, verified: false, challenge: row.challenge, claimedAt: iso(row.created_at) }));
-    return [...owned, ...pending];
+  adminView(row) {
+    return { ...this.submittedView(row), ...JSON.parse(row.page_json), submittedAt: iso(row.submitted_at), reviewedAt: iso(row.reviewed_at),
+      fetchedAt: iso(row.fetched_at), checkedAt: iso(row.checked_at), lastError: row.last_error };
+  }
+
+  /** Every server in the index for its administrators, newest submissions first, optionally of one status. */
+  list({ status = '' } = {}) {
+    if (status && !LISTING_STATUS.includes(status)) throw failure(400, 'LISTING_STATUS_INVALID');
+    const rows = status ? this.db.prepare('SELECT * FROM servers WHERE status=? ORDER BY submitted_at DESC').all(status)
+      : this.db.prepare('SELECT * FROM servers ORDER BY submitted_at DESC').all();
+    return rows.map(row => this.adminView(row));
+  }
+
+  counts() {
+    return Object.fromEntries(LISTING_STATUS.map(status => [status,
+      this.db.prepare('SELECT COUNT(*) AS n FROM servers WHERE status=?').get(status).n]));
   }
 
   /**
-   * Servers read within the last three days. A query of digits finds the server with that number, unless it is hidden;
+   * Listed servers read within the last three days. A query of digits finds the server with that number, unless it is hidden;
    * otherwise only public servers are searched, and every word must appear in the name, description or tags.
    */
   search({ q = '', tag = '', limit = 20 } = {}) {
     const query = String(q).trim();
     const fresh = this.now() - LISTING_STALE_MS;
     if (/^\d{8}$/.test(query)) {
-      const row = this.db.prepare("SELECT * FROM servers WHERE number=? AND discovery IN ('public','number') AND fetched_at>=?").get(Number(query), fresh);
+      const row = this.db.prepare("SELECT * FROM servers WHERE number=? AND status='listed' AND discovery IN ('public','number') AND fetched_at>=?")
+        .get(Number(query), fresh);
       if (row) return [this.publicView(row, JSON.parse(row.page_json))];
     }
     const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     const wanted = String(tag).trim().toLowerCase();
     const size = Math.min(Math.max(Number.parseInt(limit, 10) || 20, 1), MAX_RESULTS);
-    return this.db.prepare("SELECT * FROM servers WHERE discovery='public' AND fetched_at>=?").all(fresh)
+    return this.db.prepare("SELECT * FROM servers WHERE status='listed' AND discovery='public' AND fetched_at>=?").all(fresh)
       .map(row => ({ row, page: JSON.parse(row.page_json) }))
       .filter(({ page }) => {
         if (wanted && !page.tags.includes(wanted)) return false;
@@ -207,7 +219,6 @@ export class ServerDirectory {
   }
 
   publicView(row, page) {
-    return { origin: row.origin, number: row.number, ...page, owner: this.store.view(this.store.account(row.owner_id))?.globalId,
-      updatedAt: iso(row.fetched_at) };
+    return { origin: row.origin, number: row.number, ...page, updatedAt: iso(row.fetched_at) };
   }
 }

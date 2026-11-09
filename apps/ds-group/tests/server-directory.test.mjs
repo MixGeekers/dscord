@@ -13,7 +13,7 @@ const CORE_URL = 'https://chat.test';
 const ADMIN_PASSWORD = 'synthetic-admin-password-1234';
 
 async function chatServer(t) {
-  const central = await startCentral(t);
+  const central = await startCentral(t, { admins: ['curator'] });
   const matrix = await startMatrix(t, 'chat.test');
   const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-directory-'));
   await writeServerMetadata(root, 'chat.test');
@@ -43,45 +43,55 @@ async function chatServer(t) {
 
 test('the directory section of the policy is validated; a new server is hidden and open to join', () => {
   const policy = emptyPolicy('chat.test');
-  assert.deepEqual(policy.directory, { discovery: 'hidden', join: 'open', name: '', description: '', tags: [], challenge: '', number: null });
+  assert.deepEqual(policy.directory, { discovery: 'hidden', join: 'open', name: '', description: '', tags: [], number: null, listing: '', listingNote: '' });
   const checked = validatePolicy({ ...policy, directory: { discovery: 'number', join: 'invite', name: ' Robotics ', description: 'Line one\nline two',
-    tags: ['Robots', 'robots', 'arm'], challenge: 'dscord-server-abc_DEF-1', number: 12345678 } }, 'chat.test');
+    tags: ['Robots', 'robots', 'arm'], number: 12345678, listing: 'rejected', listingNote: ' Add rules ' } }, 'chat.test');
   assert.deepEqual(checked.directory, { discovery: 'number', join: 'invite', name: 'Robotics', description: 'Line one\nline two', tags: ['robots', 'arm'],
-    challenge: 'dscord-server-abc_DEF-1', number: 12345678 });
+    number: 12345678, listing: 'rejected', listingNote: 'Add rules' });
   assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, join: 'anyone' } }, 'chat.test'), /join/);
   assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, number: 123 } }, 'chat.test'), /number/);
-  assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, challenge: 'anything' } }, 'chat.test'), /challenge/);
+  assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, listing: 'approved' } }, 'chat.test'), /listing/);
   assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, tags: Array(11).fill('x') } }, 'chat.test'), /10 directory tags/);
   assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, discovery: 'yes' } }, 'chat.test'), /discovery/);
 });
 
-test('an operator lists the chat server from its administration service and anyone finds it in the central index', async t => {
+test('an operator submits the chat server with one click; central reviews it and anyone then finds it in the index', async t => {
   const f = await chatServer(t);
-  assert.equal((await fetch(`${f.base}/.well-known/dscord/server`)).status, 404, 'nothing is published before listing starts');
+  const curator = await f.central.person('curator', 'Curator');
+  const page = await (await fetch(`${f.base}/.well-known/dscord/server`)).json();
+  assert.deepEqual([page.central, page.origin, page.discovery, page.challenge], [f.central.url, CORE_URL, 'hidden', undefined],
+    'the page is always published and names the central server it trusts');
 
-  await f.central.person('alice', 'Alice');
-  await f.central.person('bob', 'Bob');
   const governance = new Governance({ dataRoot: f.root, serverName: 'chat.test' });
   const before = await governance.read();
   await governance.save({ ...before, directory: { ...before.directory, discovery: 'public', name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'] } });
 
-  const wrong = await f.adminCall('directory/list', { method: 'POST', token: f.adminToken, body: { username: 'alice', password: 'wrong password' } });
-  assert.deepEqual([wrong.status, wrong.value.error], [409, 'Central server refused: LOGIN_FAILED']);
-  const listed = await f.adminCall('directory/list', { method: 'POST', token: f.adminToken, body: { username: 'alice', password: 'alice-password' } });
+  const listed = await f.adminCall('directory/list', { method: 'POST', token: f.adminToken });
   assert.equal(listed.status, 200, JSON.stringify(listed.value));
   assert.equal(listed.value.central, f.central.url);
-  assert.match(listed.value.policy.directory.challenge, /^dscord-server-/);
-  assert.equal(listed.value.server.origin, CORE_URL);
-
-  const page = await (await fetch(`${f.base}/.well-known/dscord/server`)).json();
-  assert.deepEqual({ ...page, challenge: undefined }, { schemaVersion: 1, central: f.central.url, origin: CORE_URL, challenge: undefined, discovery: 'public',
-    name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'], join: 'open', members: { people: 0, bots: 0 } });
-  assert.equal(listed.value.policy.directory.number, listed.value.server.number, 'the server keeps the number central gave it');
+  assert.deepEqual([listed.value.server.origin, listed.value.server.status], [CORE_URL, 'pending']);
+  const { number } = listed.value.server;
+  assert.deepEqual([listed.value.policy.directory.number, listed.value.policy.directory.listing], [number, 'pending'],
+    'the server keeps the number and standing central gave it');
   const client = await (await fetch(`${f.base}/.well-known/dscord/client`)).json();
-  assert.deepEqual(client.directory, { join: 'open', number: listed.value.server.number });
+  assert.deepEqual(client.directory, { join: 'open', number });
+  assert.deepEqual((await f.central.api('/api/servers?q=robot')).servers, [], 'nothing is searchable before review');
 
+  const enc = encodeURIComponent(CORE_URL);
+  await f.central.api(`/api/admin/servers/${enc}/decision`, { method: 'POST', token: curator, body: { status: 'rejected', note: 'Say what the club does' } });
+  const rejected = await f.adminCall('directory/list', { method: 'POST', token: f.adminToken });
+  assert.deepEqual([rejected.value.server.status, rejected.value.policy.directory.listingNote], ['pending', 'Say what the club does'],
+    'submitting again after a rejection asks for another review and brings back the note');
+  await f.central.api(`/api/admin/servers/${enc}/decision`, { method: 'POST', token: curator, body: { status: 'listed' } });
+  const approved = await f.adminCall('directory/list', { method: 'POST', token: f.adminToken });
+  assert.equal(approved.value.policy.directory.listing, 'listed');
   const found = await f.central.api('/api/servers?q=robot');
-  assert.deepEqual(found.servers.map(server => [server.origin, server.name, server.owner]), [[CORE_URL, 'Robotics club', `alice@${f.central.domain}`]]);
+  assert.deepEqual(found.servers.map(server => [server.origin, server.name, server.number]), [[CORE_URL, 'Robotics club', number]]);
+
+  await f.central.api(`/api/admin/servers/${enc}/decision`, { method: 'POST', token: curator, body: { status: 'banned' } });
+  const banned = await f.adminCall('directory/list', { method: 'POST', token: f.adminToken });
+  assert.deepEqual([banned.status, banned.value.error], [409, 'Central server refused: SERVER_BANNED']);
+  await f.central.api(`/api/admin/servers/${enc}/decision`, { method: 'POST', token: curator, body: { status: 'listed' } });
 
   // Hiding the server in its own policy takes it out of search at the next read.
   const current = await governance.read();

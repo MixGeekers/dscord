@@ -28,6 +28,7 @@ COPY --chown=node:node central ./central
 COPY --chown=node:node deploy/synapse ./deploy/synapse
 COPY --from=frontend --chown=node:node /app/dist/web ./dist/web
 COPY --from=frontend --chown=node:node /app/dist/admin ./dist/admin
+COPY --from=frontend --chown=node:node /app/dist/central-admin ./dist/central-admin
 
 # A fresh central-data volume takes this directory's owner, so the central server can write its key and accounts.
 RUN mkdir -p /central && chown node:node /central

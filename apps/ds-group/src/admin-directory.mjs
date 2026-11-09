@@ -4,25 +4,21 @@ import { policyError } from "./governance.mjs";
 
 const centralError = (status, value) => {
   const code = typeof value?.code === "string" ? value.code : "CENTRAL_FAILED";
-  // Wrong credentials and refused claims are the operator's to fix; anything else is the central server's.
+  // A refusal about this server's page or standing is the operator's to fix; anything else is the central server's.
   return policyError(
-    status === 401 || status === 403 || status === 409 || status === 400
-      ? 409
-      : 502,
+    status >= 400 && status < 500 ? 409 : 502,
     `Central server refused: ${code}`,
   );
 };
 
 /**
- * Lists this chat server in its central server's index. An operator signs in with their central account; the
- * administration service claims this server's public origin, writes the central server's challenge into the policy
- * (Core then serves it at /.well-known/dscord/server), asks the central server to read that page, and signs out.
- * The central account's password and session never leave this request.
+ * Submits this chat server to its central server's index. No central account is involved: the central server reads
+ * this server's public page from its origin, and that page naming the central server is the consent to be listed.
+ * Submitting again re-reads the page and brings back the current number and standing, which the policy keeps.
  */
 export async function listInCentral({
   dataRoot,
   governance,
-  input,
   fetch = globalThis.fetch,
   centralFetchUrl = process.env.DS_GROUP_CENTRAL_FETCH_URL,
 }) {
@@ -43,53 +39,31 @@ export async function listInCentral({
     throw policyError(409, "This server does not trust a central server");
   const origin = new URL(config.publicUrl).origin;
   const base = (centralFetchUrl || issuer).replace(/\/$/, "");
-  const call = async (route, { token, body } = {}) => {
-    let response;
-    try {
-      response = await fetch(base + route, {
-        method: "POST",
-        redirect: "error",
-        signal: AbortSignal.timeout(20000),
-        headers: {
-          "Content-Type": "application/json",
-          ...(token ? { Authorization: `Bearer ${token}` } : {}),
-        },
-        body: JSON.stringify(body ?? {}),
-      });
-    } catch {
-      throw policyError(502, "Central server is unreachable");
-    }
-    const value = await response.json().catch(() => ({}));
-    if (!response.ok) throw centralError(response.status, value);
-    return value;
-  };
-  const username = typeof input?.username === "string" ? input.username : "";
-  const password = typeof input?.password === "string" ? input.password : "";
-  const { token } = await call("/api/login", { body: { username, password } });
+  let response;
   try {
-    const { challenge } = await call("/api/servers", {
-      token,
-      body: { origin },
+    response = await fetch(`${base}/api/servers`, {
+      method: "POST",
+      redirect: "error",
+      signal: AbortSignal.timeout(20000),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ origin }),
     });
-    const policy = await governance.read();
-    if (policy.directory.challenge !== challenge)
-      await governance.save({
-        ...policy,
-        directory: { ...policy.directory, challenge },
-      });
-    const { server } = await call(
-      `/api/servers/${encodeURIComponent(origin)}/verify`,
-      { token },
-    );
-    // Members pass the number central handed out on, so others can find the server by it.
-    const current = await governance.read();
-    if (current.directory.number !== server.number)
-      await governance.save({
-        ...current,
-        directory: { ...current.directory, number: server.number },
-      });
-    return { central: issuer, server, policy: await governance.read() };
-  } finally {
-    await call("/api/logout", { token }).catch(() => {});
+  } catch {
+    throw policyError(502, "Central server is unreachable");
   }
+  const value = await response.json().catch(() => ({}));
+  if (!response.ok) throw centralError(response.status, value);
+  const { server } = value;
+  // Members pass the number on, so others can find the server by it.
+  const current = await governance.read();
+  await governance.save({
+    ...current,
+    directory: {
+      ...current.directory,
+      number: server.number,
+      listing: server.status,
+      listingNote: server.note || "",
+    },
+  });
+  return { central: issuer, server, policy: await governance.read() };
 }

@@ -93,9 +93,13 @@ export function emptyPolicy(domain) {
   };
 }
 
-/** How this server shows up in its central server's index. Nothing is published until a challenge is set. */
+/**
+ * How this server shows up in its central server's index. Core always publishes the page; the server is in the index
+ * once it has submitted itself, and `listing` and `listingNote` keep what the central server last answered.
+ */
 export const DIRECTORY_DISCOVERY = ["public", "number", "hidden"];
 export const DIRECTORY_JOIN = ["open", "invite"];
+export const DIRECTORY_LISTING = ["", "pending", "listed", "rejected", "banned"];
 export function emptyDirectory() {
   return {
     discovery: "hidden",
@@ -103,8 +107,9 @@ export function emptyDirectory() {
     name: "",
     description: "",
     tags: [],
-    challenge: "",
     number: null,
+    listing: "",
+    listingNote: "",
   };
 }
 
@@ -135,9 +140,9 @@ function validateDirectory(value = emptyDirectory()) {
   const tags = value.tags ?? [];
   if (!Array.isArray(tags) || tags.length > 10)
     throw policyError(400, "Use at most 10 directory tags");
-  const challenge = directoryText(value.challenge, "challenge", 128);
-  if (challenge && !/^dscord-server-[A-Za-z0-9_-]+$/.test(challenge))
-    throw policyError(400, "Invalid directory challenge");
+  const listing = value.listing ?? "";
+  if (!DIRECTORY_LISTING.includes(listing))
+    throw policyError(400, "Invalid directory listing");
   return {
     discovery: value.discovery,
     join: value.join,
@@ -150,8 +155,9 @@ function validateDirectory(value = emptyDirectory()) {
           .filter(Boolean),
       ),
     ],
-    challenge,
     number,
+    listing,
+    listingNote: directoryText(value.listingNote, "listing note", 500),
   };
 }
 

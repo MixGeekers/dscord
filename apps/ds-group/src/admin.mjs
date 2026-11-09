@@ -152,11 +152,11 @@ export async function createAdmin({
             dataRoot,
             governance,
             fetch,
-            input: await readJsonBody(request),
           });
           auth.audit(actor.username, "directory.list", {
             central: listing.central,
             number: listing.server.number,
+            status: listing.server.status,
           });
           return send(200, listing);
         }

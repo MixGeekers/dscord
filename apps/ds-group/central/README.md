@@ -2,7 +2,7 @@
 
 中央服务器只管三件事：账号、签发身份、服务器索引。它不存消息和文件，不转发聊天，也不持有任何 Matrix token。聊天服务器（Core + Synapse）接入一台中央，人和 Bot 都用中央账号登录聊天服务器。整体方案见项目文档《DSCord 中央身份与聊天服务器方案》。
 
-已经完成：账号、账号规则、身份令牌、Bot 节点授权（第一期），聊天服务器只认中央账号（第二期，见下文“聊天服务器怎样接入”），服务器索引（第四期，见下文“服务器索引”）。
+已经完成：账号、账号规则、身份令牌、Bot 节点授权（第一期），聊天服务器只认中央账号（第二期，见下文“聊天服务器怎样接入”），服务器索引和中央管理面板（第四期，见下文“服务器索引”和“管理面板”）。
 
 ## 运行
 
@@ -16,6 +16,8 @@ npm run central
 {
   "issuer": "https://id.example.org",
   "registration": "open",
+  "listing": "review",
+  "admins": ["alice"],
   "usernameRule": { "minLength": 3, "maxLength": 32, "reserved": ["admin", "root", "system", "dscord", "central"] },
   "clientOrigins": ["https://client.example.org"]
 }
@@ -24,11 +26,14 @@ npm run central
 - `issuer`：中央的公开地址，必须是 HTTPS 的裸 origin（本机调试可用 `http://localhost`）。
 - `domain`：全局身份 ID 里 `@` 后面的部分，默认取 `issuer` 的主机名。
 - `registration`：`open` 允许自助注册，`closed` 关闭。
+- `listing`：新登记的聊天服务器怎么处理。`review`（默认）等管理员审核后才上架，`open` 读到页面就直接上架。
+- `admins`：中央管理员的用户名列表。管理员用自己的中央账号登录 `/admin` 管理面板。
+- `registration` 和 `listing` 只是初始值：管理员在面板里改过之后，以面板里保存的为准（存在 `central.sqlite`）。
 - `usernameRule`：账号规则，见下。
 - `clientOrigins`：允许跨域调用中央接口的网页客户端 origin。
 - `serverFetchUrls`：可选，`{ "聊天服务器 origin": "中央实际访问的地址" }`。中央所在网络访问不到某台聊天服务器的公开地址时（例如同一个 Compose 里），索引改从这里读它的公开页面。
 
-配置文件不存在时，可以用环境变量 `DSCORD_CENTRAL_ISSUER`、`DSCORD_CENTRAL_REGISTRATION`、`DSCORD_CENTRAL_CLIENT_ORIGINS`（逗号分隔）、`DSCORD_CENTRAL_SERVER_FETCH_URLS`（逗号分隔的 `origin=地址`）在第一次启动时生成它；之后以文件为准，改环境变量不再生效。Compose 自带的 `central` 服务就是这样启动的。
+配置文件不存在时，可以用环境变量 `DSCORD_CENTRAL_ISSUER`、`DSCORD_CENTRAL_REGISTRATION`、`DSCORD_CENTRAL_LISTING`、`DSCORD_CENTRAL_ADMINS`（逗号分隔的用户名）、`DSCORD_CENTRAL_CLIENT_ORIGINS`（逗号分隔）、`DSCORD_CENTRAL_SERVER_FETCH_URLS`（逗号分隔的 `origin=地址`）在第一次启动时生成它；之后以文件为准，改环境变量不再生效。Compose 自带的 `central` 服务就是这样启动的。
 
 数据目录里的 `signing-key.json` 是签名私钥（权限 `0600`），`central.sqlite` 是账号库。备份时两者都要保留；换掉私钥后，聊天服务器要重新读取公钥。
 
@@ -62,22 +67,27 @@ npm run central
 | `POST /api/device/approve` | Bot 的所属人 | `{userCode, botId}` 把这个节点授权给自己的 Bot |
 | `POST /api/device/token` | Bot 节点 | `{deviceCode}` 换取 Bot 的节点会话；所属人批准前返回 `AUTHORIZATION_PENDING`，只能换一次 |
 | `GET /api/servers?q=&tag=&limit=` | 任何人（不用令牌，允许任意网页跨域） | 搜索服务器索引；`q` 是 8 位数字时按服务器号精确查找 |
-| `POST /api/servers` | 人 | `{origin}` 认领一台聊天服务器，返回挑战码 `challenge`；同一个人再认领拿到同一个挑战码 |
-| `POST /api/servers/:origin/verify` | 人 | 读取 `origin` 的公开页面，挑战码对得上就把这台服务器记在自己名下；第一次验证时分配服务器号 |
-| `GET /api/servers/mine` | 人 | 自己名下的服务器（含最近一次读取的结果）和还没验证的认领 |
-| `POST /api/servers/:origin/refresh` / `DELETE /api/servers/:origin` | 服务器所属人 | 立即重新读取 / 从索引里删除 |
+| `POST /api/servers` | 任何人（不用令牌） | `{origin}` 把一台聊天服务器报给索引。中央去读它的公开页面，返回 `{server: {origin, number, status, note, discovery}}`；再报一次会重新读取页面、返回当前状态 |
+| `GET /api/admin/overview` | 中央管理员 | 待审、已上架等数量，账号数量，当前设置 |
+| `POST /api/admin/settings` | 中央管理员 | `{registration?, listing?}` 修改注册和登记审核设置 |
+| `GET /api/admin/servers?status=` | 中央管理员 | 索引里的全部服务器（含待审、驳回、封禁），可按状态筛选 |
+| `POST /api/admin/servers/:origin/decision` | 中央管理员 | `{status: listed\|rejected\|banned, note?}` 上架、驳回或封禁，留言会随下次登记带回给该服务器 |
+| `POST /api/admin/servers/:origin/refresh` / `DELETE /api/admin/servers/:origin` | 中央管理员 | 立即重新读取 / 从索引里移除（收回服务器号） |
+| `GET /api/admin/accounts?q=&kind=&status=` | 中央管理员 | 按用户名或显示名查账号 |
+| `POST /api/admin/accounts/:id/disable` / `enable` | 中央管理员 | 停用（立即结束它的所有会话，不能再登录或拿身份令牌）/ 恢复账号；不能停用自己 |
 
 ## 服务器索引
 
 索引只记每台聊天服务器自己公开的介绍，不存它的成员、房间和消息。
 
-- 登记：服务器管理员在中央认领服务器的 origin，拿到一个挑战码，把它写进聊天服务器的策略（管理后台“服务器目录”一步完成）。Core 随即在 `GET /.well-known/dscord/server` 公开这个挑战码、它信任的中央地址和自己的介绍。中央从这个 origin 读到页面、核对 `central` 是自己、挑战码和认领人的一致，就把认领人记为所属人。
-- 为什么是中央去读，而不是聊天服务器推送：能在这个 origin 上放出挑战码，就证明管理员控制这个域名；聊天服务器也就不需要在中央持有任何凭据。后验证的人接手所属权，因为能改页面的人才是实际的控制者。
-- 服务器号：第一次验证成功时，中央随机分配一个 8 位数字作为服务器号（像 QQ 群号），之后一直不变；从索引里删除后再登记会拿到新号码。
-- 发现方式由聊天服务器自己决定（页面里的 `discovery`）：`public` 能被关键词搜到，也能凭号码找到；`number` 关键词搜不到，只能输入完整号码找到；`hidden` 搜不到也查不到号码，所属人仍能在 `GET /api/servers/mine` 看到。
+- 登记：聊天服务器把自己的 origin 报给中央（管理后台“服务器目录”里点一次“登记到中央”），不需要任何中央账号。中央从这个 origin 读 `GET /.well-known/dscord/server`，页面写明信任的中央就是自己、`origin` 也对得上，就收下这台服务器。
+- 为什么不需要账号：页面是从这个 origin 读到的，又点名信任这台中央，本身就说明控制这个域名的人愿意被登记。聊天服务器在中央不持有任何凭据，也没有“所属人”；要改介绍就改自己的策略，中央下次读取时更新；不想被找到就把发现方式改成 `hidden`。
+- 审核：新服务器默认是“待审核”，中央管理员在管理面板里上架、驳回或封禁，可以附一句留言。`listing: open` 时读到页面就直接上架。被驳回的服务器再登记一次会回到待审核；被封禁的再登记会被拒绝（`SERVER_BANNED`），直到管理员解除封禁。只有已上架的服务器能被搜到。
+- 服务器号：第一次登记时，中央随机分配一个 8 位数字作为服务器号（像 QQ 群号），之后一直不变；管理员把它从索引里移除后再登记会拿到新号码。
+- 发现方式由聊天服务器自己决定（页面里的 `discovery`）：`public` 能被关键词搜到，也能凭号码找到；`number` 关键词搜不到，只能输入完整号码找到；`hidden` 搜不到也查不到号码，中央管理员仍能在面板里看到。
 - 加入方式也由聊天服务器决定（`join`）：`open` 任何中央账号都能直接加入，`invite` 只接受凭邀请码加入。中央只把它显示在搜索结果里，真正的检查在聊天服务器上。
-- 刷新：中央每小时重新读一遍所有登记过的服务器（读取不跟随跳转，页面上限 64 KB）。页面读不到、换了挑战码或改信任别的中央时，保留上次的介绍并记下错误；连续三天没读到成功的页面，就从搜索结果里消失，读到后自动恢复。发现方式的改动在下次读取后生效。
-- 搜索：只列三天内读到过的服务器。`q` 是 8 位数字时先按号码精确查找（`public` 和 `number` 的服务器）；否则只搜 `public` 的服务器，`q` 里的每个词都要出现在名称、简介或标签里（不分大小写），按人数排序；`tag` 按标签精确筛选；`limit` 默认 20，最多 50。结果含服务器号和加入方式，不含挑战码。
+- 刷新：中央每小时重新读一遍待审和已上架的服务器（读取不跟随跳转，页面上限 64 KB）。页面读不到或改信任别的中央时，保留上次的介绍并记下错误；连续三天没读到成功的页面，就从搜索结果里消失，读到后自动恢复。发现方式的改动在下次读取后生效。
+- 搜索：只列已上架、三天内读到过的服务器。`q` 是 8 位数字时先按号码精确查找（`public` 和 `number` 的服务器）；否则只搜 `public` 的服务器，`q` 里的每个词都要出现在名称、简介或标签里（不分大小写），按人数排序；`tag` 按标签精确筛选；`limit` 默认 20，最多 50。结果含服务器号和加入方式。
 
 公开页面的格式（`schemaVersion: 1`）：
 
@@ -86,7 +96,6 @@ npm run central
   "schemaVersion": 1,
   "central": "https://id.example.org",
   "origin": "https://chat.example.org",
-  "challenge": "dscord-server-…",
   "discovery": "public",
   "name": "机器人社",
   "description": "机械臂和小车",
@@ -97,6 +106,17 @@ npm run central
 ```
 
 `origin` 必须和登记的 origin 一致；`name` 最多 80 字，`description` 最多 500 字，`tags` 最多 10 个、每个最多 32 字。
+
+## 管理面板
+
+中央自己在 `/admin` 提供管理面板（构建产物在 `dist/central-admin`，可用 `DSCORD_CENTRAL_ADMIN_WEB_DIR` 指定别的目录）。用配置里 `admins` 列出的中央账号登录，其他账号会被拒绝。面板有四页：
+
+- 概览：待审核和已上架的服务器数、人和 Bot 的账号数、当前设置。
+- 服务器：按状态（待审核、已上架、已驳回、已封禁）查看所有登记过的服务器，看它的介绍、发现方式、加入方式、人数和最近一次读取结果；可以上架、驳回、封禁、解除封禁、立即重新读取或移除，并给该服务器的管理员留言。
+- 账号：按用户名或显示名、类型、状态查账号，停用或恢复。
+- 设置：新服务器要不要先审核，账号注册是否开放。
+
+管理员名单只能在配置文件里改，面板里不能增删。
 
 ## 身份令牌
 

@@ -1,16 +1,15 @@
 /**
  * This chat server's public page for the central index: what it is called, what it is about and how big it is.
- * It names the central server it trusts and carries the challenge an operator got from that central server,
- * which is how the central server knows the operator controls this origin.
+ * Served from this server's own origin and naming the central server it trusts, the page is what lets that central
+ * server list it.
  */
 export function serverPage({ policy, identity, participants }) {
   const { directory } = policy;
-  if (!directory.challenge || !identity.central || !identity.home.coreUrl) return undefined;
+  if (!identity.central || !identity.home.coreUrl) return undefined;
   return {
     schemaVersion: 1,
     central: identity.central.issuer,
     origin: identity.home.coreUrl,
-    challenge: directory.challenge,
     discovery: directory.discovery,
     name: directory.name || identity.home.serverName || new URL(identity.home.coreUrl).hostname,
     description: directory.description,

@@ -214,6 +214,13 @@ export function DeploymentPanel({ admin }: Props) {
   );
 }
 
+const listingKeys = {
+  pending: "listingPending",
+  listed: "listingListed",
+  rejected: "listingRejected",
+  banned: "listingBanned",
+} as const;
+
 export function DirectoryPanel({ admin }: Props) {
   const {
     t,
@@ -320,66 +327,53 @@ export function DirectoryPanel({ admin }: Props) {
                 <strong>{directory.number}</strong>
               </div>
             )}
-            <p className="admin-muted">
-              {directory.number !== null
-                ? t("directoryListedAs", { number: directory.number })
+            <p
+              className={`admin-status-note admin-listing-status ${directory.listing === "listed" ? "is-good" : directory.listing ? "is-warning" : ""}`}
+              role="status"
+            >
+              {directory.listing
+                ? t(listingKeys[directory.listing])
                 : t("directoryNotListed")}
             </p>
+            {directory.listingNote && (
+              <p className="admin-muted">
+                {t("directoryListingNote", { note: directory.listingNote })}
+              </p>
+            )}
             <p className="admin-muted">{t("directoryCentralHint")}</p>
-            <form
-              onSubmit={(event) => {
-                event.preventDefault();
-                const form = event.currentTarget;
-                const input = new FormData(form);
-                void action(async () => {
-                  const result = await api<{
-                    central: string;
-                    server: { number: number };
-                    policy: Policy;
-                  }>("directory/list", "POST", {
-                    username: input.get("username"),
-                    password: input.get("password"),
-                  });
-                  form.reset();
-                  if (application)
-                    acceptPolicy({ policy: result.policy, application });
-                  setNotice(
-                    t("directoryDone", {
-                      central: result.central,
-                      number: result.server.number,
-                    }),
-                  );
-                });
-              }}
-            >
-              <Field label={t("directoryCentralUsername")}>
-                <Input
-                  name="username"
-                  autoComplete="off"
-                  required
-                  disabled={readOnly}
-                />
-              </Field>
-              <Field label={t("directoryCentralPassword")}>
-                <Input
-                  name="password"
-                  type="password"
-                  autoComplete="off"
-                  required
-                  disabled={readOnly}
-                />
-              </Field>
-              {dirty && (
-                <p className="admin-muted">{t("directorySaveFirst")}</p>
-              )}
+            {dirty && <p className="admin-muted">{t("directorySaveFirst")}</p>}
+            <div className="admin-actions">
               <Button
                 variant="default"
-                type="submit"
                 disabled={readOnly || busy || dirty}
+                onClick={() =>
+                  void action(async () => {
+                    const result = await api<{
+                      central: string;
+                      server: { number: number; status: string };
+                      policy: Policy;
+                    }>("directory/list", "POST");
+                    if (application)
+                      acceptPolicy({ policy: result.policy, application });
+                    setNotice(
+                      t(
+                        result.server.status === "listed"
+                          ? "directoryDoneListed"
+                          : "directoryDone",
+                        {
+                          central: result.central,
+                          number: result.server.number,
+                        },
+                      ),
+                    );
+                  })
+                }
               >
-                {t("directoryListAction")}
+                {directory.listing
+                  ? t("directoryListAgain")
+                  : t("directoryListAction")}
               </Button>
-            </form>
+            </div>
           </div>
         </div>
       </section>

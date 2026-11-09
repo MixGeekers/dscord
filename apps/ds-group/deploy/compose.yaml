@@ -31,6 +31,9 @@ services:
       DSCORD_CENTRAL_PORT: "18200"
       DSCORD_CENTRAL_ISSUER: ${DS_GROUP_CENTRAL_URL:-http://localhost:18200}
       DSCORD_CENTRAL_REGISTRATION: ${DSCORD_CENTRAL_REGISTRATION:-open}
+      # New chat servers wait for an administrator's review unless this is "open". Administrators sign in at /admin.
+      DSCORD_CENTRAL_LISTING: ${DSCORD_CENTRAL_LISTING:-review}
+      DSCORD_CENTRAL_ADMINS: ${DSCORD_CENTRAL_ADMINS:-}
       DSCORD_CENTRAL_CLIENT_ORIGINS: ${DSCORD_CENTRAL_CLIENT_ORIGINS:-${DS_GROUP_PUBLIC_URL:-http://localhost:18100}}
       # The server index reads this chat server's public page through the Compose network.
       DSCORD_CENTRAL_SERVER_FETCH_URLS: ${DSCORD_CENTRAL_SERVER_FETCH_URLS:-${DS_GROUP_PUBLIC_URL:-http://localhost:18100}=http://core:18100}

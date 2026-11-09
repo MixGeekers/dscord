@@ -188,7 +188,7 @@ test('first start seeds the saved configuration from the environment and the fil
   const env = { DSCORD_CENTRAL_ISSUER: 'https://id.example.org', DSCORD_CENTRAL_REGISTRATION: 'closed',
     DSCORD_CENTRAL_CLIENT_ORIGINS: 'https://chat-a.example.org, https://chat-b.example.org' };
   const seeded = await loadConfig(root, env);
-  assert.deepEqual(seeded, { issuer: 'https://id.example.org', registration: 'closed',
+  assert.deepEqual(seeded, { issuer: 'https://id.example.org', registration: 'closed', listing: 'review', admins: [],
     clientOrigins: ['https://chat-a.example.org', 'https://chat-b.example.org'] });
   const filename = path.join(root, 'central-config.json');
   assert.deepEqual(JSON.parse(await readFile(filename, 'utf8')), seeded);
@@ -201,69 +201,108 @@ test('first start seeds the saved configuration from the environment and the fil
 });
 
 
-const serverPage = (origin, challenge, extra = {}) => ({ schemaVersion: 1, central: 'https://id.example.org', origin, challenge, discovery: 'public',
+const PAGE_A = `${CHAT_A}/.well-known/dscord/server`;
+const serverPage = (origin, extra = {}) => ({ schemaVersion: 1, central: 'https://id.example.org', origin, discovery: 'public',
   name: 'Chat A', description: 'A place for robotics', tags: ['Robotics', 'hardware'], join: 'open',
   members: { people: 12, bots: 3 }, ...extra });
 
-test('a person lists a chat server by publishing its challenge on the server origin; the index reads the page from there', async t => {
-  const { call, register, pages, fetched } = await fixture(t);
+test('a chat server submits itself by origin, with no account; the index reads its page from there and waits for review', async t => {
+  const { call, register, pages, fetched } = await fixture(t, { admins: ['carol'] });
+  const root = await register('carol');
   const alice = await register('alice');
-  const bob = await register('bob');
-  const enc = encodeURIComponent(CHAT_A);
-  assert.equal((await call('POST', '/api/servers', { token: alice.token, body: { origin: `${CHAT_A}/path` } })).body.code, 'SERVER_ORIGIN_INVALID');
-  const claim = (await call('POST', '/api/servers', { token: alice.token, body: { origin: CHAT_A } })).body;
-  assert.match(claim.challenge, /^dscord-server-/);
-  assert.equal(claim.page, `${CHAT_A}/.well-known/dscord/server`);
-  assert.equal((await call('POST', '/api/servers', { token: alice.token, body: { origin: CHAT_A } })).body.challenge, claim.challenge, 'a claim keeps its challenge');
+  const submit = origin => call('POST', '/api/servers', { body: { origin } });
+  assert.equal((await submit(`${CHAT_A}/path`)).body.code, 'SERVER_ORIGIN_INVALID');
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_UNREACHABLE');
+  pages.set(PAGE_A, new Response('{}', { status: 404 }));
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_PAGE_MISSING');
+  pages.set(PAGE_A, serverPage(CHAT_A, { central: 'https://other.example.org' }));
+  assert.equal((await submit(CHAT_A)).body.code, 'CENTRAL_MISMATCH');
+  pages.set(PAGE_A, serverPage(CHAT_B));
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_PAGE_INVALID');
 
-  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'SERVER_UNREACHABLE');
-  pages.set(claim.page, new Response('{}', { status: 404 }));
-  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'SERVER_PAGE_MISSING');
-  pages.set(claim.page, serverPage(CHAT_A, claim.challenge, { central: 'https://other.example.org' }));
-  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'CENTRAL_MISMATCH');
-  pages.set(claim.page, serverPage(CHAT_A, 'something else'));
-  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'CHALLENGE_MISMATCH');
-  pages.set(claim.page, serverPage(CHAT_B, claim.challenge));
-  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: alice.token })).body.code, 'SERVER_PAGE_INVALID');
-  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: bob.token })).body.code, 'CLAIM_REQUIRED');
-
-  pages.set(claim.page, serverPage(CHAT_A, claim.challenge));
-  const verified = await call('POST', `/api/servers/${enc}/verify`, { token: alice.token });
-  assert.equal(verified.status, 200, JSON.stringify(verified.body));
-  assert.deepEqual([verified.body.server.name, verified.body.server.tags, verified.body.server.members], ['Chat A', ['robotics', 'hardware'], { people: 12, bots: 3 }]);
+  pages.set(PAGE_A, serverPage(CHAT_A));
+  const submitted = await submit(CHAT_A);
+  assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
+  const { number } = submitted.body.server;
+  assert.match(String(number), /^\d{8}$/, 'central gives each server an eight-digit number');
+  assert.deepEqual(submitted.body.server, { origin: CHAT_A, number, status: 'pending', note: '', discovery: 'public' });
   assert.ok(fetched.every(entry => entry.redirect === 'error'), 'the index never follows a redirect away from the origin');
+  assert.deepEqual((await call('GET', '/api/servers?q=robot')).body.servers, [], 'a pending server is not searchable');
+  assert.deepEqual((await call('GET', `/api/servers?q=${number}`)).body.servers, [], 'not even by number');
+
+  // Only the configured administrators see and decide.
+  assert.equal((await call('GET', '/api/admin/servers', { token: alice.token })).body.code, 'ADMIN_REQUIRED');
+  assert.equal((await call('GET', '/api/admin/servers')).status, 401);
+  const overview = (await call('GET', '/api/admin/overview', { token: root.token })).body;
+  assert.deepEqual([overview.settings, overview.servers.pending, overview.accounts.people], [{ registration: 'open', listing: 'review' }, 1, 2]);
+  const queue = (await call('GET', '/api/admin/servers?status=pending', { token: root.token })).body.servers;
+  assert.deepEqual(queue.map(server => [server.origin, server.name, server.tags, server.members.people]), [[CHAT_A, 'Chat A', ['robotics', 'hardware'], 12]]);
+  const enc = encodeURIComponent(CHAT_A);
+  const decide = (status, note) => call('POST', `/api/admin/servers/${enc}/decision`, { token: root.token, body: { status, note } });
+  assert.equal((await decide('pending')).body.code, 'LISTING_STATUS_INVALID');
+  assert.equal((await decide('listed')).body.server.status, 'listed');
 
   const found = (await call('GET', '/api/servers?q=ROBOT')).body.servers;
-  assert.deepEqual(found.map(server => [server.origin, server.owner, server.join]), [[CHAT_A, 'alice@id.example.org', 'open']]);
-  assert.match(String(found[0].number), /^\d{8}$/, 'central gives each listed server an eight-digit number');
-  assert.equal(verified.body.server.number, found[0].number);
-  assert.equal(found[0].challenge, undefined, 'search never shows the challenge');
+  assert.deepEqual(found.map(server => [server.origin, server.number, server.join]), [[CHAT_A, number, 'open']]);
+  assert.equal(found[0].status, undefined, 'search shows listed servers without their review state');
   assert.deepEqual((await call('GET', '/api/servers?q=robotics+gardening')).body.servers, [], 'every word must match');
   assert.equal((await call('GET', '/api/servers?tag=hardware')).body.servers.length, 1);
-  assert.deepEqual((await call('GET', '/api/servers/mine', { token: alice.token })).body.servers.map(server => [server.origin, server.verified]), [[CHAT_A, true]]);
-  assert.equal((await call('POST', `/api/servers/${enc}/refresh`, { token: bob.token })).body.code, 'SERVER_NOT_FOUND', 'only the owner refreshes');
+  assert.equal((await submit(CHAT_A)).body.server.status, 'listed', 'submitting again re-reads the page and keeps the decision');
 
-  // Whoever proves control of the origin later takes the listing over.
-  const bobClaim = (await call('POST', '/api/servers', { token: bob.token, body: { origin: CHAT_A } })).body;
-  assert.deepEqual((await call('GET', '/api/servers/mine', { token: bob.token })).body.servers.map(server => server.verified), [false]);
-  pages.set(claim.page, serverPage(CHAT_A, bobClaim.challenge));
-  assert.equal((await call('POST', `/api/servers/${enc}/verify`, { token: bob.token })).status, 200);
-  assert.equal((await call('GET', '/api/servers')).body.servers[0].owner, 'bob@id.example.org');
-  assert.deepEqual((await call('GET', '/api/servers/mine', { token: alice.token })).body.servers.map(server => server.verified), [false]);
-  assert.equal((await call('DELETE', `/api/servers/${enc}`, { token: bob.token })).status, 200);
+  // A rejected server may ask again; a banned one may not.
+  assert.equal((await decide('rejected', 'Add a description of the rules')).body.server.note, 'Add a description of the rules');
   assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
+  const again = (await submit(CHAT_A)).body.server;
+  assert.deepEqual([again.status, again.number, again.note], ['pending', number, 'Add a description of the rules']);
+  await decide('banned');
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_BANNED');
+  assert.equal((await decide('listed')).body.server.status, 'listed', 'lifting a ban lists the server again');
+
+  assert.equal((await call('DELETE', `/api/admin/servers/${enc}`, { token: root.token })).status, 200);
+  assert.deepEqual((await call('GET', '/api/admin/servers', { token: root.token })).body.servers, []);
+  assert.notEqual((await submit(CHAT_A)).body.server.status, undefined, 'a removed server can submit again');
 });
 
-test('the index keeps reading listed servers; hidden, changed or silent servers drop out of search', async t => {
-  const { call, register, pages, central, advance } = await fixture(t);
-  const alice = await register('alice');
-  const claim = (await call('POST', '/api/servers', { token: alice.token, body: { origin: CHAT_A } })).body;
-  let page = serverPage(CHAT_A, claim.challenge);
-  pages.set(claim.page, () => page);
-  await call('POST', `/api/servers/${encodeURIComponent(CHAT_A)}/verify`, { token: alice.token });
+test('administrators can list new servers at once and close registration; settings outlive the configuration', async t => {
+  const { call, register, pages } = await fixture(t, { admins: ['carol'] });
+  const root = await register('carol');
+  assert.equal((await call('POST', '/api/admin/settings', { token: root.token, body: { listing: 'later' } })).body.code, 'LISTING_INVALID');
+  const saved = await call('POST', '/api/admin/settings', { token: root.token, body: { listing: 'open', registration: 'closed' } });
+  assert.deepEqual(saved.body.settings, { registration: 'closed', listing: 'open' });
+  assert.equal((await call('GET', '/.well-known/dscord/central')).body.registration, 'closed');
+  assert.equal((await call('POST', '/api/register', { body: { username: 'late', password: 'correct horse' } })).body.code, 'REGISTRATION_CLOSED');
+  pages.set(PAGE_A, serverPage(CHAT_A));
+  assert.equal((await call('POST', '/api/servers', { body: { origin: CHAT_A } })).body.server.status, 'listed');
+  assert.equal((await call('GET', '/api/servers')).body.servers.length, 1);
+});
+
+test('administrators disable and restore accounts, but not their own', async t => {
+  const { call, register } = await fixture(t, { admins: ['carol'] });
+  const root = await register('carol');
+  const alice = await register('alice', { displayName: '爱丽丝' });
+  await call('POST', '/api/bots', { token: alice.token, body: { username: 'helper' } });
+  const listed = (await call('GET', '/api/admin/accounts?q=%E7%88%B1', { token: root.token })).body.accounts;
+  assert.deepEqual(listed.map(account => [account.username, account.status, account.servers]), [['alice', 'active', 0]]);
+  assert.deepEqual((await call('GET', '/api/admin/accounts?kind=bot', { token: root.token })).body.accounts.map(account => [account.username, account.owner]),
+    [['helper', 'alice@id.example.org']]);
+  const id = listed[0].id;
+  assert.equal((await call('POST', `/api/admin/accounts/${listed[0].id}/disable`, { token: root.token })).body.account.status, 'disabled');
+  assert.equal((await call('GET', '/api/me', { token: alice.token })).status, 401, 'disabling ends the sessions');
+  assert.equal((await call('POST', '/api/login', { body: { username: 'alice', password: 'correct horse' } })).body.code, 'ACCOUNT_DISABLED');
+  assert.equal((await call('GET', '/api/admin/overview', { token: root.token })).body.accounts.disabled, 1);
+  assert.equal((await call('POST', `/api/admin/accounts/${id}/enable`, { token: root.token })).body.account.status, 'active');
+  assert.equal((await call('POST', '/api/login', { body: { username: 'alice', password: 'correct horse' } })).status, 200);
+  const rootId = (await call('GET', '/api/admin/accounts?q=carol', { token: root.token })).body.accounts[0].id;
+  assert.equal((await call('POST', `/api/admin/accounts/${rootId}/disable`, { token: root.token })).body.code, 'ADMIN_SELF');
+});
+
+test('the index keeps reading servers; hidden or silent servers drop out of search', async t => {
+  const { call, register, pages, central, advance } = await fixture(t, { listing: 'open' });
+  let page = serverPage(CHAT_A);
+  pages.set(PAGE_A, () => page);
+  const { number } = (await call('POST', '/api/servers', { body: { origin: CHAT_A } })).body.server;
   assert.equal((await call('GET', '/api/servers')).body.servers.length, 1);
 
-  const { number } = (await call('GET', '/api/servers')).body.servers[0];
   page = { ...page, name: 'Chat A renamed', discovery: 'number' };
   await central.directory.refreshAll();
   assert.deepEqual((await call('GET', '/api/servers?q=chat')).body.servers, [], 'a server found only by number stays out of keyword search');
@@ -272,41 +311,56 @@ test('the index keeps reading listed servers; hidden, changed or silent servers 
   page = { ...page, discovery: 'hidden' };
   await central.directory.refreshAll();
   assert.deepEqual((await call('GET', `/api/servers?q=${number}`)).body.servers, [], 'a hidden server cannot be found even by number');
-  assert.equal((await call('GET', '/api/servers/mine', { token: alice.token })).body.servers[0].number, number, 'the owner still sees its number');
   page = { ...page, discovery: 'public' };
   await central.directory.refreshAll();
   assert.equal((await call('GET', '/api/servers')).body.servers[0].name, 'Chat A renamed');
 
-  // A page that stops showing the owner's challenge keeps the last listing until it goes stale.
-  page = { ...page, challenge: 'someone else', name: 'Hijacked' };
+  // A page that can no longer be read keeps the last listing until it goes stale.
+  pages.set(PAGE_A, new Response('{}', { status: 404 }));
   await central.directory.refreshAll();
-  const mine = (await call('GET', '/api/servers/mine', { token: alice.token })).body.servers[0];
-  assert.deepEqual([mine.name, mine.lastError], ['Chat A renamed', 'CHALLENGE_MISMATCH']);
+  const kept = central.directory.adminView(central.directory.server(CHAT_A));
+  assert.deepEqual([kept.name, kept.lastError], ['Chat A renamed', 'SERVER_PAGE_MISSING']);
   advance(3 * 24 * 60 * 60 * 1000 + 1);
   assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
-
-  page = { ...page, challenge: claim.challenge, name: 'Chat A' };
-  const refreshed = await call('POST', `/api/servers/${encodeURIComponent(CHAT_A)}/refresh`, { token: alice.token });
-  assert.equal(refreshed.body.server.lastError, null);
+  pages.set(PAGE_A, () => page);
+  page = { ...page, name: 'Chat A' };
+  await call('POST', '/api/servers', { body: { origin: CHAT_A } });
   assert.equal((await call('GET', '/api/servers')).body.servers[0].name, 'Chat A');
-
-  // Closing the account takes its listings with it.
-  assert.equal((await call('DELETE', '/api/me', { token: alice.token })).status, 200);
-  assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
+  await register('alice');
 });
 
 test('search ranks by people, caps results and is open to any web page', async t => {
-  const { call, register, pages } = await fixture(t, { serverFetchUrls: { [CHAT_B]: 'http://chat-b.internal:8080' } });
-  const alice = await register('alice');
+  const { call, pages } = await fixture(t, { listing: 'open', serverFetchUrls: { [CHAT_B]: 'http://chat-b.internal:8080' } });
   for (const [origin, base, people] of [[CHAT_A, CHAT_A, 3], [CHAT_B, 'http://chat-b.internal:8080', 40]]) {
-    const claim = (await call('POST', '/api/servers', { token: alice.token, body: { origin } })).body;
-    pages.set(`${base}/.well-known/dscord/server`, serverPage(origin, claim.challenge, { name: origin, members: { people, bots: 0 } }));
-    assert.equal((await call('POST', `/api/servers/${encodeURIComponent(origin)}/verify`, { token: alice.token })).status, 200);
+    pages.set(`${base}/.well-known/dscord/server`, serverPage(origin, { name: origin, members: { people, bots: 0 } }));
+    assert.equal((await call('POST', '/api/servers', { body: { origin } })).status, 200);
   }
   const all = await call('GET', '/api/servers');
   assert.deepEqual(all.body.servers.map(server => server.origin), [CHAT_B, CHAT_A]);
   assert.equal(all.headers.get('access-control-allow-origin'), '*');
-  assert.equal((await call('GET', '/api/servers/mine', { token: alice.token })).headers.get('access-control-allow-origin'), null);
   assert.deepEqual((await call('GET', '/api/servers?limit=1')).body.servers.map(server => server.origin), [CHAT_B]);
   assert.equal((await call('GET', '/.well-known/dscord/central')).body.serverIndexUri, 'https://id.example.org/api/servers');
+});
+
+test('the central server serves its administration panel at /admin', async t => {
+  const web = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-admin-'));
+  t.after(() => rm(web, { recursive: true, force: true }));
+  const { writeFile, mkdir } = await import('node:fs/promises');
+  await mkdir(path.join(web, 'assets'));
+  await writeFile(path.join(web, 'index.html'), '<!doctype html><title>panel</title>');
+  await writeFile(path.join(web, 'assets', 'app.js'), 'export {}');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-'));
+  const central = await createCentral({ dataRoot: root, refreshIntervalMs: 0, adminWebRoot: web, config: { issuer: 'https://id.example.org' } });
+  await new Promise(resolve => central.server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await central.close(); await rm(root, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${central.server.address().port}`;
+  for (const route of ['/admin', '/admin/', '/admin/servers']) {
+    const response = await fetch(base + route);
+    assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8', route);
+    assert.match(await response.text(), /panel/);
+  }
+  const script = await fetch(`${base}/admin/assets/app.js`);
+  assert.equal(script.headers.get('content-type'), 'text/javascript; charset=utf-8');
+  assert.equal((await fetch(`${base}/admin/assets/missing.js`)).status, 404);
+  assert.equal((await fetch(`${base}/admin/..%2f..%2fcentral.sqlite`)).status, 404);
 });
