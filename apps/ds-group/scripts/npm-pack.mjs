@@ -91,6 +91,8 @@ export async function packNpm({ root = packageRoot, output = path.join(root, '.l
     name: 'dscord', version, type: 'module',
     license: source.license,
     description: 'DSCord collaboration server and independent Bot nodes, with a prebuilt chat PWA',
+    // DSH shows this in its plugin list.
+    icon: './icon.png',
     engines: { ...source.engines, dsh: dshEngineRange() },
     // The node protocol range this kernel speaks; a node picks the newest release that covers its server's protocol.
     dscord: { protocol: { ...KERNEL_PROTOCOL } },
@@ -98,7 +100,7 @@ export async function packNpm({ root = packageRoot, output = path.join(root, '.l
     exports: { '.': './dsh-connect/index.mjs', './client': './dsh-connect/client.js', './package.json': './package.json' },
     dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web', immediately: true } },
     bin: { dscord: 'bin/dscord.mjs' },
-    files: ['bin', 'src', 'central', 'memory', 'service/ombre', 'scripts', 'web/mention-tokens.js', 'dist/web', 'dist/admin', 'dist/central-admin', 'deploy/synapse', 'dsh-plugin', 'dsh-connect', 'cordis.patch.yml', 'vendor/ds-bot', '模型配置与迁移.md', ...legalFiles],
+    files: ['bin', 'src', 'central', 'memory', 'service/ombre', 'scripts', 'web/mention-tokens.js', 'dist/web', 'dist/admin', 'dist/central-admin', 'deploy/synapse', 'dsh-plugin', 'dsh-connect', 'cordis.patch.yml', 'vendor/ds-bot', 'icon.png', '模型配置与迁移.md', ...legalFiles],
     dependencies: source.dependencies,
     repository: { type: 'git', url: 'git+https://github.com/MixGeekers/dscord.git', directory: 'apps/ds-group' },
     homepage: 'https://github.com/MixGeekers/dscord',
@@ -120,6 +122,7 @@ export async function packNpm({ root = packageRoot, output = path.join(root, '.l
     await chmod(path.join(staging, 'bin/dscord.mjs'), 0o755);
     await writeFile(path.join(staging, 'package.json'), JSON.stringify(manifest, null, 2) + '\n');
     await copyFile(path.join(root, 'deploy/npm.md'), path.join(staging, 'README.md'));
+    await copyFile(path.join(root, 'web/icons/mark-128.png'), path.join(staging, 'icon.png'));
     await rewriteGuideLinks(staging, version);
     const { stdout } = await execute('npm', ['pack', '--json', '--ignore-scripts', '--pack-destination', path.resolve(output)], {
       cwd: staging, maxBuffer: 4 * 1024 * 1024,

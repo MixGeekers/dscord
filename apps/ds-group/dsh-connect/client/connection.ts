@@ -19,7 +19,7 @@ type ClientError = Error & {
 };
 
 const SHORT_ACTIONS = ["status", "login", "kernel-state", "memory-profile"];
-const MODEL_ERRORS: Record<string, MessageKey> = {
+const ERROR_KEYS: Record<string, MessageKey> = {
   MODEL_POLICY_DENIED: "serverPolicyDenied",
   MODEL_OUTPUT_LIMIT: "serverOutputLimit",
   MISSING_CREDENTIAL: "missingCredential",
@@ -30,6 +30,9 @@ const MODEL_ERRORS: Record<string, MessageKey> = {
   MODEL_PROVIDER_UNAVAILABLE: "modelUnavailable",
   MODEL_PROFILE_INVALID: "providerInvalid",
   DSCORD_KERNEL_CONFLICT: "kernelConflict",
+  CONNECT_KEY_INVALID: "connectKeyInvalid",
+  CONNECT_CODE_UNKNOWN: "connectKeyUnknown",
+  CONNECT_CODE_EXPIRED: "connectKeyExpired",
 };
 
 /**
@@ -96,7 +99,7 @@ export function createConnectionModel(t: Translate) {
       };
       if (!result.ok) {
         const key = result.error?.code
-          ? MODEL_ERRORS[result.error.code]
+          ? ERROR_KEYS[result.error.code]
           : undefined;
         throw key
           ? clientError(key)
@@ -242,12 +245,7 @@ export function createConnectionModel(t: Translate) {
     getSnapshot: () => snapshot,
     subscribe,
     refresh,
-    login: (
-      serverUrl: string,
-      user: string,
-      password: string,
-      inviteCode = "",
-    ) => mutate("login", { serverUrl, user, password, ...invite(inviteCode) }),
+    login: (key: string) => mutate("login", { key }),
     addServer: (serverUrl: string, inviteCode = "") =>
       mutate("add-server", { serverUrl, ...invite(inviteCode) }),
     searchServers: (query: string) =>

@@ -132,8 +132,8 @@ test('the DSH locale namespace covers both languages and switches page labels wi
   assert.deepEqual(Object.keys(dictionaries.en).sort(), Object.keys(dictionaries.zh).sort());
   const connection = fixture.connection;
   for (const [language, labels] of [
-    ['en', { page: 'DSCord connection', login: 'Sign in to server', submit: 'Sign in', password: 'Password' }],
-    ['zh', { page: 'DSCord 连接', login: '登录服务器', submit: '登录', password: '密码' }],
+    ['en', { page: 'DSCord connection', login: 'Connect your DSCord account', submit: 'Connect', key: 'Connection key' }],
+    ['zh', { page: 'DSCord 连接', login: '连接 DSCord 账号', submit: '连接', key: '连接密钥' }],
   ]) {
     fixture.locale.setLocale(language);
     for (const entry of fixture.entries.filter(item => ['main', 'plugins.bundle.config'].includes(item.options.name))) {
@@ -141,7 +141,7 @@ test('the DSH locale namespace covers both languages and switches page labels wi
       assert.equal(tree.props['aria-label'], labels.page);
       assert.ok(find(tree, element => element.type === 'form' && element.props['aria-label'] === labels.login));
       assert.ok(find(tree, element => element.type === 'button' && element.props.type === 'submit' && element.children.includes(labels.submit)));
-      assert.ok(find(tree, element => element.type === 'label' && element.children.includes(labels.password)));
+      assert.ok(find(tree, element => element.type === 'label' && element.children.includes(labels.key)));
     }
     assert.equal(fixture.entries[1].options.label(), 'DSCord');
     assert.equal(fixture.main.options.inject().connection, connection);
@@ -196,7 +196,7 @@ test('only the first status read retries a not-yet-registered route, with three 
   assert.match(unavailable.connection.getSnapshot().error, /HTTP 404/);
   await unavailable.connection.refresh();
   assert.equal(unavailable.requests.length, 4);
-  await unavailable.connection.login('https://chat.example.test', 'alice', 'synthetic-password');
+  await unavailable.connection.login('synthetic-connection-key');
   assert.equal(unavailable.requests.length, 5);
   assert.equal(unavailable.requests[4].payload.action, 'login');
   assert.match(unavailable.connection.getSnapshot().error, /HTTP 404/);
@@ -205,13 +205,13 @@ test('only the first status read retries a not-yet-registered route, with three 
 test('client sends explicit authenticated actions and reconnects in order', async t => {
   const fixture = harness(payload => payload.action === 'logout' ? loggedOut : loggedIn);
   t.after(fixture.dispose);
-  await fixture.connection.login('https://chat.example.test', 'alice', 'synthetic-password');
+  await fixture.connection.login('synthetic-connection-key');
   assert.equal(fixture.requests[0].url, 'api/dscord');
   assert.equal(fixture.requests[0].credentials, 'same-origin');
   assert.deepEqual(fixture.requests[0].payload, {
-    action: 'login', serverUrl: 'https://chat.example.test', user: 'alice', password: 'synthetic-password',
+    action: 'login', key: 'synthetic-connection-key',
   });
-  assert.equal(JSON.stringify(fixture.connection.getSnapshot()).includes('synthetic-password'), false);
+  assert.equal(JSON.stringify(fixture.connection.getSnapshot()).includes('synthetic-connection-key'), false);
   await fixture.connection.connect('finance');
   await fixture.connection.disconnect('finance');
   await fixture.connection.reconnect('finance');
@@ -227,7 +227,7 @@ test('an older status response cannot replace a completed login', async t => {
     ? new Promise(resolve => { resolveStatus = resolve; }) : loggedIn);
   t.after(fixture.dispose);
   const staleRead = fixture.connection.refresh();
-  await fixture.connection.login('https://chat.example.test', 'alice', 'synthetic-password');
+  await fixture.connection.login('synthetic-connection-key');
   resolveStatus(loggedOut);
   await staleRead;
   assert.equal(fixture.connection.getSnapshot().value.user.id, 'alice@id.test');
@@ -253,31 +253,45 @@ test('background status refresh preserves an action error until an explicit refr
     return loggedOut;
   });
   t.after(fixture.dispose);
-  await fixture.connection.login('https://chat.example.test', 'alice', 'synthetic-password');
+  await fixture.connection.login('synthetic-connection-key');
   await fixture.connection.refresh({ clearError: false });
   assert.equal(fixture.connection.getSnapshot().error, '账号或密码错误');
   await fixture.connection.refresh();
   assert.equal(fixture.connection.getSnapshot().error, null);
 });
 
-test('the login form clears its password before dispatching the login request', async t => {
+test('the login form takes one connection key and clears it before dispatching the login request', async t => {
   const fixture = harness();
   t.after(fixture.dispose);
   await fixture.connection.refresh();
   const tree = render(fixture.main.component(fixture.main.options.inject()));
   const form = find(tree, element => element.type === 'form');
-  const inputs = {
-    serverUrl: { value: ' https://chat.example.test ' },
-    user: { value: ' alice ' }, password: { value: 'synthetic-password' }, inviteCode: { value: ' wxyz-2345 ' },
-  };
+  const fields = [];
+  (function collect(element) {
+    if (!element || typeof element !== 'object') return;
+    if (['input', 'textarea'].includes(element.type)) fields.push(element.props.name);
+    element.children.forEach(collect);
+  })(form);
+  assert.deepEqual(fields, ['connectionKey'], 'DSH asks for nothing but the key');
+  const inputs = { connectionKey: { value: '  eyJzZXJ2ZXIiOiJ4In0  ' } };
   let sent;
   fixture.connection.login = (...args) => {
-    assert.equal(inputs.password.value, '');
+    assert.equal(inputs.connectionKey.value, '');
     sent = args;
   };
   form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: name => inputs[name] } } });
-  assert.deepEqual(sent, ['https://chat.example.test', 'alice', 'synthetic-password', 'wxyz-2345']);
-  assert.equal(find(tree, element => element.type === 'input' && element.props.name === 'password').props.autoComplete, 'off');
+  assert.deepEqual(sent, ['eyJzZXJ2ZXIiOiJ4In0']);
+  assert.equal(find(tree, element => element.type === 'textarea').props.autoComplete, 'off');
+});
+
+test('connection key errors from the plugin show in the host language', async t => {
+  const fixture = harness(payload => {
+    if (payload.action === 'login') return new Response(JSON.stringify({ ok: false, error: { code: 'CONNECT_CODE_EXPIRED', message: '连接密钥已过期' } }), { status: 200 });
+    return loggedOut;
+  }, 'en');
+  t.after(fixture.dispose);
+  await fixture.connection.login('spent');
+  assert.equal(fixture.connection.getSnapshot().error, 'This connection key has expired. Make a new one on the web page.');
 });
 
 test('page exposes only safe server links and disables unavailable bot execution', async t => {

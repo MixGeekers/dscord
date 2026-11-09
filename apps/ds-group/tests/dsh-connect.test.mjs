@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtemp, mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { ConnectController } from '../dsh-connect/controller.mjs';
+import { ConnectController, connectKey } from '../dsh-connect/controller.mjs';
 import { NodeProcesses } from '../dsh-connect/processes.mjs';
 
 const serverUrl = 'https://chat.example';
+// What the chat server's page shows: base64url JSON naming the server and a one-time central code.
+const connectionKey = (server, code) => Buffer.from(JSON.stringify({ server, code })).toString('base64url');
 const centralUrl = 'https://id.example';
 const userId = '@alice:chat.example';
 const botId = '@alice-helper:chat.example';
@@ -48,7 +50,8 @@ async function fixture(t, options = {}) {
     calls.push({ origin, pathname, init });
     const body = init.body ? JSON.parse(init.body) : {};
     if (origin === centralUrl) {
-      if (pathname === '/api/login') {
+      if (pathname === '/api/connect-codes/redeem') {
+        if (body.code === 'expired-code') return Response.json({ error: 'expired', code: 'CONNECT_CODE_EXPIRED' }, { status: 410 });
         logins++;
         return Response.json({ token: `synthetic-central-token-${logins}`, account: { kind: 'human', displayName: 'Alice', globalId: 'alice@id.example' } });
       }
@@ -84,11 +87,11 @@ async function fixture(t, options = {}) {
   const settings = { directory, processes, models: options.models, request, selectPort: async () => 23100 };
   const controller = await new ConnectController(settings).initialize();
   await controller.restoring;
-  const login = () => controller.handle({ action: 'login', serverUrl, user: 'alice', password: 'synthetic-password' });
+  const login = (code = 'synthetic-connect-code') => controller.handle({ action: 'login', key: connectionKey(serverUrl, code) });
   return { directory, calls, effects, live, processes, controller, settings, login };
 }
 
-test('DSH connection login stores a private client token and never persists or returns the password', async t => {
+test('DSH connection login stores a private client token and never persists or returns the connection key', async t => {
   const { directory, controller, login, calls } = await fixture(t);
   assert.deepEqual(await readdir(directory), []);
   assert.equal((await controller.handle({ action: 'status' })).user, null);
@@ -100,7 +103,8 @@ test('DSH connection login stores a private client token and never persists or r
   assert.equal(JSON.stringify(result).includes('synthetic-human-token'), false);
   const filename = path.join(directory, 'connection.json');
   const saved = await readFile(filename, 'utf8');
-  assert.equal(saved.includes('synthetic-password'), false);
+  assert.equal(saved.includes('synthetic-connect-code'), false);
+  assert.equal(calls.find(call => call.pathname === '/api/connect-codes/redeem').init.body.includes('synthetic-connect-code'), true);
   assert.equal(JSON.parse(saved).servers[serverUrl].accessToken, 'synthetic-human-token-1');
   assert.equal(JSON.parse(saved).centralToken, 'synthetic-central-token-1');
   assert.equal(result.user.globalId, 'alice@id.example');
@@ -199,7 +203,7 @@ test('DSH connection rejects unknown ownership and mismatched node bundle before
   await login();
   await assert.rejects(controller.handle({ action: 'connect', botId: '@other:chat.example' }), /自己的 Bot/);
   await assert.rejects(controller.handle({ action: 'connect', botId: bot.id }), /身份不匹配/);
-  await assert.rejects(controller.handle({ action: 'login', serverUrl: 'https://name:secret@example.com', user: 'alice', password: 'synthetic' }), /without credentials/);
+  await assert.rejects(controller.handle({ action: 'login', key: connectionKey('https://name:secret@example.com', 'code') }), /without credentials/);
   assert.deepEqual(effects, []);
   assert.deepEqual(await readdir(directory), ['connection.json']);
   await controller.dispose();
@@ -225,6 +229,17 @@ test('DSH process controller rejects aggregate service commands as Bot identitie
   for (const localpart of ['all', 'core', '../core']) {
     await assert.rejects(runner.command({ localpart }, 'scripts/service.mjs', ['up', localpart]), /保留名称/);
   }
+});
+
+test('a connection key is base64url JSON naming the server and code, and a broken or spent key says so', async t => {
+  assert.deepEqual(connectKey(` ${connectionKey(serverUrl, 'abc')}\n`), { server: serverUrl, code: 'abc' });
+  for (const broken of ['', 'not a key', Buffer.from('{"server":"https://chat.example"}').toString('base64url')])
+    assert.throws(() => connectKey(broken), error => error.code === 'CONNECT_KEY_INVALID');
+  const { controller, login, calls } = await fixture(t);
+  await assert.rejects(controller.handle({ action: 'login', key: 'not a key' }), error => error.code === 'CONNECT_KEY_INVALID');
+  await assert.rejects(login('expired-code'), error => error.code === 'CONNECT_CODE_EXPIRED' && /过期/.test(error.message));
+  assert.equal(calls.filter(call => call.pathname === '/api/session').length, 0);
+  assert.equal((await controller.handle({ action: 'status' })).user, null);
 });
 
 test('failed login persistence retains the previous identity and revokes the unused new session', async t => {
@@ -401,7 +416,7 @@ test('the owner signs in once and a Bot joins several chat servers, one node per
   assert.notEqual(controller.state.nodes[botId].directory, controller.state.nodes['@alice-helper:two.example'].directory);
   assert.equal(controller.state.nodes['@alice-helper:two.example'].serverUrl, 'https://two.example');
   // The central server is signed in to once; each server gets the owner's own session.
-  assert.equal(calls.filter(call => call.pathname === '/api/login').length, 1);
+  assert.equal(calls.filter(call => call.pathname === '/api/connect-codes/redeem').length, 1);
   await assert.rejects(controller.handle({ action: 'add-server', serverUrl: 'https://elsewhere.example' }), /另一个中央服务器/);
   // The central index lists servers to add; ones already added are marked.
   const found = await controller.handle({ action: 'search-servers', query: ' robots ' });

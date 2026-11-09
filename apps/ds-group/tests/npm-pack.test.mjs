@@ -26,7 +26,7 @@ async function fixture(t) {
     'memory/实施与长程测试.md': 'INTERNAL EXPERIMENT', 'vendor/ds-bot/README.md': 'INTERNAL UPSTREAM SETUP',
     'vendor/ds-bot/src/office/skills/office/SKILL.md': '# Runtime skill',
     'dsh-plugin/.credentials.yaml': 'PRIVATE', 'src/personal-config.json': 'PRIVATE',
-    'web/mention-tokens.js': 'export {};',
+    'web/mention-tokens.js': 'export {};', 'web/icons/mark-128.png': 'PNG fixture',
     'dist/web/index.html': '<!doctype html>', 'dist/web/sw.js': '// worker',
     'dist/web/client-config.json': '{}',
     'dist/admin/index.html': '<!doctype html>', 'dist/admin/theme.js': '// theme', 'dist/central-admin/index.html': '<!doctype html>',
@@ -83,6 +83,8 @@ test('npm packs the exact source version, runtime and licenses without internal 
   assert.deepEqual(manifest.dscord.protocol, KERNEL_PROTOCOL, 'nodes choose a release by the protocol range it speaks');
   assert.equal(manifest.engines.dsh, dshEngineRange(DSH_VERSION));
   assert.equal(manifest.engines.node, '>=24.19.0 <25');
+  assert.equal(manifest.icon, './icon.png', 'DSH shows the DSCord mark in its plugin list');
+  assert.ok(result.files.includes('icon.png'));
   const guide = (await promisify(execFile)('tar', ['-xOf', result.archive, 'package/README.md'])).stdout;
   assert.match(guide, /\[Package\]\(package\.json\)/);
   assert.match(guide, /blob\/ds-group-v0\.2\.0\/apps\/ds-group\/deploy\/README\.md/);

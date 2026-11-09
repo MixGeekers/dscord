@@ -50,6 +50,9 @@ body[data-ds-dark-theme] .dscord-connect {
 .dscord-connect p { margin: 0; }
 .dscord-connect .dc-panel { padding: 22px; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-lg, 12px); background: var(--dc-panel); margin-bottom: 20px; }
 .dscord-connect .dc-login { max-width: 460px; margin: 0 auto; }
+.dscord-connect .dc-login > .dc-muted { margin: 0 0 18px; }
+.dscord-connect textarea.dc-key { box-sizing: border-box; width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-md, 8px); padding: 10px 12px; background: var(--dc-field); color: var(--dc-text); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; word-break: break-all; }
+.dscord-connect textarea.dc-key:focus-visible { outline: 2px solid var(--dc-accent); outline-offset: 1px; }
 .dscord-connect .dc-field { display: grid; gap: 7px; margin-bottom: 18px; font-weight: 600; }
 .dscord-connect select { width: 100%; min-height: 42px; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-md, 8px); padding: 10px 12px; background: var(--dc-field); color: var(--dc-text); font: inherit; font-weight: 400; }
 .dscord-connect input::placeholder { color: var(--dc-muted); opacity: 1; }
@@ -136,7 +139,7 @@ body[data-ds-dark-theme] .dscord-connect {
 `;
 // dsh-connect/client/components/forms.tsx
 var field = (form, name) => form.elements.namedItem(name);
-/** Signs in to central through any chat server that trusts it; the password never stays in the form. */
+/** Signs in with a connection key from the DSCord web page; the key never stays in the form. */
 function LoginForm({ connection, state, t }) {
 	const busy = Boolean(state.busy);
 	return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("form", {
@@ -144,11 +147,10 @@ function LoginForm({ connection, state, t }) {
 		"aria-label": t("loginTitle"),
 		onSubmit: (event) => {
 			event.preventDefault();
-			const form = event.currentTarget;
-			const passwordInput = field(form, "password");
-			const password = passwordInput.value;
-			passwordInput.value = "";
-			connection.login(field(form, "serverUrl").value.trim(), field(form, "user").value.trim(), password, field(form, "inviteCode").value.trim());
+			const input = field(event.currentTarget, "connectionKey");
+			const key = input.value.trim();
+			input.value = "";
+			if (key) connection.login(key);
 		},
 		children: [
 			/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", { children: t("loginTitle") }),
@@ -158,48 +160,14 @@ function LoginForm({ connection, state, t }) {
 			}),
 			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 				className: "dc-field",
-				children: [t("serverUrl"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-					name: "serverUrl",
-					type: "url",
+				children: [t("connectionKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("textarea", {
+					name: "connectionKey",
+					className: "dc-key",
 					required: true,
-					defaultValue: state.value?.servers?.[0]?.url || "",
-					placeholder: "https://chat.example.com",
-					autoComplete: "url",
-					disabled: busy
-				})]
-			}),
-			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-				className: "dc-field",
-				children: [t("username"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-					name: "user",
-					type: "text",
-					required: true,
-					autoComplete: "username",
+					rows: 4,
+					autoComplete: "off",
 					autoCapitalize: "none",
 					spellCheck: false,
-					disabled: busy
-				})]
-			}),
-			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-				className: "dc-field",
-				children: [t("password"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-					name: "password",
-					type: "password",
-					required: true,
-					autoComplete: "off",
-					disabled: busy
-				})]
-			}),
-			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-				className: "dc-field",
-				children: [t("inviteCodeOptional"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-					name: "inviteCode",
-					type: "text",
-					autoComplete: "off",
-					autoCapitalize: "characters",
-					spellCheck: false,
-					maxLength: 20,
-					placeholder: "ABCD-2345",
 					disabled: busy
 				})]
 			}),
@@ -1490,7 +1458,7 @@ var SHORT_ACTIONS = [
 	"kernel-state",
 	"memory-profile"
 ];
-var MODEL_ERRORS = {
+var ERROR_KEYS = {
 	MODEL_POLICY_DENIED: "serverPolicyDenied",
 	MODEL_OUTPUT_LIMIT: "serverOutputLimit",
 	MISSING_CREDENTIAL: "missingCredential",
@@ -1500,7 +1468,10 @@ var MODEL_ERRORS = {
 	MODEL_UNAVAILABLE: "modelUnavailable",
 	MODEL_PROVIDER_UNAVAILABLE: "modelUnavailable",
 	MODEL_PROFILE_INVALID: "providerInvalid",
-	DSCORD_KERNEL_CONFLICT: "kernelConflict"
+	DSCORD_KERNEL_CONFLICT: "kernelConflict",
+	CONNECT_KEY_INVALID: "connectKeyInvalid",
+	CONNECT_CODE_UNKNOWN: "connectKeyUnknown",
+	CONNECT_CODE_EXPIRED: "connectKeyExpired"
 };
 /**
 * The page's one view of the DSH host route: it reads the connection status every five seconds while the page is
@@ -1553,7 +1524,7 @@ function createConnectionModel(t) {
 			if (!response.ok) throw Object.assign(clientError("requestHttp", { status: response.status }), { httpStatus: response.status });
 			const result = await response.json();
 			if (!result.ok) {
-				const key = result.error?.code ? MODEL_ERRORS[result.error.code] : void 0;
+				const key = result.error?.code ? ERROR_KEYS[result.error.code] : void 0;
 				throw key ? clientError(key) : result.error?.message ? new Error(result.error.message) : clientError("requestFailed");
 			}
 			if (!result.value || connectionState && !Array.isArray(result.value.bots)) throw clientError("invalidStatus");
@@ -1673,12 +1644,7 @@ function createConnectionModel(t) {
 		getSnapshot: () => snapshot,
 		subscribe,
 		refresh,
-		login: (serverUrl, user, password, inviteCode = "") => mutate("login", {
-			serverUrl,
-			user,
-			password,
-			...invite(inviteCode)
-		}),
+		login: (key) => mutate("login", { key }),
 		addServer: (serverUrl, inviteCode = "") => mutate("add-server", {
 			serverUrl,
 			...invite(inviteCode)
@@ -1805,12 +1771,14 @@ var zh = {
 	providerInvalid: "请检查 DSH 中的模型配置。",
 	title: "DSCord",
 	pageLabel: "DSCord 连接",
-	loginTitle: "登录服务器",
+	loginTitle: "连接 DSCord 账号",
 	serverUrl: "服务器地址",
-	username: "账号",
-	password: "密码",
-	login: "登录",
-	loggingIn: "正在登录…",
+	connectionKey: "连接密钥",
+	login: "连接",
+	loggingIn: "正在连接…",
+	connectKeyInvalid: "连接密钥不完整，请从 DSCord 网页重新复制。",
+	connectKeyUnknown: "连接密钥已用过或不存在，请在网页上重新生成。",
+	connectKeyExpired: "连接密钥已过期，请在网页上重新生成。",
 	disconnect: "断开",
 	disconnecting: "正在断开…",
 	disconnectBot: "断开 {name}",
@@ -1827,7 +1795,7 @@ var zh = {
 	openWeb: "打开网页",
 	refresh: "刷新",
 	readStatus: "正在读取连接状态…",
-	loginHelp: "填写任意一台接入你中央账号的聊天服务器，用中央账号登录；之后可以再添加其他服务器。",
+	loginHelp: "在 DSCord 网页打开「设置 → 账号 → 连接 DSH」，生成连接密钥后粘贴到这里。密钥 10 分钟内有效，只能用一次。",
 	servers: "聊天服务器",
 	serversHelp: "一个中央账号可以加入多台聊天服务器，Bot 在每台服务器上分别上线。",
 	addServer: "添加服务器",
@@ -1976,12 +1944,14 @@ var en = {
 	providerInvalid: "Check the model configuration in DSH.",
 	title: "DSCord",
 	pageLabel: "DSCord connection",
-	loginTitle: "Sign in to server",
+	loginTitle: "Connect your DSCord account",
 	serverUrl: "Server URL",
-	username: "Username",
-	password: "Password",
-	login: "Sign in",
-	loggingIn: "Signing in…",
+	connectionKey: "Connection key",
+	login: "Connect",
+	loggingIn: "Connecting…",
+	connectKeyInvalid: "This connection key is incomplete. Copy it again from the DSCord web page.",
+	connectKeyUnknown: "This connection key was already used or does not exist. Make a new one on the web page.",
+	connectKeyExpired: "This connection key has expired. Make a new one on the web page.",
 	disconnect: "Disconnect",
 	disconnecting: "Disconnecting…",
 	disconnectBot: "Disconnect {name}",
@@ -1998,7 +1968,7 @@ var en = {
 	openWeb: "Open website",
 	refresh: "Refresh",
 	readStatus: "Loading connection status…",
-	loginHelp: "Enter any chat server that trusts your central account and sign in with that account. You can add more servers afterwards.",
+	loginHelp: "On the DSCord web page, open Settings → Account → Connect DSH, make a connection key and paste it here. A key works once, within 10 minutes.",
 	servers: "Chat servers",
 	serversHelp: "One central account can join several chat servers. Each Bot goes online on each server separately.",
 	addServer: "Add server",
@@ -2055,6 +2025,8 @@ var en = {
 	updateFailed: "Install failed: {error}",
 	updateNotRegistry: "This plugin was not installed from npm. Install the new version by hand."
 };
+// dsh-connect/client/mark.png
+var mark_default = "data:image/png;base64,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";
 // dsh-connect/client/index.tsx
 var panelId = "dscord";
 var inject = [
@@ -2082,8 +2054,16 @@ function apply(ctx) {
 	}
 	ctx.effect(() => () => connection.dispose(), "dscord: connection page");
 	const injectPage = () => ({ connection });
-	function SidebarIcon({ size }) {
-		return /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.IconPluginPinwheelOutlineRegular, { size });
+	/** DSCord's own mark, at the size DSH draws sidebar icons. */
+	function SidebarIcon({ size = 16 }) {
+		return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("img", {
+			src: mark_default,
+			width: size,
+			height: size,
+			alt: "",
+			draggable: false,
+			style: { display: "block" }
+		});
 	}
 	function NativeShortcutButton({ face }) {
 		if ((0, react.useSyncExternalStore)(face.hooks.surface.subscribe, () => face.hooks.surface.getSnapshot().mode) !== "bot") return null;

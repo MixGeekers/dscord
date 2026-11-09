@@ -127,6 +127,15 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   router.get('/api/me', ({ request, send }) => send(200, { account: store.view(signedIn(request).account) }));
   router.delete('/api/me', ({ request, send }) => { store.closeAccount(person(request).account); send(200, { closed: true }); });
 
+  // A person's own DSH signs in with a connection key made on a chat server's page; the key carries one of these codes.
+  router.post('/api/connect-codes', ({ request, send }) => send(201, store.startConnect(person(request).account)));
+  router.post('/api/connect-codes/redeem', async ({ body, send }) => {
+    const input = await body();
+    const label = typeof input.label === 'string' && input.label.trim() ? input.label.trim().slice(0, 80) : 'DSH';
+    const { token, account } = store.redeemConnect(input.code, label);
+    send(200, { token, account: store.view(account) });
+  });
+
   // The one way to sign in to a chat server, for people and Bots alike.
   router.post('/api/identity-tokens', async ({ request, body, send }) => {
     const { account } = signedIn(request);

@@ -18,6 +18,20 @@ function publicBot(bot) {
 }
 
 /** A central username for a new Bot: its name in Latin letters where possible, made unique. */
+/** The chat server and one-time central code inside a connection key from a chat server's page. */
+export function connectKey(value) {
+  let decoded;
+  try {
+    decoded = JSON.parse(Buffer.from(String(value || '').replace(/\s+/g, ''), 'base64url').toString('utf8'));
+  } catch {
+    decoded = null;
+  }
+  if (!decoded || typeof decoded.server !== 'string' || typeof decoded.code !== 'string' || !decoded.code) {
+    throw Object.assign(new Error('连接密钥不完整，请从 DSCord 网页重新复制'), { code: 'CONNECT_KEY_INVALID' });
+  }
+  return { server: decoded.server, code: decoded.code };
+}
+
 function botUsername(name) {
   const slug = name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20);
   return `${/^[a-z]/.test(slug) ? slug : `bot${slug ? `-${slug}` : ''}`}-${randomUUID().slice(0, 6)}`;
@@ -253,12 +267,24 @@ export class ConnectController {
     return token ? this.remote(base, '/api/logout', { method: 'POST', token, body: {} }).catch(() => {}) : Promise.resolve();
   }
 
-  /** Sign in to the central server that a chat server trusts, and add that server. */
-  async login({ serverUrl: input, user, password, inviteCode }) {
-    if (typeof user !== 'string' || !user.trim() || typeof password !== 'string' || !password) throw new Error('请输入账号和密码');
+  /**
+   * Sign in with a connection key made on a chat server's page: base64url JSON `{server, code}`. The code is redeemed,
+   * once, at the central server that chat server trusts, and that server is added.
+   */
+  async login({ key }) {
+    const { server: input, code } = connectKey(key);
     const discovered = await this.discover(input);
     const { centralUrl } = discovered;
-    const central = await this.remote(centralUrl, '/api/login', { method: 'POST', body: { username: user.trim(), password } });
+    let central;
+    try {
+      central = await this.remote(centralUrl, '/api/connect-codes/redeem', { method: 'POST', body: { code, label: `DSH ${hostname()}` } });
+    } catch (error) {
+      if (['CONNECT_CODE_UNKNOWN', 'CONNECT_CODE_EXPIRED'].includes(error.remoteCode)) {
+        throw Object.assign(new Error(error.remoteCode === 'CONNECT_CODE_EXPIRED' ? '连接密钥已过期，请在网页上重新生成' : '连接密钥已用过或不存在，请在网页上重新生成'),
+          { code: error.remoteCode });
+      }
+      throw error;
+    }
     if (!central.token || central.account?.kind !== 'human' || !central.account.globalId) throw new Error('中央服务器登录响应不完整');
     const previous = this.state;
     const sameIdentity = centralUrl === previous.centralUrl && central.account.globalId === previous.user?.globalId;
@@ -266,7 +292,7 @@ export class ConnectController {
     let server;
     let bots;
     try {
-      server = await this.ownerSession(discovered, central.token, centralUrl, inviteCode);
+      server = await this.ownerSession(discovered, central.token, centralUrl);
       bots = await this.ownedBots({ centralUrl, centralToken: central.token, servers: { ...(kept.servers || {}), [server.url]: server },
         nativeLinks: kept.nativeLinks, hostId: previous.hostId });
     } catch (error) {

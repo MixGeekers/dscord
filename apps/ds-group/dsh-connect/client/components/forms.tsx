@@ -15,9 +15,9 @@ export interface ReadyProps extends PageProps {
 }
 
 const field = (form: HTMLFormElement, name: string) =>
-  form.elements.namedItem(name) as HTMLInputElement;
+  form.elements.namedItem(name) as HTMLInputElement | HTMLTextAreaElement;
 
-/** Signs in to central through any chat server that trusts it; the password never stays in the form. */
+/** Signs in with a connection key from the DSCord web page; the key never stays in the form. */
 export function LoginForm({ connection, state, t }: PageProps) {
   const busy = Boolean(state.busy);
   return (
@@ -26,64 +26,24 @@ export function LoginForm({ connection, state, t }: PageProps) {
       aria-label={t("loginTitle")}
       onSubmit={(event) => {
         event.preventDefault();
-        const form = event.currentTarget;
-        const passwordInput = field(form, "password");
-        const password = passwordInput.value;
-        passwordInput.value = "";
-        void connection.login(
-          field(form, "serverUrl").value.trim(),
-          field(form, "user").value.trim(),
-          password,
-          field(form, "inviteCode").value.trim(),
-        );
+        const input = field(event.currentTarget, "connectionKey");
+        const key = input.value.trim();
+        input.value = "";
+        if (key) void connection.login(key);
       }}
     >
       <h2>{t("loginTitle")}</h2>
       <p className="dc-muted">{t("loginHelp")}</p>
       <label className="dc-field">
-        {t("serverUrl")}
-        <Input
-          name="serverUrl"
-          type="url"
+        {t("connectionKey")}
+        <textarea
+          name="connectionKey"
+          className="dc-key"
           required
-          defaultValue={state.value?.servers?.[0]?.url || ""}
-          placeholder="https://chat.example.com"
-          autoComplete="url"
-          disabled={busy}
-        />
-      </label>
-      <label className="dc-field">
-        {t("username")}
-        <Input
-          name="user"
-          type="text"
-          required
-          autoComplete="username"
+          rows={4}
+          autoComplete="off"
           autoCapitalize="none"
           spellCheck={false}
-          disabled={busy}
-        />
-      </label>
-      <label className="dc-field">
-        {t("password")}
-        <Input
-          name="password"
-          type="password"
-          required
-          autoComplete="off"
-          disabled={busy}
-        />
-      </label>
-      <label className="dc-field">
-        {t("inviteCodeOptional")}
-        <Input
-          name="inviteCode"
-          type="text"
-          autoComplete="off"
-          autoCapitalize="characters"
-          spellCheck={false}
-          maxLength={20}
-          placeholder="ABCD-2345"
           disabled={busy}
         />
       </label>

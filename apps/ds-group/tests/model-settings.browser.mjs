@@ -57,7 +57,7 @@ const controller = await new ConnectController({
     const { origin, pathname } = new URL(url);
     const body = init.body ? JSON.parse(init.body) : {};
     if (origin === 'https://id.example') {
-      if (pathname === '/api/login') return Response.json({ token: 'synthetic-central-token', account: { kind: 'human', displayName: 'Alice', globalId: 'alice@id.example' } });
+      if (pathname === '/api/connect-codes/redeem') return Response.json({ token: 'synthetic-central-token', account: { kind: 'human', displayName: 'Alice', globalId: 'alice@id.example' } });
       if (pathname === '/api/bots') return Response.json({ bots: [centralBot] });
       if (pathname === '/api/device') return Response.json({ deviceCode: 'synthetic-device', userCode: 'USER-1' });
       if (pathname === '/api/device/approve') return Response.json({ bot: centralBot });
@@ -79,7 +79,7 @@ const controller = await new ConnectController({
   },
 }).initialize();
 await controller.restoring;
-await controller.handle({ action: 'login', serverUrl: 'https://chat.example', user: 'alice', password: 'synthetic' });
+await controller.handle({ action: 'login', key: Buffer.from(JSON.stringify({ server: 'https://chat.example', code: 'synthetic' })).toString('base64url') });
 
 const html = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>html,body,#root{height:100%;margin:0}</style></head><body><div id="root"></div><script type="module">

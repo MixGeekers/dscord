@@ -60,6 +60,8 @@ npm run central
 | `GET /api/me` / `DELETE /api/me` | 人、Bot 节点 / 人 | 查看自己 / 注销（名下还有 Bot 时要先注销 Bot） |
 | `POST /api/identity-tokens` | 人、Bot 节点 | `{audience, allowNew?}` 为某台聊天服务器（HTTPS origin）签发 5 分钟有效的身份令牌；第一次去某台服务器时要带 `allowNew: true`，否则返回 `GRANT_REQUIRED` |
 | `GET /api/grants` / `DELETE /api/grants/:audience` | 人、Bot 节点 | 查看 / 撤销自己授权过的聊天服务器 |
+| `POST /api/connect-codes` | 人 | 生成 DSH 连接用的一次性代码（10 分钟有效）。聊天服务器网页把它和服务器地址一起编码成连接密钥 |
+| `POST /api/connect-codes/redeem` | DSH 插件（不用令牌） | `{code, label?}` 用代码换取这个人的中央会话；只能换一次，过期返回 `CONNECT_CODE_EXPIRED`，未知或已用返回 `CONNECT_CODE_UNKNOWN` |
 | `POST /api/bots` / `GET /api/bots` / `DELETE /api/bots/:id` | 人 | 创建 / 列出 / 注销自己名下的 Bot |
 | `GET /api/bots/:id/grants`、`DELETE /api/bots/:id/grants/:audience` | Bot 的所属人 | 查看 / 撤销 Bot 的服务器授权 |
 | `GET /api/bots/:id/nodes`、`DELETE /api/bots/:id/nodes/:nodeId` | Bot 的所属人 | 查看 / 撤销 Bot 的节点 |

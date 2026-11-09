@@ -1,14 +1,12 @@
 import { useSyncExternalStore } from "react";
 import type { ComponentType } from "react";
 import { createPortal } from "react-dom";
-import {
-  Button,
-  IconPluginPinwheelOutlineRegular,
-} from "@deepseek-ai/dsh-client-ui-primitives";
+import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import { ConnectionPage } from "./components/page";
 import { createConnectionModel } from "./connection";
 import { en, localeNamespace, zh } from "./locale";
 import type { Translate } from "./locale";
+import mark from "./mark.png";
 
 const panelId = "dscord";
 
@@ -75,8 +73,18 @@ export function apply(ctx: PluginContext) {
   ctx.effect(() => () => connection.dispose(), "dscord: connection page");
   const injectPage = () => ({ connection });
 
-  function SidebarIcon({ size }: { size?: number }) {
-    return <IconPluginPinwheelOutlineRegular size={size} />;
+  /** DSCord's own mark, at the size DSH draws sidebar icons. */
+  function SidebarIcon({ size = 16 }: { size?: number }) {
+    return (
+      <img
+        src={mark}
+        width={size}
+        height={size}
+        alt=""
+        draggable={false}
+        style={{ display: "block" }}
+      />
+    );
   }
 
   // Keep a return action available from the local Bot workspace.

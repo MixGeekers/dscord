@@ -39,6 +39,9 @@ body[data-ds-dark-theme] .dscord-connect {
 .dscord-connect p { margin: 0; }
 .dscord-connect .dc-panel { padding: 22px; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-lg, 12px); background: var(--dc-panel); margin-bottom: 20px; }
 .dscord-connect .dc-login { max-width: 460px; margin: 0 auto; }
+.dscord-connect .dc-login > .dc-muted { margin: 0 0 18px; }
+.dscord-connect textarea.dc-key { box-sizing: border-box; width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-md, 8px); padding: 10px 12px; background: var(--dc-field); color: var(--dc-text); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; word-break: break-all; }
+.dscord-connect textarea.dc-key:focus-visible { outline: 2px solid var(--dc-accent); outline-offset: 1px; }
 .dscord-connect .dc-field { display: grid; gap: 7px; margin-bottom: 18px; font-weight: 600; }
 .dscord-connect select { width: 100%; min-height: 42px; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-md, 8px); padding: 10px 12px; background: var(--dc-field); color: var(--dc-text); font: inherit; font-weight: 400; }
 .dscord-connect input::placeholder { color: var(--dc-muted); opacity: 1; }
