@@ -12,6 +12,7 @@ import { useTranslation } from "../locale";
 import { Icon } from "./Icons";
 import { dialogMessages } from "../locales/dialogs";
 import { kernelMessages } from "../locales/kernel";
+import { botHomeMessages } from "../locales/bot-home";
 import { connectionLabel } from "../bot-kernel";
 import type { Api, Participant, Role, Room, Session } from "../types";
 
@@ -310,6 +311,7 @@ export function MemberDialog({
 }: MemberDialogProps) {
   const t = useTranslation(dialogMessages);
   const kernelText = useTranslation(kernelMessages);
+  const homeText = useTranslation(botHomeMessages);
   const dialog = useDialog(member !== null);
   const membership = member
     ? roles.filter((role) => role.memberIds.includes(member.id))
@@ -362,13 +364,13 @@ export function MemberDialog({
           member.ownerId === session?.user_id &&
           onManageBot && (
             <Button
-              id="member-bot-settings"
+              id="member-bot-home"
               variant="ghost"
               type="button"
               onClick={() => onManageBot(member.id)}
             >
-              <Icon name="gear" />
-              {kernelText("settings")}
+              <Icon name="bot" />
+              {homeText("home")}
             </Button>
           )}
         <div id="member-dialog-roles" className="member-role-list">

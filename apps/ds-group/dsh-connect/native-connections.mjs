@@ -121,8 +121,8 @@ export class NativeConnections {
             headers: { 'content-type': 'application/json', authorization: `Bearer ${config.nodeSecret}` },
             body: JSON.stringify({ ...body, engine: 'DSCord kernel', executionMode: 'native',
               protocol: session.protocol, kernelVersion: KERNEL_VERSION,
-              kernel: { runtime: kernel.runtime, work: kernel.work, memorySummary: kernel.memorySummary,
-                attention: botNode.attentionStatus() },
+              kernel: { runtime: kernel.runtime, work: kernel.work,
+                attention: botNode.attentionStatus(), responder: botNode.responderStatus() },
               ...(kernelControl ? { kernelControl: { version: 1 } } : {}) }), signal: AbortSignal.timeout(10000) });
           if (response.status === 426) {
             const answer = await response.json().catch(() => ({}));
@@ -144,6 +144,8 @@ export class NativeConnections {
             memoryProfiles: options => bridge.memoryProfiles(options),
             memoryProfile: options => bridge.memoryProfile(options),
             contacts: options => botNode.contacts.view(options),
+            timeline: options => botNode.timeline(options, bridge.core.tasks()),
+            memoryChanges: options => bridge.memoryChanges(options),
           }, onError: code => { entry.controlError = code; } });
         entry.control.start();
       }

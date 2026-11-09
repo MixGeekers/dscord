@@ -268,6 +268,9 @@ try {
       const person = people.find(value => value.localpart === localpart);
       body = person ? sessions[localpart]
         : { user_id: registeredUser.id, access_token: how === 'register' ? 'registered-fixture' : 'registered-login-fixture', identity: identityOf(localpart) };
+    } else if (key === 'GET /api/bots/status') {
+      body = { bots: (ownedBots.get(user?.id) ?? []).map(bot => ({ botId: bot.id, online: true, updatedAt: Date.now(), activity: 'working',
+        responder: { state: 'idle' }, workers: [{ taskId: 'task-1', title: 'Close the books', stage: 'running' }], queue: [], lastDecision: null })) };
     } else if (key === `POST /api/rooms/${encodeURIComponent(rooms[0].roomId)}/messages`) {
       sentMessages.push({
         roomId: rooms[0].roomId,
@@ -498,6 +501,7 @@ try {
     nativeBinding: { hostId: 'dsh-test', nativeBotId: 'native-finance', botId: '@finance:test' } }]);
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await page.locator('#owned-bots [data-owned-bot-id="@finance:test"]').filter({ hasText: 'Finance' }).waitFor();
+  await page.locator('#owned-bots [data-owned-bot-id="@finance:test"] [data-bot-status="working"]').filter({ hasText: "Tasks running: 1" }).waitFor();
   assert.equal(await page.locator('#owned-bot-count').textContent(), '1');
   checks.push('addBotPointsToDshAndOwnedBotsFollowCore');
 

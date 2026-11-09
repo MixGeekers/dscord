@@ -1,14 +1,8 @@
 import type { Catalog } from "../locale";
 
 const en = {
-  settings: "Bot settings",
-  overview: "Overview",
-  participation: "Participation",
   memory: "Memory",
-  back: "Back to my Bots",
-  message: "Message {name}",
   owner: "Owner",
-  identity: "Stable Bot identity",
   engine: "DSCord Bot kernel",
   node: "Runs on its own node",
   loading: "Loading Bot settings…",
@@ -29,9 +23,6 @@ const en = {
   workingHelp: "Working on a request. Open work history to see its progress.",
   speakingHelp: "Preparing a contribution to the conversation.",
   unknownHelp: "The node has not reported its current activity.",
-  activity: "Current activity",
-  connection: "Connection",
-  tasks: "Active tasks",
   queue: "Queued observations",
   unavailableHelp:
     "The node is unavailable. Reconnect it to read and change its settings.",
@@ -71,7 +62,6 @@ const en = {
     "Read what {name} knows about a person or project, together with its sources. Each Bot has its own view.",
   people: "People",
   projects: "Projects",
-  pendingReview: "Awaiting memory review",
   kind: "Browse",
   search: "Search memory",
   searchPlaceholder: "Name or stable ID",
@@ -113,22 +103,14 @@ const en = {
   memoryBoundary:
     "A shared room scope records where a claim came from; it does not mean everyone knows or agrees with it.",
   currentRecords: "{count} current records",
-  noSummary: "Memory summary not reported",
   details: "Runtime details",
-  workPermissions: "Work permissions",
 } as const;
 
 export const kernelMessages: Catalog<keyof typeof en> = {
   en,
   "zh-CN": {
-    settings: "Bot 设置",
-    overview: "概览",
-    participation: "参与方式",
     memory: "记忆",
-    back: "返回我的 Bot",
-    message: "与 {name} 私聊",
     owner: "所属人",
-    identity: "稳定 Bot 身份",
     engine: "DSCord Bot 内核",
     node: "在自己的节点运行",
     loading: "正在读取 Bot 设置…",
@@ -147,9 +129,6 @@ export const kernelMessages: Catalog<keyof typeof en> = {
     workingHelp: "正在处理请求，可在工作记录中查看进度。",
     speakingHelp: "正在准备对话中需要的回应。",
     unknownHelp: "节点尚未报告当前活动。",
-    activity: "当前活动",
-    connection: "连接状态",
-    tasks: "进行中的任务",
     queue: "待观察消息",
     unavailableHelp: "节点当前不可用，重新连接后可以读取和修改设置。",
     unsupported: "此 Bot 的节点尚未提供内核设置。",
@@ -182,7 +161,6 @@ export const kernelMessages: Catalog<keyof typeof en> = {
       "查看 {name} 对人物或项目的认识，以及对应来源。每个 Bot 保留自己的视角。",
     people: "人物",
     projects: "项目",
-    pendingReview: "等待整理的记忆",
     kind: "浏览类型",
     search: "搜索记忆",
     searchPlaceholder: "名称或稳定 ID",
@@ -222,8 +200,6 @@ export const kernelMessages: Catalog<keyof typeof en> = {
     memoryBoundary:
       "共享房间范围记录陈述来自哪里，不表示所有成员都知道或认同它。",
     currentRecords: "{count} 条当前记录",
-    noSummary: "尚未报告记忆概览",
     details: "运行详情",
-    workPermissions: "工作授权",
   },
 };

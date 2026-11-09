@@ -34,6 +34,9 @@ import { SettingsDialog } from "./components/SettingsDialog";
 import { RolesDialog } from "./components/RolesDialog";
 import { SpacesDialog } from "./components/SpacesDialog";
 import { MyBotsDialog } from "./components/MyBotsDialog";
+import { BotHome } from "./components/BotHome";
+import type { BotHomeTab } from "./components/BotHome";
+import type { BotStatus } from "./bot-kernel";
 import { InboxDialog } from "./components/InboxDialog";
 import { NotificationDialog } from "./components/NotificationDialog";
 import {
@@ -143,7 +146,12 @@ export default function App({
   const [rolesOpen, setRolesOpen] = useState(false);
   const [spacesOpen, setSpacesOpen] = useState(false);
   const [botsOpen, setBotsOpen] = useState(false);
-  const [botsSelection, setBotsSelection] = useState<string | null>(null);
+  const [homeBot, setHomeBot] = useState<{
+    id: string;
+    tab: BotHomeTab;
+    at: number;
+  } | null>(null);
+  const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({});
   const [roomDialog, setRoomDialog] = useState<"create" | "invite" | null>(
     null,
   );
@@ -295,7 +303,8 @@ export default function App({
     setSettingsTab(null);
     setCreateBotOpen(false);
     setBotsOpen(false);
-    setBotsSelection(null);
+    setHomeBot(null);
+    setBotStatuses({});
     setSpacesOpen(false);
     setLoginError("");
     setLoginRateLimitUntil(null);
@@ -304,6 +313,37 @@ export default function App({
     setView("home");
     setLoginOpen(true);
   }, [config, resetConversation]);
+
+  // What each owned Bot is doing, for the Bot list; one request covers them all.
+  const hasOwnedBots = ownedBots.length > 0;
+  useEffect(() => {
+    if (!session || !hasOwnedBots) return;
+    const account = session;
+    let stopped = false;
+    const poll = () =>
+      void api<{ bots: BotStatus[] }>("/api/bots/status")
+        .then((result) => {
+          if (stopped || sessionRef.current !== account) return;
+          setBotStatuses(
+            Object.fromEntries(
+              (result.bots ?? []).map((bot) => [bot.botId, bot]),
+            ),
+          );
+        })
+        .catch(() => {});
+    poll();
+    const timer = setInterval(poll, 10000);
+    return () => {
+      stopped = true;
+      clearInterval(timer);
+    };
+  }, [api, session, hasOwnedBots]);
+
+  const openBotHome = useCallback((id: string, tab: BotHomeTab = "now") => {
+    setHomeBot({ id, tab, at: Date.now() });
+    viewRef.current = "bots";
+    setView("bots");
+  }, []);
 
   useEffect(() => {
     if (!toast) return;
@@ -1008,6 +1048,24 @@ export default function App({
       );
   }, [config, ownedBots, room, session]);
   const homeSelected = selectedSpace?.home === true;
+  const homeBotParticipant = ownedBots.find(
+    (bot) => bot.id === homeBot?.id && bot.ownerId === session?.user_id,
+  );
+  const homeBotView = homeBotParticipant ? (
+    <BotHome
+      key={homeBotParticipant.id}
+      bot={homeBotParticipant}
+      session={session}
+      api={api}
+      status={status}
+      rooms={spaces.flatMap((space) => roomsInSpace(allRooms, space))}
+      participants={participants}
+      opening={openingDirectId === homeBotParticipant.id}
+      initialTab={homeBot?.tab}
+      openedAt={homeBot?.at}
+      onDirect={(id) => void openDirect(id)}
+    />
+  ) : undefined;
 
   return (
     <>
@@ -1024,6 +1082,10 @@ export default function App({
         ownedBots={ownedBots}
         ownedBotsKnown={ownedBotsKnown}
         openingDirectId={openingDirectId}
+        botStatuses={botStatuses}
+        homeBotId={homeBot?.id ?? null}
+        botHome={homeBotView}
+        onBotHome={(id) => openBotHome(id)}
         mentionables={joinedMentionables}
         status={status}
         view={view}
@@ -1073,7 +1135,6 @@ export default function App({
         onCreateRoom={() => (session ? setRoomDialog("create") : openLogin())}
         onCreateBot={() => (session ? setCreateBotOpen(true) : openLogin())}
         onManageBots={() => {
-          setBotsSelection(null);
           if (session) setBotsOpen(true);
           else openLogin();
         }}
@@ -1246,8 +1307,7 @@ export default function App({
         owner={participants.find((person) => person.id === member?.ownerId)}
         onManageBot={(id) => {
           setMember(null);
-          setBotsSelection(id);
-          setBotsOpen(true);
+          openBotHome(id);
         }}
         onClose={() => setMember(null)}
         onDirect={(id) => {
@@ -1312,12 +1372,12 @@ export default function App({
       <MyBotsDialog
         open={botsOpen}
         bots={ownedBots}
-        api={api}
-        rooms={spaces.flatMap((space) => roomsInSpace(allRooms, space))}
-        participants={participants}
         status={status}
-        initialBotId={botsSelection}
         session={session}
+        onHome={(id) => {
+          setBotsOpen(false);
+          openBotHome(id);
+        }}
         onClose={() => setBotsOpen(false)}
         onCreate={() => {
           setBotsOpen(false);

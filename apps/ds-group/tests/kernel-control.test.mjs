@@ -50,21 +50,25 @@ test('kernel projection keeps unknowns and publishes only declared credential-fr
   assert.deepEqual(publicKernelSummary(null), {
     runtime: { id: null, version: null, upstreamVersion: null, available: null },
     attention: { mode: null, rooms: {}, provider: { configured: null, available: null, model: null }, activity: null, queue: null, lastDecision: null },
-    work: { status: 'unknown', activeTasks: null, waiting: null },
-    memorySummary: { people: null, projects: null, pendingReview: null },
+    responder: null,
+    work: { status: 'unknown', activeTasks: null, waiting: null, workers: [], queue: [] },
   });
   const output = publicKernelSummary({
     runtime: { id: 'dscord', version: '0.4.0', upstreamVersion: '0.3.1', available: true, decisionKey: 'private' },
     attention: { mode: 'natural', activity: 'listening', provider: { configured: true, available: true, model: 'provider/model', apiKey: 'private' },
       queue: { pending: 1, waiting: 2, evaluating: 0, errors: -1, private: 'private' },
       lastDecision: { id: 'd1', action: 'LISTEN', status: 'decided', outcome: 'waiting', at: 1, eventIds: ['$event'], watermark: { sequence: 1, eventId: '$event', roomId: '!room:test' }, latencyMs: 2, prompt: 'private' } },
-    work: { status: 'idle', activeTasks: 0, waiting: 0, accessToken: 'private' },
-    memorySummary: { people: 1, projects: 2, pendingReview: 3, raw: 'private' },
+    responder: { state: 'replying', roomId: '!room:test', since: 3, accessToken: 'private' },
+    work: { status: 'idle', activeTasks: 0, waiting: 0, accessToken: 'private',
+      workers: [{ taskId: 't1', title: 'Report', stage: 'running', apiKey: 'private' }], queue: ['not-an-object'] },
   });
   assert.equal(JSON.stringify(output).includes('private'), false);
   assert.equal(output.attention.queue.errors, null);
   assert.equal(output.attention.provider.model, 'provider/model');
   assert.equal(output.runtime.version, '0.4.0');
+  assert.deepEqual(output.responder, { state: 'replying', roomId: '!room:test', since: 3 });
+  assert.deepEqual(output.work.workers, [{ taskId: 't1', title: 'Report', stage: 'running' }]);
+  assert.deepEqual(output.work.queue, []);
 });
 
 test('attention desired mode persists offline, applies by revision, and reapplies to a replacement runtime', async t => {
@@ -217,12 +221,12 @@ test('owner identity, stale summaries, invalid management inputs and aborted rea
   for (const input of [{ mode: 'wrong' }, { mode: 'natural', decisionKey: 'private' }, null]) {
     assert.throws(() => app.control.setAttention(botId, input), error => error.status === 400);
   }
-  const identity = app.online(botId, 'run-1', { kernel: { runtime: { available: true }, attention: { mode: 'natural' }, memorySummary: { people: 3 } } });
-  assert.equal(app.control.snapshot(botId).memorySummary.people, 3);
+  const identity = app.online(botId, 'run-1', { kernel: { runtime: { available: true }, attention: { mode: 'natural' }, responder: { state: 'replying' } } });
+  assert.equal(app.control.snapshot(botId).responder.state, 'replying');
   app.advance(20001);
   assert.equal(app.control.snapshot(botId).online, false);
   assert.equal(app.control.snapshot(botId).runtime.available, false);
-  assert.equal(app.control.snapshot(botId).memorySummary.people, null);
+  assert.equal(app.control.snapshot(botId).responder, null);
   app.online();
   for (const input of [{ kind: 'wrong' }, { kind: 'person', id: '' }, { kind: 'person', id: {} }]) {
     assert.throws(() => app.control.readMemory(botId, input), error => error.status === 400);

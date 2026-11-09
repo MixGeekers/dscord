@@ -282,6 +282,33 @@ export class BotNode {
       ...snapshot, ...(this.lastObservationError ? { observationError: this.lastObservationError } : {}) };
   }
 
+  /** What the responder is doing now: replying to one request, deciding whether to speak, or idle. */
+  responderStatus() {
+    if (this.state === 'thinking' && this.replying) return { state: 'replying', ...this.replying };
+    if (this.store.attentionSnapshot().queue.evaluating) return { state: 'deciding', roomId: null, requesterId: null, since: null };
+    return { state: this.state === 'offline' ? 'offline' : 'idle', roomId: null, requesterId: null, since: null };
+  }
+
+  /**
+   * One timeline, newest first: requests taken on, attention decisions, task
+   * stage changes and exchanges with other Bots, all timed in milliseconds.
+   */
+  timeline({ before, limit = 50 } = {}, tasks = []) {
+    limit = Math.max(1, Math.min(200, Number(limit) || 50));
+    const cutoff = before ?? Number.MAX_SAFE_INTEGER;
+    const taskItems = tasks.filter(task => !task.joined).flatMap(task => (task.events || []).map((event, index) => ({
+      id: `task:${task.id}:${index}`, kind: 'task', at: Date.parse(event.at) || 0, taskId: task.id, title: task.title || '',
+      from: event.from ?? null, to: event.to, by: event.by || null, roomId: task.origin?.roomId || null, peerId: task.origin?.senderId || null })))
+      .filter(item => item.at < cutoff);
+    const exchanges = this.contacts.view({ limit, before: cutoff }).exchanges.map(exchange => ({ id: `exchange:${exchange.id}`, kind: 'exchange',
+      at: exchange.at, direction: exchange.direction, peerId: exchange.peerId, roomId: exchange.roomId, status: exchange.status,
+      taskId: exchange.taskId || null, detail: exchange.detail || null }));
+    const items = [...this.store.recentRequests({ before: cutoff, limit }), ...this.store.recentDecisions({ before: cutoff, limit }), ...taskItems, ...exchanges]
+      .sort((a, b) => b.at - a.at || a.id.localeCompare(b.id));
+    const page = items.slice(0, limit);
+    return { items: page, next: items.length > limit ? page.at(-1).at : null };
+  }
+
   async flushObservations() {
     if (!this.observe) return true;
     if (Date.now() < (this.observationRetryAt || 0)) return false;
@@ -1175,6 +1202,7 @@ export class BotNode {
       for (const earlier of merged) this.taskUpdate(earlier, { status: 'completed', stage: 'merged', summary: '和后面的消息一起回复' });
     }
     this.state = 'thinking';
+    this.replying = { roomId: item.event.room_id, requesterId: item.event.sender, since: Date.now() };
     let submitted = false;
     try {
       request = boundTaskRequest(request);
@@ -1225,7 +1253,7 @@ export class BotNode {
       await this.acceptResult(item, { status, errorCode: error.message });
       this.lastError = status === 'cancelled' ? null : error.message;
       if (status !== 'cancelled') this.onError(`Bot turn ${request.requestId} ended: ${error.message}`);
-    } finally { this.state = 'idle'; this.current = null; this.joining = null; }
+    } finally { this.state = 'idle'; this.current = null; this.joining = null; this.replying = null; }
     return true;
   }
 
@@ -1330,7 +1358,7 @@ export class BotNode {
       lastError: this.lastError || snapshot.lastError, model: this.model,
       engine: this.engine || ((this.bridgeMode || this.executionMode) === 'native' ? 'Native Bot runtime' : 'Bot bridge (legacy)'),
       ...(this.executionMode ? { executionMode: this.executionMode } : {}),
-      attention, kernel: { ...(kernel || {}), attention }, kernelControl: { version: 1 } });
+      attention, kernel: { ...(kernel || {}), attention, responder: this.responderStatus() }, kernelControl: { version: 1 } });
   }
 
   async heartbeatLoop() {
@@ -1490,7 +1518,9 @@ export async function runNode(argv = process.argv.slice(2)) {
     nodeId: participant.localpart, runtimeId: node.runtimeId,
     operations: { configureAttention: value => { node.configureAttention(value); return node.attentionStatus(); },
       memoryProfiles: args => bridge.memoryProfiles({ botId: participant.id, ...args }),
-      memoryProfile: args => bridge.memoryProfile({ botId: participant.id, ...args }) },
+      memoryProfile: args => bridge.memoryProfile({ botId: participant.id, ...args }),
+      contacts: args => node.contacts.view(args),
+      timeline: args => node.timeline(args) },
     onError: code => node.onError(`Kernel management: ${code}`) });
   try { await node.start(); }
   catch (error) { store.close(); await releaseLock(); throw error; }

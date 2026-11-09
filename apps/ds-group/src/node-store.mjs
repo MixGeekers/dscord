@@ -956,6 +956,31 @@ export class NodeStore {
       lastError: lastError ? { code: lastError.error_code, at: lastError.completed_at } : null };
   }
 
+  /** Requests the Bot took on, newest first, with the asker's words as they now read. */
+  recentRequests({ before, limit = 50 } = {}) {
+    return this.db.prepare(`SELECT inbox.event_id,inbox.status,inbox.error,messages.event_json FROM inbox JOIN messages USING(event_id)
+      WHERE COALESCE(json_extract(messages.event_json,'$.origin_server_ts'),0) < ?
+      ORDER BY json_extract(messages.event_json,'$.origin_server_ts') DESC LIMIT ?`).all(before ?? Number.MAX_SAFE_INTEGER, limit)
+      .map(row => {
+        const event = this.visibleMessage(JSON.parse(row.event_json));
+        const body = event.content?.['m.new_content']?.body ?? event.content?.body;
+        return { id: `request:${row.event_id}`, kind: 'request', at: event.origin_server_ts || 0, roomId: event.room_id, eventId: row.event_id,
+          peerId: event.sender, status: row.status, text: typeof body === 'string' ? body.slice(0, 500) : '', error: row.error || null };
+      });
+  }
+
+  /** Attention decisions (listen, wait or speak), newest first. */
+  recentDecisions({ before, limit = 50 } = {}) {
+    return this.db.prepare('SELECT * FROM attention_decisions WHERE created_at < ? ORDER BY created_at DESC,rowid DESC LIMIT ?')
+      .all(before ?? Number.MAX_SAFE_INTEGER, limit).map(row => {
+        const input = JSON.parse(row.input_json);
+        const result = row.result_json ? JSON.parse(row.result_json) : null;
+        return { id: `decision:${row.id}`, kind: 'decision', at: row.created_at, roomId: input.roomId || null,
+          action: result?.action || null, status: row.status, outcome: row.outcome || row.error_code || null,
+          peerId: input.currentMessages?.at(-1)?.senderId || null };
+      });
+  }
+
   snapshot() {
     const counts = Object.fromEntries(this.db.prepare('SELECT status,COUNT(*) AS count FROM inbox GROUP BY status').all().map(row => [row.status, row.count]));
     const latest = this.db.prepare('SELECT session_id FROM inbox WHERE session_id IS NOT NULL ORDER BY rowid DESC LIMIT 1').get();

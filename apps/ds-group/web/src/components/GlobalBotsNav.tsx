@@ -1,6 +1,8 @@
 import { Button } from "../../../ui/controls";
 import { useTranslation } from "../locale";
 import { shellMessages } from "../locales/shell";
+import { botHomeMessages } from "../locales/bot-home";
+import type { BotStatus } from "../bot-kernel";
 import type { Participant, Room } from "../types";
 import { Icon } from "./Icons";
 
@@ -60,26 +62,54 @@ export function GlobalBotsNav({
   );
 }
 
+/** One short line on what a Bot is doing, from the owner's status poll. */
+function statusLine(
+  t: (
+    key: keyof (typeof botHomeMessages)["en"],
+    values?: Record<string, string | number>,
+  ) => string,
+  status: BotStatus | undefined,
+  name: (id?: string | null) => string,
+) {
+  if (!status) return "";
+  if (!status.online) return t("rowOffline");
+  if (status.workers.length)
+    return t("rowWorking", { count: status.workers.length });
+  if (status.responder?.state === "replying")
+    return t("rowReplying", { name: name(status.responder.requesterId) });
+  if (status.responder?.state === "deciding") return t("rowDeciding");
+  return t("rowIdle");
+}
+
 export function GlobalBotsSidebar({
   bots,
   known,
   rooms,
+  people,
+  statuses,
   selectedRoom,
+  homeBotId,
   openingBotId,
-  onDirect,
+  onSelect,
   onManage,
   onCreate,
 }: {
   bots: Participant[];
   known: boolean;
   rooms: Room[];
+  people: Participant[];
+  statuses: Record<string, BotStatus>;
   selectedRoom: Room | null;
+  homeBotId: string | null;
   openingBotId: string | null;
-  onDirect(id: string): Promise<void> | void;
+  onSelect(id: string): void;
   onManage(): void;
   onCreate(): void;
 }) {
   const t = useTranslation(shellMessages);
+  const h = useTranslation(botHomeMessages);
+  const name = (id?: string | null) =>
+    people.find((person) => person.id === id)?.name ?? id ?? "";
   return (
     <div className="global-bots-sidebar">
       <nav
@@ -91,8 +121,11 @@ export function GlobalBotsSidebar({
           bots.map((bot, index) => {
             const direct = directRoom(rooms, bot.id);
             const selected =
-              selectedRoom?.kind === "direct" &&
-              selectedRoom.participantIds.includes(bot.id);
+              homeBotId === bot.id ||
+              (selectedRoom?.kind === "direct" &&
+                selectedRoom.participantIds.includes(bot.id));
+            const status = statuses[bot.id];
+            const line = statusLine(h, status, name);
             return (
               <Button
                 key={bot.id}
@@ -103,8 +136,7 @@ export function GlobalBotsSidebar({
                 title={bot.id}
                 aria-current={selected ? "page" : undefined}
                 aria-busy={openingBotId === bot.id}
-                disabled={openingBotId === bot.id}
-                onClick={() => onDirect(bot.id)}
+                onClick={() => onSelect(bot.id)}
               >
                 <span
                   className={`avatar avatar-bot${index % 2 ? " avatar-alternate" : ""}`}
@@ -114,7 +146,17 @@ export function GlobalBotsSidebar({
                 </span>
                 <span className="global-bot-identity">
                   <strong>{bot.name}</strong>
-                  <small>{bot.id}</small>
+                  <small
+                    data-bot-status={
+                      status
+                        ? status.online
+                          ? (status.activity ?? "unknown")
+                          : "offline"
+                        : undefined
+                    }
+                  >
+                    {line || bot.id}
+                  </small>
                 </span>
                 {openingBotId === bot.id && (
                   <span className="global-bot-opening">{t("opening")}</span>
