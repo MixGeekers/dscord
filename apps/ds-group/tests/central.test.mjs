@@ -10,10 +10,20 @@ import { verifyIdentityToken } from '../central/tokens.mjs';
 const CHAT_A = 'https://chat-a.example.org';
 const CHAT_B = 'https://chat-b.example.org';
 
-async function fixture(t, config = {}) {
+async function fixture(t, config = {}, { pages = new Map(), refreshIntervalMs = 0 } = {}) {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-'));
   let clock = Date.parse('2026-11-08T12:00:00Z');
-  const central = await createCentral({ dataRoot: root, now: () => clock,
+  const fetched = [];
+  // Chat servers' public pages, by URL; a function value is called on each read.
+  const fakeFetch = async (url, init) => {
+    fetched.push({ url: String(url), redirect: init?.redirect });
+    const page = pages.get(String(url));
+    if (page === undefined) throw new TypeError('fetch failed');
+    const value = typeof page === 'function' ? page() : page;
+    if (value instanceof Response) return value;
+    return Response.json(value);
+  };
+  const central = await createCentral({ dataRoot: root, now: () => clock, fetch: fakeFetch, refreshIntervalMs,
     config: { issuer: 'https://id.example.org', ...config } });
   await new Promise(resolve => central.server.listen(0, '127.0.0.1', resolve));
   const base = `http://127.0.0.1:${central.server.address().port}`;
@@ -21,14 +31,14 @@ async function fixture(t, config = {}) {
   const call = async (method, pathname, { token, body } = {}) => {
     const response = await fetch(base + pathname, { method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-    return { status: response.status, body: await response.json() };
+    return { status: response.status, headers: response.headers, body: await response.json() };
   };
   const register = async (username, extra = {}) => {
     const result = await call('POST', '/api/register', { body: { username, password: 'correct horse', ...extra } });
     assert.equal(result.status, 201, JSON.stringify(result.body));
     return result.body;
   };
-  return { central, root, call, register, advance: ms => { clock += ms; } };
+  return { central, root, call, register, pages, fetched, advance: ms => { clock += ms; } };
 }
 
 test('the central server publishes its account rule and keys, and the rule only narrows Matrix localparts', async t => {
@@ -178,12 +188,179 @@ test('first start seeds the saved configuration from the environment and the fil
   const env = { DSCORD_CENTRAL_ISSUER: 'https://id.example.org', DSCORD_CENTRAL_REGISTRATION: 'closed',
     DSCORD_CENTRAL_CLIENT_ORIGINS: 'https://chat-a.example.org, https://chat-b.example.org' };
   const seeded = await loadConfig(root, env);
-  assert.deepEqual(seeded, { issuer: 'https://id.example.org', registration: 'closed',
+  assert.deepEqual(seeded, { issuer: 'https://id.example.org', registration: 'closed', listing: 'review', admins: [],
     clientOrigins: ['https://chat-a.example.org', 'https://chat-b.example.org'] });
   const filename = path.join(root, 'central-config.json');
   assert.deepEqual(JSON.parse(await readFile(filename, 'utf8')), seeded);
   if (process.platform !== 'win32') assert.equal((await stat(filename)).mode & 0o777, 0o600);
   assert.deepEqual(await loadConfig(root, { ...env, DSCORD_CENTRAL_REGISTRATION: 'open' }), seeded);
   await assert.rejects(loadConfig(await mkdtemp(path.join(root, 'bad-')), { DSCORD_CENTRAL_ISSUER: 'ftp://id.example.org' }));
+  const mapped = await loadConfig(await mkdtemp(path.join(root, 'fetch-')), { DSCORD_CENTRAL_ISSUER: 'https://id.example.org',
+    DSCORD_CENTRAL_SERVER_FETCH_URLS: 'https://chat-a.example.org=http://core:18100' });
+  assert.deepEqual(mapped.serverFetchUrls, { 'https://chat-a.example.org': 'http://core:18100' });
 });
 
+
+const PAGE_A = `${CHAT_A}/.well-known/dscord/server`;
+const serverPage = (origin, extra = {}) => ({ schemaVersion: 1, central: 'https://id.example.org', origin, discovery: 'public',
+  name: 'Chat A', description: 'A place for robotics', tags: ['Robotics', 'hardware'], join: 'open',
+  members: { people: 12, bots: 3 }, ...extra });
+
+test('a chat server submits itself by origin, with no account; the index reads its page from there and waits for review', async t => {
+  const { call, register, pages, fetched } = await fixture(t, { admins: ['carol'] });
+  const root = await register('carol');
+  const alice = await register('alice');
+  const submit = origin => call('POST', '/api/servers', { body: { origin } });
+  assert.equal((await submit(`${CHAT_A}/path`)).body.code, 'SERVER_ORIGIN_INVALID');
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_UNREACHABLE');
+  pages.set(PAGE_A, new Response('{}', { status: 404 }));
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_PAGE_MISSING');
+  pages.set(PAGE_A, serverPage(CHAT_A, { central: 'https://other.example.org' }));
+  assert.equal((await submit(CHAT_A)).body.code, 'CENTRAL_MISMATCH');
+  pages.set(PAGE_A, serverPage(CHAT_B));
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_PAGE_INVALID');
+
+  pages.set(PAGE_A, serverPage(CHAT_A));
+  const submitted = await submit(CHAT_A);
+  assert.equal(submitted.status, 200, JSON.stringify(submitted.body));
+  const { number } = submitted.body.server;
+  assert.match(String(number), /^\d{8}$/, 'central gives each server an eight-digit number');
+  assert.deepEqual(submitted.body.server, { origin: CHAT_A, number, status: 'pending', note: '', discovery: 'public' });
+  assert.ok(fetched.every(entry => entry.redirect === 'error'), 'the index never follows a redirect away from the origin');
+  assert.deepEqual((await call('GET', '/api/servers?q=robot')).body.servers, [], 'a pending server is not searchable');
+  assert.deepEqual((await call('GET', `/api/servers?q=${number}`)).body.servers, [], 'not even by number');
+
+  // Only the configured administrators see and decide.
+  assert.equal((await call('GET', '/api/admin/servers', { token: alice.token })).body.code, 'ADMIN_REQUIRED');
+  assert.equal((await call('GET', '/api/admin/servers')).status, 401);
+  const overview = (await call('GET', '/api/admin/overview', { token: root.token })).body;
+  assert.deepEqual([overview.settings, overview.servers.pending, overview.accounts.people], [{ registration: 'open', listing: 'review' }, 1, 2]);
+  const queue = (await call('GET', '/api/admin/servers?status=pending', { token: root.token })).body.servers;
+  assert.deepEqual(queue.map(server => [server.origin, server.name, server.tags, server.members.people]), [[CHAT_A, 'Chat A', ['robotics', 'hardware'], 12]]);
+  const enc = encodeURIComponent(CHAT_A);
+  const decide = (status, note) => call('POST', `/api/admin/servers/${enc}/decision`, { token: root.token, body: { status, note } });
+  assert.equal((await decide('pending')).body.code, 'LISTING_STATUS_INVALID');
+  assert.equal((await decide('listed')).body.server.status, 'listed');
+
+  const found = (await call('GET', '/api/servers?q=ROBOT')).body.servers;
+  assert.deepEqual(found.map(server => [server.origin, server.number, server.join]), [[CHAT_A, number, 'open']]);
+  assert.equal(found[0].status, undefined, 'search shows listed servers without their review state');
+  assert.deepEqual((await call('GET', '/api/servers?q=robotics+gardening')).body.servers, [], 'every word must match');
+  assert.equal((await call('GET', '/api/servers?tag=hardware')).body.servers.length, 1);
+  assert.equal((await submit(CHAT_A)).body.server.status, 'listed', 'submitting again re-reads the page and keeps the decision');
+
+  // A rejected server may ask again; a banned one may not.
+  assert.equal((await decide('rejected', 'Add a description of the rules')).body.server.note, 'Add a description of the rules');
+  assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
+  const again = (await submit(CHAT_A)).body.server;
+  assert.deepEqual([again.status, again.number, again.note], ['pending', number, 'Add a description of the rules']);
+  await decide('banned');
+  assert.equal((await submit(CHAT_A)).body.code, 'SERVER_BANNED');
+  assert.equal((await decide('listed')).body.server.status, 'listed', 'lifting a ban lists the server again');
+
+  assert.equal((await call('DELETE', `/api/admin/servers/${enc}`, { token: root.token })).status, 200);
+  assert.deepEqual((await call('GET', '/api/admin/servers', { token: root.token })).body.servers, []);
+  assert.notEqual((await submit(CHAT_A)).body.server.status, undefined, 'a removed server can submit again');
+});
+
+test('administrators can list new servers at once and close registration; settings outlive the configuration', async t => {
+  const { call, register, pages } = await fixture(t, { admins: ['carol'] });
+  const root = await register('carol');
+  assert.equal((await call('POST', '/api/admin/settings', { token: root.token, body: { listing: 'later' } })).body.code, 'LISTING_INVALID');
+  const saved = await call('POST', '/api/admin/settings', { token: root.token, body: { listing: 'open', registration: 'closed' } });
+  assert.deepEqual(saved.body.settings, { registration: 'closed', listing: 'open' });
+  assert.equal((await call('GET', '/.well-known/dscord/central')).body.registration, 'closed');
+  assert.equal((await call('POST', '/api/register', { body: { username: 'late', password: 'correct horse' } })).body.code, 'REGISTRATION_CLOSED');
+  pages.set(PAGE_A, serverPage(CHAT_A));
+  assert.equal((await call('POST', '/api/servers', { body: { origin: CHAT_A } })).body.server.status, 'listed');
+  assert.equal((await call('GET', '/api/servers')).body.servers.length, 1);
+});
+
+test('administrators disable and restore accounts, but not their own', async t => {
+  const { call, register } = await fixture(t, { admins: ['carol'] });
+  const root = await register('carol');
+  const alice = await register('alice', { displayName: '爱丽丝' });
+  await call('POST', '/api/bots', { token: alice.token, body: { username: 'helper' } });
+  const listed = (await call('GET', '/api/admin/accounts?q=%E7%88%B1', { token: root.token })).body.accounts;
+  assert.deepEqual(listed.map(account => [account.username, account.status, account.servers]), [['alice', 'active', 0]]);
+  assert.deepEqual((await call('GET', '/api/admin/accounts?kind=bot', { token: root.token })).body.accounts.map(account => [account.username, account.owner]),
+    [['helper', 'alice@id.example.org']]);
+  const id = listed[0].id;
+  assert.equal((await call('POST', `/api/admin/accounts/${listed[0].id}/disable`, { token: root.token })).body.account.status, 'disabled');
+  assert.equal((await call('GET', '/api/me', { token: alice.token })).status, 401, 'disabling ends the sessions');
+  assert.equal((await call('POST', '/api/login', { body: { username: 'alice', password: 'correct horse' } })).body.code, 'ACCOUNT_DISABLED');
+  assert.equal((await call('GET', '/api/admin/overview', { token: root.token })).body.accounts.disabled, 1);
+  assert.equal((await call('POST', `/api/admin/accounts/${id}/enable`, { token: root.token })).body.account.status, 'active');
+  assert.equal((await call('POST', '/api/login', { body: { username: 'alice', password: 'correct horse' } })).status, 200);
+  const rootId = (await call('GET', '/api/admin/accounts?q=carol', { token: root.token })).body.accounts[0].id;
+  assert.equal((await call('POST', `/api/admin/accounts/${rootId}/disable`, { token: root.token })).body.code, 'ADMIN_SELF');
+});
+
+test('the index keeps reading servers; hidden or silent servers drop out of search', async t => {
+  const { call, register, pages, central, advance } = await fixture(t, { listing: 'open' });
+  let page = serverPage(CHAT_A);
+  pages.set(PAGE_A, () => page);
+  const { number } = (await call('POST', '/api/servers', { body: { origin: CHAT_A } })).body.server;
+  assert.equal((await call('GET', '/api/servers')).body.servers.length, 1);
+
+  page = { ...page, name: 'Chat A renamed', discovery: 'number' };
+  await central.directory.refreshAll();
+  assert.deepEqual((await call('GET', '/api/servers?q=chat')).body.servers, [], 'a server found only by number stays out of keyword search');
+  assert.deepEqual((await call('GET', `/api/servers?q=${number}`)).body.servers.map(server => server.name), ['Chat A renamed']);
+  assert.deepEqual((await call('GET', `/api/servers?q=${number === 99999999 ? 10000000 : number + 1}`)).body.servers, [], 'a number matches exactly');
+  page = { ...page, discovery: 'hidden' };
+  await central.directory.refreshAll();
+  assert.deepEqual((await call('GET', `/api/servers?q=${number}`)).body.servers, [], 'a hidden server cannot be found even by number');
+  page = { ...page, discovery: 'public' };
+  await central.directory.refreshAll();
+  assert.equal((await call('GET', '/api/servers')).body.servers[0].name, 'Chat A renamed');
+
+  // A page that can no longer be read keeps the last listing until it goes stale.
+  pages.set(PAGE_A, new Response('{}', { status: 404 }));
+  await central.directory.refreshAll();
+  const kept = central.directory.adminView(central.directory.server(CHAT_A));
+  assert.deepEqual([kept.name, kept.lastError], ['Chat A renamed', 'SERVER_PAGE_MISSING']);
+  advance(3 * 24 * 60 * 60 * 1000 + 1);
+  assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
+  pages.set(PAGE_A, () => page);
+  page = { ...page, name: 'Chat A' };
+  await call('POST', '/api/servers', { body: { origin: CHAT_A } });
+  assert.equal((await call('GET', '/api/servers')).body.servers[0].name, 'Chat A');
+  await register('alice');
+});
+
+test('search ranks by people, caps results and is open to any web page', async t => {
+  const { call, pages } = await fixture(t, { listing: 'open', serverFetchUrls: { [CHAT_B]: 'http://chat-b.internal:8080' } });
+  for (const [origin, base, people] of [[CHAT_A, CHAT_A, 3], [CHAT_B, 'http://chat-b.internal:8080', 40]]) {
+    pages.set(`${base}/.well-known/dscord/server`, serverPage(origin, { name: origin, members: { people, bots: 0 } }));
+    assert.equal((await call('POST', '/api/servers', { body: { origin } })).status, 200);
+  }
+  const all = await call('GET', '/api/servers');
+  assert.deepEqual(all.body.servers.map(server => server.origin), [CHAT_B, CHAT_A]);
+  assert.equal(all.headers.get('access-control-allow-origin'), '*');
+  assert.deepEqual((await call('GET', '/api/servers?limit=1')).body.servers.map(server => server.origin), [CHAT_B]);
+  assert.equal((await call('GET', '/.well-known/dscord/central')).body.serverIndexUri, 'https://id.example.org/api/servers');
+});
+
+test('the central server serves its administration panel at /admin', async t => {
+  const web = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-admin-'));
+  t.after(() => rm(web, { recursive: true, force: true }));
+  const { writeFile, mkdir } = await import('node:fs/promises');
+  await mkdir(path.join(web, 'assets'));
+  await writeFile(path.join(web, 'index.html'), '<!doctype html><title>panel</title>');
+  await writeFile(path.join(web, 'assets', 'app.js'), 'export {}');
+  const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-'));
+  const central = await createCentral({ dataRoot: root, refreshIntervalMs: 0, adminWebRoot: web, config: { issuer: 'https://id.example.org' } });
+  await new Promise(resolve => central.server.listen(0, '127.0.0.1', resolve));
+  t.after(async () => { await central.close(); await rm(root, { recursive: true, force: true }); });
+  const base = `http://127.0.0.1:${central.server.address().port}`;
+  for (const route of ['/admin', '/admin/', '/admin/servers']) {
+    const response = await fetch(base + route);
+    assert.equal(response.headers.get('content-type'), 'text/html; charset=utf-8', route);
+    assert.match(await response.text(), /panel/);
+  }
+  const script = await fetch(`${base}/admin/assets/app.js`);
+  assert.equal(script.headers.get('content-type'), 'text/javascript; charset=utf-8');
+  assert.equal((await fetch(`${base}/admin/assets/missing.js`)).status, 404);
+  assert.equal((await fetch(`${base}/admin/..%2f..%2fcentral.sqlite`)).status, 404);
+});

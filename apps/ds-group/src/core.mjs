@@ -29,6 +29,8 @@ import { botRoutes } from './core/bot-routes.mjs';
 import { attachmentRoutes } from './core/attachment-routes.mjs';
 import { roomRoutes } from './core/room-routes.mjs';
 import { nodeRoutes, pushRoutes, NODE_OFFLINE_MS } from './core/node-routes.mjs';
+import { serverPage } from './core/server-page.mjs';
+import { InviteStore } from './invites.mjs';
 export { readJsonBody } from './http-json.mjs';
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -73,6 +75,12 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   }
   const governance = new Governance({ dataRoot, serverName: setup.serverName });
   const collaboration = new CollaborationService({ setup, governance, accounts });
+  const invites = new InviteStore({ dataRoot });
+  // What a client reads before signing in: the central server to use, and whether joining here needs an invitation.
+  const discovery = async () => {
+    const { directory } = await governance.read();
+    return { ...identity.discovery(), directory: { join: directory.join, number: directory.number } };
+  };
   const roomMedia = new RoomMedia({ governance });
   const directorySetup = { ...setup, participants: [] };
   const nodeCredentials = await new NodeCredentials({ dataRoot, setup, legacySecret: config.nodeSecret }).initialize();
@@ -101,7 +109,7 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   const tasks = new TaskService({ setup, dataRoot, authorizeNode, readJsonBody, participants: publicParticipants });
   const botWork = new BotWorkService({ setup, accounts, governance, dataRoot, authorizeNode, readJsonBody, tasks,
     nativeBot: id => nativeBots.isNative(id), maxBytes: () => media.maxBytes });
-  const app = { setup, config, accounts, nativeBots, identity, governance, nodeCredentials, budget, media, attachmentAccess, chat, chatFeatures, tasks,
+  const app = { setup, config, accounts, nativeBots, identity, discovery, invites, governance, nodeCredentials, budget, media, attachmentAccess, chat, chatFeatures, tasks,
     push, nodes, kernelControl, trustProxy, webMode, startedAt, publicParticipants,
     nodeSnapshot: () => accounts.publicParticipants().filter(p => p.kind === 'bot').map(participant => {
       const active = nodes.get(participant.id);
@@ -126,7 +134,13 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
     if (request.method === 'OPTIONS' && (isApi || pathname.startsWith('/.well-known/'))) {
       response.writeHead(204, { 'Cache-Control': 'no-store' }); response.end(); return;
     }
-    if (request.method === 'GET' && (pathname === '/.well-known/dscord/client' || pathname === '/api/client-config')) return send(200, identity.discovery());
+    if (request.method === 'GET' && (pathname === '/.well-known/dscord/client' || pathname === '/api/client-config')) return send(200, await discovery());
+    if (request.method === 'GET' && pathname === '/.well-known/dscord/server') {
+      // The page the central server's index reads; it only exists once an operator has started listing this server.
+      const page = serverPage({ policy: await governance.read(), identity, participants: accounts.publicParticipants() });
+      if (!page) return send(404, { error: 'This server is not in a directory', code: 'NOT_LISTED' });
+      return send(200, page);
+    }
     if (request.method === 'GET' && pathname === '/.well-known/matrix/client') return send(200, {
       'm.homeserver': { base_url: identity.home.matrixUrl }, 'org.dscord.client': { base_url: identity.home.coreUrl },
     });
@@ -195,6 +209,7 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
     if (push) await push.close();
     await nodeCredentials.close();
     accounts.close();
+    invites.close();
     await media.close();
     tasks.close();
     botWork.close();

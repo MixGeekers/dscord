@@ -230,9 +230,17 @@ export class ConnectController {
   }
 
   /** The owner's session on one chat server, signed in with an identity token for it. */
-  async ownerSession(server, centralToken, centralUrl) {
-    const login = await this.remote(server.url, server.sessionPath, { method: 'POST',
-      body: { identityToken: await this.identityToken(centralToken, server.audience, centralUrl) } });
+  async ownerSession(server, centralToken, centralUrl, inviteCode = '') {
+    let login;
+    try {
+      login = await this.remote(server.url, server.sessionPath, { method: 'POST',
+        body: { identityToken: await this.identityToken(centralToken, server.audience, centralUrl),
+          ...(typeof inviteCode === 'string' && inviteCode.trim() ? { inviteCode: inviteCode.trim() } : {}) } });
+    } catch (error) {
+      if (error.remoteCode === 'INVITE_REQUIRED') throw Object.assign(new Error('这台服务器只接受邀请加入，请填写邀请码'), { remoteCode: error.remoteCode });
+      if (error.remoteCode === 'INVITE_INVALID') throw Object.assign(new Error('邀请码不对、已过期或已撤销'), { remoteCode: error.remoteCode });
+      throw error;
+    }
     if (!login.access_token || !login.user_id) {
       if (login?.access_token) await this.signOut(server.url, login.access_token);
       throw new Error('服务器登录响应不完整');
@@ -246,7 +254,7 @@ export class ConnectController {
   }
 
   /** Sign in to the central server that a chat server trusts, and add that server. */
-  async login({ serverUrl: input, user, password }) {
+  async login({ serverUrl: input, user, password, inviteCode }) {
     if (typeof user !== 'string' || !user.trim() || typeof password !== 'string' || !password) throw new Error('请输入账号和密码');
     const discovered = await this.discover(input);
     const { centralUrl } = discovered;
@@ -258,7 +266,7 @@ export class ConnectController {
     let server;
     let bots;
     try {
-      server = await this.ownerSession(discovered, central.token, centralUrl);
+      server = await this.ownerSession(discovered, central.token, centralUrl, inviteCode);
       bots = await this.ownedBots({ centralUrl, centralToken: central.token, servers: { ...(kept.servers || {}), [server.url]: server },
         nativeLinks: kept.nativeLinks, hostId: previous.hostId });
     } catch (error) {
@@ -289,11 +297,11 @@ export class ConnectController {
   }
 
   /** Add another chat server that trusts the owner's central server. */
-  async addServer({ serverUrl: input }) {
+  async addServer({ serverUrl: input, inviteCode }) {
     if (!this.state.centralToken) throw new Error('请先登录');
     const discovered = await this.discover(input);
     if (discovered.centralUrl !== this.state.centralUrl) throw new Error('这台聊天服务器接入的是另一个中央服务器');
-    const server = await this.ownerSession(discovered, this.state.centralToken);
+    const server = await this.ownerSession(discovered, this.state.centralToken, undefined, inviteCode);
     const previous = this.state;
     const servers = { ...previous.servers, [server.url]: server };
     let bots;
@@ -304,6 +312,17 @@ export class ConnectController {
     this.state = next;
     await this.closeSessions(previous);
     return this.status({ refresh: false });
+  }
+
+  /** Search the central server's index for chat servers to add. */
+  async searchServers({ query }) {
+    if (!this.state.centralUrl) throw new Error('请先登录');
+    const q = typeof query === 'string' ? query.trim().slice(0, 200) : '';
+    const { servers } = await this.remote(this.state.centralUrl, `/api/servers?${new URLSearchParams({ q })}`);
+    if (!Array.isArray(servers)) throw new Error('中央服务器没有返回服务器列表');
+    const added = new Set(this.servers().map(server => new URL(server.url).origin));
+    return { servers: servers.map(server => ({ origin: server.origin, number: server.number, join: server.join, name: server.name,
+      description: server.description, tags: server.tags, members: server.members, added: added.has(server.origin) })) };
   }
 
   /** Remove a chat server: its Bot connections stop and the owner's session there ends. */
@@ -568,6 +587,7 @@ export class ConnectController {
         botId: body.nativeBotId, kind: body.kind, ...(body.id ? { id: body.id } : {}),
         ...(body.roomId ? { roomId: body.roomId } : {}), ...(body.query ? { query: body.query } : {}) });
     }
+    if (body.action === 'search-servers') return this.searchServers(body);
     return this.serial(async () => {
       if (this.closed) throw new Error('连接插件正在关闭');
       switch (body.action) {

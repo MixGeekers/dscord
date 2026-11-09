@@ -16,6 +16,8 @@ export interface ClientDiscovery {
     sessionPath: string;
     cookieCredentials: false;
   };
+  /** Whether joining needs an invitation, and the number the central index gave this server. */
+  directory?: { join: "open" | "invite"; number: number | null };
 }
 
 /** Deployment configuration is read from the client origin, never from navigation. */

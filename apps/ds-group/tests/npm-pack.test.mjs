@@ -29,7 +29,7 @@ async function fixture(t) {
     'web/mention-tokens.js': 'export {};',
     'dist/web/index.html': '<!doctype html>', 'dist/web/sw.js': '// worker',
     'dist/web/client-config.json': '{}',
-    'dist/admin/index.html': '<!doctype html>', 'dist/admin/theme.js': '// theme',
+    'dist/admin/index.html': '<!doctype html>', 'dist/admin/theme.js': '// theme', 'dist/central-admin/index.html': '<!doctype html>',
     'deploy/synapse/dscord_guard.py': '# Synapse admission module',
     'dist/web/licenses/lucide.txt': 'ISC and MIT notices',
     'dist/web/licenses/ui-foundation.txt': 'MIT and Apache-2.0 notices',
@@ -72,7 +72,7 @@ test('npm packs the exact source version, runtime and licenses without internal 
     'dist/web/index.html', 'dist/web/sw.js', 'dist/web/licenses/lucide.txt', 'dist/web/licenses/ui-foundation.txt', 'dist/admin/licenses/ui-foundation.txt', 'vendor/ds-bot/LICENSE',
     'dist/web/licenses/bundled-dependencies.txt', 'dist/admin/licenses/bundled-dependencies.txt',
     'vendor/ds-bot/NOTICE', 'dsh-plugin/runtime-dependencies-lock.json', 'dsh-connect/index.mjs',
-    'dsh-connect/client.js', 'cordis.patch.yml', 'dist/admin/index.html', 'dist/admin/theme.js', 'deploy/synapse/dscord_guard.py', 'scripts/admin.mjs']) assert.ok(result.files.includes(name), name);
+    'dsh-connect/client.js', 'cordis.patch.yml', 'dist/admin/index.html', 'dist/admin/theme.js', 'dist/central-admin/index.html', 'deploy/synapse/dscord_guard.py', 'scripts/admin.mjs']) assert.ok(result.files.includes(name), name);
   assert.equal(result.files.some(name => /\.local|\.npmrc|artifacts|\.env|\.vite|credentials|personal-config|实施与长程测试|vendor\/ds-bot\/README/.test(name)), false);
   assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).private, true);
   const { stdout } = await promisify(execFile)('tar', ['-xOf', result.archive, 'package/package.json']);

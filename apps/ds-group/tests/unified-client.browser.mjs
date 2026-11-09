@@ -84,6 +84,7 @@ const events = new Map(
   ]),
 );
 const state = {
+  sessionInvites: [],
   joined: new Set([homeRoom, secondHomeRoom, aRoom]),
   tokens: new Map([["legacy-fixture-token", homeUser]]),
   uploads: [],
@@ -149,6 +150,7 @@ function publicConfig(origin = homeOrigin) {
       sessionPath: "/api/session",
       cookieCredentials: false,
     },
+    directory: { join: "invite", number: 48213907 },
   };
 }
 function identity(userId) {
@@ -310,7 +312,8 @@ async function apiHandler(request, response, origin = homeOrigin) {
     return json(response, 200, { enabled: false });
   if (url.pathname === "/api/session") {
     // Identity tokens from the synthetic central name the central session they came from.
-    const { identityToken } = JSON.parse(await readBody(request));
+    const { identityToken, inviteCode } = JSON.parse(await readBody(request));
+    state.sessionInvites.push(inviteCode ?? null);
     const [, username, audience] =
       /^identity:central-(alice|bob):(.+)$/.exec(identityToken) ?? [];
     if (!username || audience !== origin)
@@ -340,6 +343,8 @@ async function apiHandler(request, response, origin = homeOrigin) {
       home: publicConfig(origin).home,
     });
   }
+  if (url.pathname === "/api/invites" && request.method === "POST")
+    return json(response, 201, { invite: { code: "K7M2-9QXP", createdBy: userId, uses: 0 } });
   if (url.pathname === "/api/logout") {
     state.logout.push(token);
     state.tokens.delete(token);
@@ -687,6 +692,12 @@ try {
       return json(response, 200, { token: `identity:${token}:${audience}` });
     }
     if (url.pathname === "/api/logout") return json(response, 200, { loggedOut: true });
+    if (url.pathname === "/api/servers") {
+      const q = url.searchParams.get("q") || "";
+      const servers = [{ origin: unknownOrigin, number: 48213907, join: "invite", name: "Robotics club", description: "Arms and wheels",
+        tags: ["robots"], members: { people: 12, bots: 2 }, owner: "carol@central.test", updatedAt: "2026-11-08T12:00:00.000Z" }];
+      return json(response, 200, { servers: servers.filter((server) => String(server.number) === q || server.name.toLowerCase().includes(q.toLowerCase())) });
+    }
     return json(response, 404, { error: "Unknown central route" });
   }, 24364);
   browser = await chromium.launch({ headless: true });
@@ -699,13 +710,17 @@ try {
   ]);
   page = await context.newPage();
   page.on("pageerror", (error) => pageErrors.push(error.message));
-  await page.goto(clientOrigin);
+  await page.goto(`${clientOrigin}/?invite=wxyz-2345`);
   await page.locator("#login-dialog[open]").waitFor();
+  // The server only takes invited people, so the invitation link's code fills the sign-in form.
+  assert.equal(await page.locator("#login-invite").inputValue(), "wxyz-2345");
   await page.screenshot({ path: path.join(output, "forms-login-desktop.png"), animations: "disabled" });
   await page.locator("#login-user").fill("alice");
   await page.locator("#login-password").fill("synthetic-password");
   await page.locator("#login-submit").click();
   await page.locator("#login-dialog").waitFor({ state: "hidden" });
+  assert.deepEqual(state.sessionInvites, ["wxyz-2345"]);
+  assert.equal(new URL(page.url()).searchParams.get("invite"), null, "the code leaves the address once used");
   await page.locator("#room-title").filter({ hasText: "General" }).waitFor();
   await page.locator('[data-server="a.test"]').waitFor();
   assert.equal(await page.locator("[data-server]").count(), 4);
@@ -956,29 +971,61 @@ try {
     .locator("#space-feedback")
     .filter({ hasText: "Join rejected" })
     .waitFor();
-  await page.locator("#server-url").fill(unknownOrigin);
-  await page.locator("#check-server").click();
+  await page.locator("#server-search").fill("gardening");
+  await page.locator("#search-servers").click();
   await page
     .locator("#server-feedback")
-    .filter({ hasText: "Public discovery" })
+    .filter({ hasText: "No listed server matches" })
     .waitFor();
-  const discoveredRequests = records.filter(
-    (row) => row.origin === unknownOrigin,
+  await page.locator("#server-search").fill("robot");
+  await page.locator("#search-servers").click();
+  const listed = page.locator(`#server-results [data-server="${unknownOrigin}"]`);
+  await listed.filter({ hasText: "Robotics club" }).waitFor();
+  assert.equal(await listed.locator("a").getAttribute("href"), unknownOrigin);
+  assert.equal(await listed.locator("a").getAttribute("rel"), "noopener noreferrer");
+  await listed.filter({ hasText: "No. 48213907" }).filter({ hasText: "Invitation only" }).waitFor();
+  await page.locator("#server-search").fill("48213907");
+  await page.locator("#search-servers").click();
+  await listed.filter({ hasText: "Robotics club" }).waitFor();
+  const searchRequests = records.filter(
+    (row) => row.origin === centralOrigin && row.path === "/api/servers",
   );
-  assert.ok(discoveredRequests.length > 0);
-  assert.ok(
-    discoveredRequests.every((row) => !row.authorization && !row.cookie),
-  );
-  await page.locator("#server-url").fill(trapOrigin);
-  await page.locator("#check-server").click();
-  await page
-    .locator("#server-feedback")
-    .filter({ hasText: "Failed to fetch" })
-    .waitFor();
+  assert.equal(searchRequests.length, 3);
+  assert.ok(searchRequests.every((row) => !row.authorization && !row.cookie));
+  await page.locator("#create-invite").click();
+  await page.locator("#invite-code").waitFor();
+  assert.equal(await page.locator("#invite-code").inputValue(), "K7M2-9QXP");
+  assert.equal(new URL(await page.locator("#invite-link").inputValue()).searchParams.get("invite"), "K7M2-9QXP");
+  await page.locator("#server-invite").filter({ hasText: "48213907" }).waitFor();
+  await page.locator("#server-invite").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, "server-invite-desktop.png"), animations: "disabled" });
+  await listed.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, "server-search-desktop.png"), animations: "disabled" });
   assert.equal(trapRequests.length, 0);
   await page.locator("#spaces-dialog .dialog-heading button").click();
+  // The same dialogs in Chinese.
+  const setLanguage = async (value) => {
+    await page.locator("#identity-button").click();
+    await page.locator("#settings-button").click();
+    await page.locator('[data-settings-tab="appearance"]').click();
+    await page.locator("#language-select").selectOption(value);
+    await page.locator("#close-settings").click();
+  };
+  await setLanguage("zh-CN");
+  await page.locator("#server-settings-button").click();
+  await page.locator("#create-invite").click();
+  await page.locator("#invite-code").waitFor();
+  await page.locator("#server-search").fill("48213907");
+  await page.locator("#search-servers").click();
+  await listed.filter({ hasText: "号码 48213907" }).filter({ hasText: "只凭邀请加入" }).waitFor();
+  await page.locator("#server-invite").scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, "server-invite-zh-desktop.png"), animations: "disabled" });
+  await listed.scrollIntoViewIfNeeded();
+  await page.screenshot({ path: path.join(output, "server-search-zh-desktop.png"), animations: "disabled" });
+  await page.locator("#spaces-dialog .dialog-heading button").click();
+  await setLanguage("en");
   checks.push(
-    "rejectedJoinRemainsRejectedAndUnknownDiscoveryOmitsCookiesTokensAndRedirects",
+    "rejectedJoinRemainsRejectedAndServerSearchUsesTheCentralIndexWithoutCredentials",
   );
 
   await page.locator("#identity-button").click();
@@ -1524,8 +1571,14 @@ try {
 
   await page.locator("#identity-button").click();
   await page.locator("#settings-button").click();
+  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator("#language-select").selectOption("zh-CN");
+  await page.locator('[data-settings-tab="account"]').click();
   await page.locator("#logout-button").click();
   await page.locator("#login-dialog[open]").waitFor();
+  await page.locator("#login-invite").waitFor();
+  await page.getByText("本服务器只接受邀请加入。已经是成员的人不用填。", { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, "forms-login-invite-zh-desktop.png"), animations: "disabled" });
   assert.equal(await page.evaluate((key) => sessionStorage.getItem(key), botCacheKey), null);
   await page.locator("#login-user").fill("redirect");
   await page.locator("#login-password").fill("synthetic-password");
@@ -1543,6 +1596,7 @@ try {
     () =>
       document.querySelector("#current-id").textContent === "@bob:home.test",
   );
+  await setLanguage("en");
   await page.locator("#global-bots-button").click();
   assert.equal(await page.locator("#owned-bots [data-owned-bot-id]").count(), 0);
   assert.equal(await page.locator("#message-input").textContent(), "");

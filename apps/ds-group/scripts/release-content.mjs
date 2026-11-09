@@ -61,7 +61,7 @@ export function includedSourceFile(relative) {
 
 export function includedNpmFile(relative) {
   if (excludedReleasePath(relative)) return false;
-  if (relative.startsWith('dist/web/') || relative.startsWith('dist/admin/')) return asset.test(relative)
+  if (['dist/web/', 'dist/admin/', 'dist/central-admin/'].some(prefix => relative.startsWith(prefix))) return asset.test(relative)
     || code.test(relative) || /\/licenses\/[^/]+\.txt$/.test(relative);
   return includedSourceFile(relative);
 }

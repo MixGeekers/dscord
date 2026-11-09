@@ -18,7 +18,7 @@ export function dshEngineRange(version = DSH_VERSION) {
   return `>=${version} <${major === 0 ? `0.${minor + 1}.0` : `${major + 1}.0.0`}`;
 }
 const runtimeFiles = [
-  'bin/dscord.mjs', 'src', 'central', 'memory', 'service/ombre', 'web/mention-tokens.js', 'dist/web', 'dist/admin', 'deploy/synapse', 'dsh-plugin', 'dsh-connect', 'cordis.patch.yml', 'vendor/ds-bot',
+  'bin/dscord.mjs', 'src', 'central', 'memory', 'service/ombre', 'web/mention-tokens.js', 'dist/web', 'dist/admin', 'dist/central-admin', 'deploy/synapse', 'dsh-plugin', 'dsh-connect', 'cordis.patch.yml', 'vendor/ds-bot',
   ...['service', 'matrix', 'runtime-config', 'runtime-dependencies', 'dsh-node', 'file-work', 'server-init', 'server-bootstrap', 'server-admin', 'admin', 'memory-setup']
     .map(name => `scripts/${name}.mjs`),
   '模型配置与迁移.md',
@@ -80,7 +80,7 @@ export async function packNpm({ root = packageRoot, output = path.join(root, '.l
   assertReleaseVersions(source, JSON.parse(await readFile(path.join(root, 'package-lock.json'), 'utf8')), version);
   const legalFiles = await projectLicense(root, source);
   await verifyRuntimeDependencyManifests(root);
-  for (const filename of ['dist/web/index.html', 'dist/web/sw.js', 'dist/web/client-config.json', 'dist/web/licenses/lucide.txt', 'dist/web/licenses/ui-foundation.txt', 'dist/admin/index.html', 'dist/admin/licenses/ui-foundation.txt', 'deploy/synapse/dscord_guard.py',
+  for (const filename of ['dist/web/index.html', 'dist/web/sw.js', 'dist/web/client-config.json', 'dist/web/licenses/lucide.txt', 'dist/web/licenses/ui-foundation.txt', 'dist/admin/index.html', 'dist/admin/licenses/ui-foundation.txt', 'dist/central-admin/index.html', 'deploy/synapse/dscord_guard.py',
     'dist/web/licenses/bundled-dependencies.txt', 'dist/admin/licenses/bundled-dependencies.txt',
     'dsh-connect/kernel-runtime.mjs', 'memory/snapshot-context.mjs', 'src/native-request.mjs', 'vendor/ds-bot/src/host/message-source.js', 'vendor/ds-bot/LICENSE', 'vendor/ds-bot/NOTICE',
     'vendor/ds-bot/UPSTREAM.json', 'service/ombre/LICENSE', 'service/ombre/SOURCE.json']) {
@@ -97,7 +97,7 @@ export async function packNpm({ root = packageRoot, output = path.join(root, '.l
     exports: { '.': './dsh-connect/index.mjs', './client': './dsh-connect/client.js', './package.json': './package.json' },
     dsh: { bundle: { patch: './cordis.patch.yml' }, client: { platform: 'web', immediately: true } },
     bin: { dscord: 'bin/dscord.mjs' },
-    files: ['bin', 'src', 'central', 'memory', 'service/ombre', 'scripts', 'web/mention-tokens.js', 'dist/web', 'dist/admin', 'deploy/synapse', 'dsh-plugin', 'dsh-connect', 'cordis.patch.yml', 'vendor/ds-bot', '模型配置与迁移.md', ...legalFiles],
+    files: ['bin', 'src', 'central', 'memory', 'service/ombre', 'scripts', 'web/mention-tokens.js', 'dist/web', 'dist/admin', 'dist/central-admin', 'deploy/synapse', 'dsh-plugin', 'dsh-connect', 'cordis.patch.yml', 'vendor/ds-bot', '模型配置与迁移.md', ...legalFiles],
     dependencies: source.dependencies,
     repository: { type: 'git', url: 'git+https://github.com/MixGeekers/dscord.git', directory: 'apps/ds-group' },
     homepage: 'https://github.com/MixGeekers/dscord',

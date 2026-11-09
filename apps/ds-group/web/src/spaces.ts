@@ -1,4 +1,3 @@
-import { httpOrigin } from "./client-config.ts";
 import type { Room } from "./types";
 
 export interface SpaceRoom {
@@ -52,46 +51,4 @@ export function roomsInSpace(
       },
     ];
   });
-}
-
-export interface DiscoveredServer {
-  origin: string;
-  name: string;
-  serverName: string;
-  centralIssuer: string | null;
-}
-
-export async function discoverServer(
-  address: string,
-  signal?: AbortSignal,
-): Promise<DiscoveredServer> {
-  const origin = httpOrigin(address.trim(), "Server address", true);
-  const options: RequestInit = {
-    credentials: "omit",
-    redirect: "error",
-    cache: "no-store",
-    referrerPolicy: "no-referrer",
-    signal: signal
-      ? AbortSignal.any([signal, AbortSignal.timeout(10000)])
-      : AbortSignal.timeout(10000),
-  };
-  const response = await fetch(
-    new URL("/.well-known/dscord/client", origin),
-    options,
-  );
-  if (!response.ok) throw new Error(`HTTP ${response.status}`);
-  const value = (await response.json()) as {
-    schemaVersion: number;
-    name?: string;
-    central: { issuer: string } | null;
-    home: { serverName: string };
-  };
-  if (value.schemaVersion !== 2 || !value.home?.serverName)
-    throw new Error("This address is not a DSCord service");
-  return {
-    origin,
-    name: value.name || value.home.serverName,
-    serverName: value.home.serverName,
-    centralIssuer: value.central?.issuer ?? null,
-  };
 }

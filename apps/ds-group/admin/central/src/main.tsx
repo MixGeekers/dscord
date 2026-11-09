@@ -1,0 +1,10 @@
+import { createRoot } from "react-dom/client";
+import CentralApp from "./CentralApp";
+import "../../../web/tokens.css";
+import "../../../ui/tailwind.css";
+import "../../src/styles.css";
+import "./styles.css";
+import "../../../ui/styles.css";
+const root = document.getElementById("root");
+if (!root) throw new Error("DSCord Central administration root is missing");
+createRoot(root).render(<CentralApp />);

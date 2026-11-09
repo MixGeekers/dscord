@@ -1,7 +1,8 @@
 import { Button, Input } from "../../../ui/controls";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, messageOf } from "../api";
-import { discoverServer } from "../spaces";
+import { searchServers } from "../central";
+import type { ListedServer } from "../central";
 import type { CollaborationSpace } from "../spaces";
 import { useTranslation } from "../locale";
 import { spaceMessages } from "../locales/spaces";
@@ -14,6 +15,9 @@ export function SpacesDialog(props: {
   selectedServer: string | null;
   api: Api;
   session: Session | null;
+  centralIssuer: string | null;
+  /** The number the central index gave this server, if it is listed. */
+  serverNumber?: number | null;
   onClose(): void;
   onServer(name: string): void;
   onChanged(): void;
@@ -25,11 +29,17 @@ export function SpacesDialog(props: {
   const latest = useRef(props);
   latest.current = props;
   const discovery = useRef<AbortController | null>(null);
-  const [address, setAddress] = useState("");
+  const [query, setQuery] = useState("");
   const [roomId, setRoomId] = useState("");
   const [feedback, setFeedback] = useState("");
-  const [found, setFound] = useState("");
-  const [checking, setChecking] = useState(false);
+  const [found, setFound] = useState<ListedServer[] | null>(null);
+  const [searchError, setSearchError] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [invite, setInvite] = useState<{ code: string; link: string } | null>(
+    null,
+  );
+  const [inviting, setInviting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (props.open && !dialog.current?.open) dialog.current?.showModal();
@@ -38,23 +48,44 @@ export function SpacesDialog(props: {
       discovery.current?.abort();
     }
     setFeedback("");
-    setFound("");
+    setFound(null);
+    setSearchError("");
   }, [props.open, props.session]);
   useEffect(() => () => discovery.current?.abort(), []);
-  async function check() {
+  async function createInvite() {
+    setInviting(true);
+    setCopied(false);
+    try {
+      const { invite: created } = await props.api<{
+        invite: { code: string };
+      }>("/api/invites", { method: "POST", body: {} });
+      const link = new URL(location.pathname, location.origin);
+      link.searchParams.set("invite", created.code);
+      setInvite({ code: created.code, link: link.href });
+    } catch (reason) {
+      setFeedback(messageOf(reason));
+    } finally {
+      setInviting(false);
+    }
+  }
+  async function search() {
+    const issuer = props.centralIssuer;
+    if (!issuer) return;
     discovery.current?.abort();
     const controller = new AbortController();
     discovery.current = controller;
-    setChecking(true);
-    setFound("");
+    setSearching(true);
+    setSearchError("");
     try {
-      const server = await discoverServer(address, controller.signal);
-      if (!controller.signal.aborted)
-        setFound(t("found", { name: server.name, origin: server.origin }));
+      const servers = await searchServers(issuer, query);
+      if (!controller.signal.aborted) setFound(servers);
     } catch (reason) {
-      if (!controller.signal.aborted) setFound(messageOf(reason));
+      if (!controller.signal.aborted) {
+        setFound(null);
+        setSearchError(messageOf(reason));
+      }
     } finally {
-      if (discovery.current === controller) setChecking(false);
+      if (discovery.current === controller) setSearching(false);
     }
   }
   async function act(id: string, action: "join" | "leave") {
@@ -260,39 +291,132 @@ export function SpacesDialog(props: {
         <p id="space-feedback" className="settings-feedback" role="status">
           {feedback}
         </p>
-        <section>
-          <h3>{t("discover")}</h3>
-          <form
-            onSubmit={(event) => {
-              event.preventDefault();
-              void check();
-            }}
-          >
-            <label htmlFor="server-url">{t("address")}</label>
-            <Input
-              id="server-url"
-              type="url"
-              required
-              autoComplete="off"
-              value={address}
-              onChange={(event) => setAddress(event.target.value)}
-              placeholder="https://chat.example.com"
-            />
+        {props.session && (
+          <section id="server-invite">
+            <h3>{t("inviteTitle")}</h3>
+            {props.serverNumber != null && (
+              <p className="small">
+                {t("inviteNumber", { number: props.serverNumber })}
+              </p>
+            )}
+            <p className="muted small">{t("inviteHelp")}</p>
             <Button
               variant="secondary"
-              id="check-server"
+              id="create-invite"
               className="secondary-button"
-              type="submit"
-              disabled={checking}
+              type="button"
+              disabled={inviting}
+              onClick={() => void createInvite()}
             >
-              {t(checking ? "checking" : "check")}
+              {t(inviting ? "creatingInvite" : "createInvite")}
             </Button>
-          </form>
-          <p id="server-feedback" className="settings-feedback" role="status">
-            {found}
-          </p>
-          <p className="muted small">{t("discoveryHelp")}</p>
-        </section>
+            {invite && (
+              <div className="invite-result">
+                <label htmlFor="invite-code">{t("inviteCodeLabel")}</label>
+                <Input id="invite-code" readOnly value={invite.code} />
+                <label htmlFor="invite-link">{t("inviteLinkLabel")}</label>
+                <div className="invite-link-row">
+                  <Input id="invite-link" readOnly value={invite.link} />
+                  <Button
+                    variant="secondary"
+                    className="secondary-button"
+                    type="button"
+                    onClick={() =>
+                      void navigator.clipboard
+                        ?.writeText(invite.link)
+                        .then(() => setCopied(true))
+                        .catch(() => {})
+                    }
+                  >
+                    {t(copied ? "copied" : "copyLink")}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
+        {props.centralIssuer && (
+          <section>
+            <h3>{t("discover")}</h3>
+            <form
+              role="search"
+              onSubmit={(event) => {
+                event.preventDefault();
+                void search();
+              }}
+            >
+              <label htmlFor="server-search">{t("search")}</label>
+              <Input
+                id="server-search"
+                type="search"
+                autoComplete="off"
+                maxLength={200}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={t("searchPlaceholder")}
+              />
+              <Button
+                variant="secondary"
+                id="search-servers"
+                className="secondary-button"
+                type="submit"
+                disabled={searching}
+              >
+                {t(searching ? "searching" : "search")}
+              </Button>
+            </form>
+            <p id="server-feedback" className="settings-feedback" role="status">
+              {searchError || (found && !found.length ? t("noResults") : "")}
+            </p>
+            {!!found?.length && (
+              <ul id="server-results" className="space-list listed-servers">
+                {found.map((server) => (
+                  <li
+                    key={server.origin}
+                    className="space-card listed-server"
+                    data-server={server.origin}
+                  >
+                    <div>
+                      <strong>{server.name}</strong>
+                      <span className="muted small">
+                        {t("serverNumber", { number: server.number })} ·{" "}
+                        {new URL(server.origin).host} ·{" "}
+                        {t("people", { count: server.members.people })} ·{" "}
+                        {t("bots", { count: server.members.bots })}
+                      </span>
+                      {server.description && (
+                        <span className="small">{server.description}</span>
+                      )}
+                      {server.join === "invite" && (
+                        <span className="listed-server-invite small">
+                          {t("inviteOnly")}
+                        </span>
+                      )}
+                      {!!server.tags.length && (
+                        <span className="muted small">
+                          {server.tags.map((tag) => `#${tag}`).join(" ")}
+                        </span>
+                      )}
+                    </div>
+                    <a
+                      className="ds-button ds-button-secondary"
+                      href={server.origin}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {t("openServer")}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <p className="muted small">
+              {t("discoveryHelp", {
+                central: new URL(props.centralIssuer).host,
+              })}
+            </p>
+          </section>
+        )}
       </div>
       <footer className="dialog-footer">
         <Button

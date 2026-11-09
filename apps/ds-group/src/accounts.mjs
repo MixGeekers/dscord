@@ -243,7 +243,7 @@ export class AccountService {
    * Sign in with verified identity-token claims. The central username is the Matrix localpart, so
    * the first sign-in creates the account and later ones open another session for it.
    */
-  async signIn(claims, { ownerId = null, clientIp } = {}) {
+  async signIn(claims, { ownerId = null, admit, clientIp } = {}) {
     if (!this.serverName || !this.registrationSecret) throw coded(503, 'ACCOUNTS_UNCONFIGURED', 'This server has no Matrix account registration configuration');
     const kind = claims.kind === 'bot' ? 'bot' : 'human';
     if (typeof claims.username !== 'string' || !MATRIX_LOCALPART.test(claims.username) || typeof claims.sub !== 'string' || typeof claims.gid !== 'string') {
@@ -262,6 +262,7 @@ export class AccountService {
         this.db.prepare('UPDATE accounts SET central_id=?,global_id=?,name=?,owner_id=?,updated_at=? WHERE user_id=?')
           .run(claims.sub, claims.gid, name, kind === 'bot' ? ownerId : null, Date.now(), userId);
       } else {
+        await admit?.();
         this.db.prepare(`INSERT INTO accounts (user_id,localpart,name,kind,owner_id,status,recovery_password,central_id,global_id,created_at,updated_at)
           VALUES (?,?,?,?,?,'provisioning',?,?,?,?,?)`)
           .run(userId, claims.username, name, kind, kind === 'bot' ? ownerId : null, randomBytes(32).toString('base64url'),

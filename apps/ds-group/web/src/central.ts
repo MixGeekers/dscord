@@ -95,3 +95,28 @@ export async function centralIdentityToken(
     );
   }
 }
+
+/** A chat server as the central server's index lists it. */
+export interface ListedServer {
+  origin: string;
+  number: number;
+  join: "open" | "invite";
+  name: string;
+  description: string;
+  tags: string[];
+  members: { people: number; bots: number };
+  owner?: string;
+  updatedAt: string;
+}
+
+/** Searches the central server's index of chat servers. The index is public, so no account is used. */
+export async function searchServers(
+  issuer: string,
+  query: string,
+): Promise<ListedServer[]> {
+  const { servers } = await call<{ servers: ListedServer[] }>(
+    issuer,
+    `/api/servers?${new URLSearchParams({ q: query.trim() })}`,
+  );
+  return servers;
+}

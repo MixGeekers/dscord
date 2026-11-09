@@ -39,6 +39,17 @@ export interface Policy {
   settings: {
     maxUploadBytes: number | null;
   };
+  directory: Directory;
+}
+export interface Directory {
+  discovery: "public" | "number" | "hidden";
+  join: "open" | "invite";
+  number: number | null;
+  name: string;
+  description: string;
+  tags: string[];
+  listing: "" | "pending" | "listed" | "rejected" | "banned";
+  listingNote: string;
 }
 export interface Administrator {
   username: string;

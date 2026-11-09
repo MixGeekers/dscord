@@ -18,6 +18,12 @@ const en = {
   centralSignIn: "Sign in with your account on {host}.",
   centralRegister:
     "The new account lives on {host} and works on every chat server connected to it.",
+  inviteCode: "Invitation code",
+  inviteHint: "This server only takes invited people. Members need no code.",
+  inviteRequired:
+    "This server only takes invited people. Enter the invitation code a member gave you.",
+  inviteInvalid:
+    "This invitation code is wrong, expired or revoked. Ask a member for a new one.",
 };
 
 export const authMessages = {
@@ -41,5 +47,9 @@ export const authMessages = {
     rateLimitedFor: "登录请求过于频繁，请在 {seconds} 秒后重试。",
     centralSignIn: "使用 {host} 上的账号登录。",
     centralRegister: "新账号建在 {host} 上，接入它的聊天服务器都能用。",
+    inviteCode: "邀请码",
+    inviteHint: "本服务器只接受邀请加入。已经是成员的人不用填。",
+    inviteRequired: "本服务器只接受邀请加入。请填写成员给你的邀请码。",
+    inviteInvalid: "邀请码不对、已过期或已撤销。请向成员要一个新的。",
   } satisfies Record<keyof typeof en, string>,
 };
