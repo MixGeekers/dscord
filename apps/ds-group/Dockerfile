@@ -8,6 +8,7 @@ COPY tsconfig.json vite.config.ts ./
 COPY web ./web
 COPY admin ./admin
 COPY ui ./ui
+COPY dsh-connect/client ./dsh-connect/client
 COPY scripts ./scripts
 COPY src/paths.mjs ./src/paths.mjs
 RUN npm run build

@@ -181,6 +181,32 @@ test('a device code expires after ten minutes', async t => {
   assert.equal((await call('POST', '/api/device/token', { body: { deviceCode: device.deviceCode } })).body.code, 'DEVICE_CODE_EXPIRED');
 });
 
+test('a person makes a one-time connection code for their DSH, which redeems it once for their own session', async t => {
+  const { call, register, advance } = await fixture(t);
+  const alice = await register('alice');
+  assert.equal((await call('POST', '/api/connect-codes', { body: {} })).status, 401);
+  const bot = (await call('POST', '/api/bots', { token: alice.token, body: { username: 'helper' } })).body.bot;
+  const device = (await call('POST', '/api/device', { body: {} })).body;
+  await call('POST', '/api/device/approve', { token: alice.token, body: { userCode: device.userCode, botId: bot.id } });
+  const botToken = (await call('POST', '/api/device/token', { body: { deviceCode: device.deviceCode } })).body.token;
+  assert.equal((await call('POST', '/api/connect-codes', { token: botToken, body: {} })).body.code, 'HUMAN_REQUIRED');
+
+  const made = await call('POST', '/api/connect-codes', { token: alice.token, body: {} });
+  assert.equal(made.status, 201);
+  assert.equal(made.body.expiresIn, 600);
+  const redeemed = await call('POST', '/api/connect-codes/redeem', { body: { code: made.body.code, label: 'DSH laptop' } });
+  assert.equal(redeemed.status, 200);
+  assert.equal(redeemed.body.account.globalId, alice.account.globalId);
+  assert.notEqual(redeemed.body.token, alice.token, 'DSH gets a session of its own');
+  assert.equal((await call('GET', '/api/me', { token: redeemed.body.token })).body.account.username, 'alice');
+  assert.equal((await call('POST', '/api/connect-codes/redeem', { body: { code: made.body.code } })).body.code, 'CONNECT_CODE_UNKNOWN', 'a code is redeemed once');
+  assert.equal((await call('POST', '/api/connect-codes/redeem', { body: {} })).body.code, 'CONNECT_CODE_UNKNOWN');
+
+  const late = (await call('POST', '/api/connect-codes', { token: alice.token, body: {} })).body;
+  advance(10 * 60_000 + 1);
+  assert.equal((await call('POST', '/api/connect-codes/redeem', { body: { code: late.code } })).body.code, 'CONNECT_CODE_EXPIRED');
+});
+
 test('first start seeds the saved configuration from the environment and the file wins afterwards', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));

@@ -22,6 +22,18 @@ const en = {
   switchAccount: "Switch account",
   signOut: "Sign out",
   signingOut: "Signing out",
+  connectDsh: "Connect DSH",
+  connectDshHelp:
+    "Make a connection key and paste it into the DSCord plugin in DeepSeek Harness. Your DSH then signs in as you and adds this server.",
+  makeConnectionKey: "Make connection key",
+  makingConnectionKey: "Making key…",
+  connectionKey: "Connection key",
+  copyConnectionKey: "Copy",
+  copiedConnectionKey: "Copied",
+  connectionKeyExpiry:
+    "It works once, within {minutes} minutes. Anyone holding it can sign in as you, so paste it only into your own DSH.",
+  connectionKeyNeedsSignIn:
+    "Sign out and sign in again on this page to make a connection key.",
   appearanceLanguage: "Appearance and language",
   theme: "Theme",
   themeColor: "Theme color",
@@ -137,6 +149,17 @@ export const settingsMessages: Catalog<keyof typeof en> = {
     switchAccount: "切换账号",
     signOut: "退出登录",
     signingOut: "正在退出",
+    connectDsh: "连接 DSH",
+    connectDshHelp:
+      "生成连接密钥，粘贴到 DeepSeek Harness 的 DSCord 插件里，DSH 就会用你的账号登录并加入这台服务器。",
+    makeConnectionKey: "生成连接密钥",
+    makingConnectionKey: "正在生成…",
+    connectionKey: "连接密钥",
+    copyConnectionKey: "复制",
+    copiedConnectionKey: "已复制",
+    connectionKeyExpiry:
+      "{minutes} 分钟内有效，只能用一次。拿到密钥的人可以用你的账号登录，只粘贴到你自己的 DSH。",
+    connectionKeyNeedsSignIn: "请在本页退出后重新登录，再生成连接密钥。",
     appearanceLanguage: "外观与语言",
     theme: "主题",
     themeColor: "主题颜色",

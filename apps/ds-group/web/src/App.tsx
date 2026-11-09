@@ -7,7 +7,7 @@ import {
   readStored,
 } from "./api";
 import { defaultClientConfig, discoverHome } from "./client-config";
-import { centralIdentityToken, loadCentral } from "./central";
+import { centralSignIn, centralSignOut, loadCentral } from "./central";
 import type { CentralInfo } from "./central";
 import type { ClientConfig, ClientDiscovery } from "./client-config";
 import {
@@ -630,21 +630,30 @@ export default function App({
     try {
       await pwa.current?.beforeIdentityChange("");
       // The account lives at the central server; this server only accepts its identity token.
-      const identityToken = await centralIdentityToken(
+      const { identityToken, centralToken } = await centralSignIn(
         central.issuer,
         homeDiscovery.auth.audience,
         input,
       );
-      const receipt = await api<Session>(homeDiscovery.auth.sessionPath, {
-        method: "POST",
-        body: {
-          identityToken,
-          ...(input.inviteCode ? { inviteCode: input.inviteCode } : {}),
-        },
-        auth: false,
-        timeout: 30000,
-      });
-      const next = bindSession(receipt, config, homeDiscovery);
+      let receipt: Session;
+      try {
+        receipt = await api<Session>(homeDiscovery.auth.sessionPath, {
+          method: "POST",
+          body: {
+            identityToken,
+            ...(input.inviteCode ? { inviteCode: input.inviteCode } : {}),
+          },
+          auth: false,
+          timeout: 30000,
+        });
+      } catch (reason) {
+        centralSignOut(central.issuer, centralToken);
+        throw reason;
+      }
+      const next: Session = {
+        ...bindSession(receipt, config, homeDiscovery),
+        central: { token: centralToken },
+      };
       sessionStorage.setItem(sessionStorageKey(config), JSON.stringify(next));
       sessionRef.current = next;
       setSession(next);
@@ -702,6 +711,9 @@ export default function App({
         if (!(reason instanceof ApiError) || reason.status !== 401)
           throw reason;
       }
+      const signedIn = sessionRef.current;
+      if (signedIn?.central && signedIn.binding)
+        centralSignOut(signedIn.binding.centralIssuer, signedIn.central.token);
       clearSession();
       const url = new URL(location.href);
       for (const key of ["roomId", "eventId", "server"])

@@ -13,6 +13,8 @@
 !admin/**
 !ui/
 !ui/**
+!dsh-connect/client/
+!dsh-connect/client/**
 !deploy/
 !deploy/synapse/
 !deploy/synapse/**

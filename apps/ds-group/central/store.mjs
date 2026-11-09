@@ -6,6 +6,7 @@ const scrypt = promisify(scryptCallback);
 const digest = value => createHash('sha256').update(value).digest('hex');
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const DEVICE_MS = 10 * 60 * 1000;
+const CONNECT_MS = 10 * 60 * 1000;
 // Unambiguous letters for a code a person reads off one screen and types into another.
 const USER_CODE_LETTERS = 'BCDFGHJKLMNPQRSTVWXZ';
 
@@ -46,6 +47,8 @@ export class CentralStore {
         last_used INTEGER NOT NULL, PRIMARY KEY(account_id, audience));
       CREATE TABLE IF NOT EXISTS device_codes (device_hash TEXT PRIMARY KEY, user_code TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
         created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, account_id TEXT REFERENCES accounts(id), approved_by TEXT, consumed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS connect_codes (code_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
+        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
   }
 
@@ -223,6 +226,26 @@ export class CentralStore {
     return { token: this.openSession(bot, 'node', row.label), account: bot };
   }
 
+  /** A one-time code that lets the person's DSH sign in as them; it is shown once, in a connection key. */
+  startConnect(account) {
+    const code = randomBytes(32).toString('base64url');
+    const at = this.now();
+    this.db.prepare('DELETE FROM connect_codes WHERE expires_at<=? OR consumed=1').run(at);
+    this.db.prepare('INSERT INTO connect_codes(code_hash,account_id,created_at,expires_at) VALUES (?,?,?,?)')
+      .run(digest(code), usable(account).id, at, at + CONNECT_MS);
+    return { code, expiresIn: CONNECT_MS / 1000 };
+  }
+
+  /** Trades a connection code, once, for a session of the person who made it. */
+  redeemConnect(code, label) {
+    const row = typeof code === 'string' && code && this.db.prepare('SELECT * FROM connect_codes WHERE code_hash=?').get(digest(code));
+    if (!row || row.consumed) throw failure(404, 'CONNECT_CODE_UNKNOWN', 'This connection key is unknown or was already used');
+    if (row.expires_at <= this.now()) throw failure(410, 'CONNECT_CODE_EXPIRED', 'This connection key has expired');
+    const account = usable(this.account(row.account_id));
+    this.db.prepare('UPDATE connect_codes SET consumed=1 WHERE code_hash=?').run(row.code_hash);
+    return { token: this.openSession(account, 'login', label), account };
+  }
+
   /** Closing keeps the username taken; the account's sessions and grants end. A person closes their Bots first. */
   closeAccount(account) {
     if (this.botsOf(account).some(bot => bot.status !== 'closed')) throw failure(409, 'OWNS_ACTIVE_BOTS', 'Close your Bots first');
@@ -231,6 +254,7 @@ export class CentralStore {
       this.db.prepare("UPDATE accounts SET status='closed', salt=NULL, password_hash=NULL WHERE id=?").run(account.id);
       this.db.prepare('DELETE FROM sessions WHERE account_id=?').run(account.id);
       this.db.prepare('DELETE FROM grants WHERE account_id=?').run(account.id);
+      this.db.prepare('DELETE FROM connect_codes WHERE account_id=?').run(account.id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }

@@ -77,13 +77,13 @@ const webHtml = `<!doctype html><html><head>${style}</head><body><div id="root">
   }createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 </script></body></html>`;
 const dshHtml = `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"></head><body style="margin:0;height:100dvh"><div id="root" style="height:100%"></div><script type="module">
-  import React from 'react';import {createRoot} from 'react-dom/client';
+  import React from 'react';import * as JsxRuntime from 'react/jsx-runtime';import {createRoot} from 'react-dom/client';
   let descriptor;window.__ModuleLoader__={load:value=>{descriptor=value;}};
   await import('/@fs/${packageRoot}/dsh-connect/client.js');
   const listeners=new Set();const dictionaries=new Map();let language='en';let main;const cleanup=[];
   const locale={register:(id,value)=>{dictionaries.set(id,value);},bind:id=>(key,params={})=>{const text=dictionaries.get(id)?.[language]?.[key]||key;return text.replace(/\\{(\\w+)\\}/g,(m,k)=>params[k]??m);}};
   function Button({variant,...props}){return React.createElement('button',props);}
-  const plugin=descriptor.factory(name=>name==='react'?React:name==='react-dom'?{createPortal:element=>element}:{Button,Input:'input',IconPluginPinwheelOutlineRegular:()=>null});
+  const plugin=descriptor.factory(name=>name==='react'?React:name==='react/jsx-runtime'?JsxRuntime:name==='react-dom'?{createPortal:element=>element}:{Button,Input:'input',IconPluginPinwheelOutlineRegular:()=>null});
   plugin.apply({locale,effect:fn=>cleanup.push(fn()),slots:{inject:(_n,fn)=>fn(),register:(options,component)=>{if(options.name==='main')main={options,component};return ()=>{};}},layout:{selectPanel:()=>{}}});
   const root=createRoot(document.getElementById('root'));const connection=main.options.inject().connection;
   window.fixture={connection,locale:value=>{language=value;render();}};
@@ -101,6 +101,8 @@ const server = await createServer({
       });
     },
   }], server: { host: '127.0.0.1', port: 0 }, logLevel: 'error',
+  // The DSH client's modules are known up front, so a late dependency discovery cannot reload the page mid-test.
+  optimizeDeps: { include: ['react', 'react/jsx-runtime', 'react-dom', 'react-dom/client'] },
 });
 let browser;
 let page;

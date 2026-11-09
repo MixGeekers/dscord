@@ -115,6 +115,7 @@ const logoutRequests = [];
 const registrationRequests = [];
 const loginRequests = [];
 const centralLogouts = [];
+const connectCodeTokens = [];
 const loginLimits = [];
 const revokedTokens = new Set();
 const ownedBots = new Map();
@@ -227,6 +228,10 @@ try {
     } else if (url.pathname === '/api/identity-tokens') {
       assert.equal(request.postDataJSON().audience, origin);
       body = { token: `identity:${token}` };
+    } else if (url.pathname === '/api/connect-codes') {
+      connectCodeTokens.push(token);
+      status = 201;
+      body = { code: `connect-${connectCodeTokens.length}`, expiresIn: 600 };
     } else if (url.pathname === '/api/logout') {
       centralLogouts.push(token);
       body = { loggedOut: true };
@@ -487,8 +492,20 @@ try {
   assert.equal((await readStorage('ds-group.session')).user_id, '@charlie-new:test');
   assert.equal((await readStorage('ds-group.session')).access_token, 'registered-fixture');
   assert.equal((await readStorage('ds-group.session')).binding.homeCoreUrl, new URL(page.url()).origin);
-  assert.deepEqual(centralLogouts.slice(-1), ['central-register-charlie-new']);
+  // The central session stays with the page so it can make DSH connection keys.
+  assert.equal((await readStorage('ds-group.session')).central.token, 'central-register-charlie-new');
+  assert.equal(centralLogouts.includes('central-register-charlie-new'), false);
   checks.push('newAccountRegistersAtCentralAndCoreSessionComesFromItsIdentityToken');
+
+  await page.locator('#identity-button').click();
+  await page.locator('#settings-button').click();
+  await page.locator('#make-connection-key').click();
+  const connectionKey = await page.locator('#connection-key').inputValue();
+  assert.match(connectionKey, /^[A-Za-z0-9_-]+$/);
+  assert.deepEqual(JSON.parse(Buffer.from(connectionKey, 'base64url').toString('utf8')), { server: origin, code: 'connect-1' });
+  assert.deepEqual(connectCodeTokens, ['central-register-charlie-new']);
+  await page.locator('#close-settings').click();
+  checks.push('settingsMakeOneDshConnectionKeyFromTheCentralSession');
 
   await page.locator('#global-bots-button').click();
   await page.locator('#create-bot-button').click();
@@ -510,6 +527,8 @@ try {
   await page.locator('#logout-button').click();
   await page.locator('#login-dialog[open]').waitFor();
   assert.deepEqual(logoutRequests, ['alice-fixture', 'registered-fixture']);
+  for (let wait = 0; wait < 50 && !centralLogouts.includes('central-register-charlie-new'); wait++) await page.waitForTimeout(20);
+  assert.deepEqual(centralLogouts.slice(-1), ['central-register-charlie-new'], 'signing out also ends the central session');
   assert.equal(await page.locator('#owned-bots [data-owned-bot-id]').count(), 0);
   await page.locator('#login-user').fill('charlie-new');
   await page.locator('#login-password').fill('fixture-password');

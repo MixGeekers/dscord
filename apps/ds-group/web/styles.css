@@ -481,6 +481,11 @@ legend { color: var(--color-text-secondary); font-weight: var(--font-weight-semi
 .account-origins { display: grid; gap: var(--space-4); margin-block: var(--space-8); }
 .account-origins dt { color: var(--color-text-secondary); font-size: var(--font-size-sm); }
 .account-origins dd { margin: 0 0 var(--space-4); }
+.connect-dsh { display: grid; gap: var(--space-4); margin-top: var(--space-12); padding-top: var(--space-12); border-top: 1px solid var(--color-border-divider); }
+.connect-dsh h3 { margin: 0; }
+.connect-dsh p { margin: 0; }
+.connection-key { font-family: var(--font-family-code); font-size: var(--font-size-xs); word-break: break-all; resize: none; }
+.connect-dsh-actions { display: flex; flex-wrap: wrap; gap: var(--space-4); margin-top: var(--space-2); }
 .server-rail { overflow-y: auto; }
 .server-icon { flex-shrink: 0; }
 .server-invite-count { position: absolute; right: 0; bottom: 0; min-width: 18px; padding-inline: var(--space-2); border-radius: var(--radius-pill); background: var(--color-status-danger); color: var(--color-text-on-accent); font-size: var(--font-size-xs); line-height: 18px; }

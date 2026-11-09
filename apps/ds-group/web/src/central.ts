@@ -53,11 +53,10 @@ export async function loadCentral(issuer: string): Promise<CentralInfo> {
 }
 
 /**
- * Sign in (or register) at the central server and trade the central session for a
- * five-minute identity token naming this chat server. The central session is closed
- * right after: the chat server's own session is what the client keeps.
+ * Sign in (or register) at the central server and get a five-minute identity token naming this
+ * chat server. The central session stays with the client so it can make DSH connection keys.
  */
-export async function centralIdentityToken(
+export async function centralSignIn(
   issuer: string,
   audience: string,
   input: {
@@ -66,7 +65,7 @@ export async function centralIdentityToken(
     password: string;
     displayName: string;
   },
-): Promise<string> {
+): Promise<{ identityToken: string; centralToken: string }> {
   const { token } =
     input.mode === "register"
       ? await call<{ token: string }>(issuer, "/api/register", {
@@ -88,12 +87,40 @@ export async function centralIdentityToken(
       "/api/identity-tokens",
       { method: "POST", token, body: { audience, allowNew: true } },
     );
-    return issued.token;
-  } finally {
-    void call(issuer, "/api/logout", { method: "POST", token, body: {} }).catch(
-      () => {},
-    );
+    return { identityToken: issued.token, centralToken: token };
+  } catch (reason) {
+    centralSignOut(issuer, token);
+    throw reason;
   }
+}
+
+/** Ends a central session; a session that is already gone is fine. */
+export function centralSignOut(issuer: string, token: string): void {
+  void call(issuer, "/api/logout", { method: "POST", token, body: {} }).catch(
+    () => {},
+  );
+}
+
+/**
+ * A connection key for the person's DSH: base64url JSON naming this chat server and a one-time
+ * central code. DSH redeems the code at the central server this chat server trusts.
+ */
+export async function connectionKey(
+  issuer: string,
+  centralToken: string,
+  server: string,
+): Promise<{ key: string; expiresIn: number }> {
+  const { code, expiresIn } = await call<{ code: string; expiresIn: number }>(
+    issuer,
+    "/api/connect-codes",
+    { method: "POST", token: centralToken, body: {} },
+  );
+  const bytes = new TextEncoder().encode(JSON.stringify({ server, code }));
+  const base64 = btoa(String.fromCharCode(...bytes));
+  return {
+    key: base64.replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, ""),
+    expiresIn,
+  };
 }
 
 /** A chat server as the central server's index lists it. */

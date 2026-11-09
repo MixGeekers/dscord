@@ -7,6 +7,7 @@ import type { ClientConfig } from "../client-config";
 import { storageKey } from "../session";
 import { useTranslation } from "../locale";
 import { AppearanceControls } from "./AppearanceControls";
+import { ConnectDsh } from "./ConnectDsh";
 import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
 import type { Api, PwaHandle, Session, SettingsTab } from "../types";
@@ -136,6 +137,9 @@ export function SettingsDialog(props: SettingsDialogProps) {
                   t("configuredByHome")}
               </dd>
             </dl>
+            {session && (
+              <ConnectDsh session={session} server={config.homeCoreUrl} />
+            )}
           </section>
           <section
             data-settings-panel="notifications"

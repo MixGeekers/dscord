@@ -18,7 +18,7 @@ async function fixture(t) {
     'package-lock.json': JSON.stringify({ version: '0.2.0', packages: { '': { version: '0.2.0' } } }),
     LICENSE: 'MIT fixture license',
     'bin/dscord.mjs': '#!/usr/bin/env node\nconsole.log("fixture");',
-    'dsh-connect/index.mjs': 'export {};', 'dsh-connect/client.js': '// DSH client', 'cordis.patch.yml': '[]',
+    'dsh-connect/index.mjs': 'export {};', 'dsh-connect/client.js': '// DSH client', 'dsh-connect/client/index.tsx': 'export {};', 'cordis.patch.yml': '[]',
     'src/core.mjs': 'import "../web/mention-tokens.js";', 'central/service.mjs': 'export {};',
     'memory/native.mjs': 'export {};', 'service/ombre/service.py': '# memory service', 'service/ombre/LICENSE': 'MIT',
     'service/ombre/SOURCE.json': '{}', 'vendor/ds-bot/UPSTREAM.json': '{}',
@@ -26,7 +26,7 @@ async function fixture(t) {
     'memory/实施与长程测试.md': 'INTERNAL EXPERIMENT', 'vendor/ds-bot/README.md': 'INTERNAL UPSTREAM SETUP',
     'vendor/ds-bot/src/office/skills/office/SKILL.md': '# Runtime skill',
     'dsh-plugin/.credentials.yaml': 'PRIVATE', 'src/personal-config.json': 'PRIVATE',
-    'web/mention-tokens.js': 'export {};',
+    'web/mention-tokens.js': 'export {};', 'web/icons/mark-128.png': 'PNG fixture',
     'dist/web/index.html': '<!doctype html>', 'dist/web/sw.js': '// worker',
     'dist/web/client-config.json': '{}',
     'dist/admin/index.html': '<!doctype html>', 'dist/admin/theme.js': '// theme', 'dist/central-admin/index.html': '<!doctype html>',
@@ -73,7 +73,7 @@ test('npm packs the exact source version, runtime and licenses without internal 
     'dist/web/licenses/bundled-dependencies.txt', 'dist/admin/licenses/bundled-dependencies.txt',
     'vendor/ds-bot/NOTICE', 'dsh-plugin/runtime-dependencies-lock.json', 'dsh-connect/index.mjs',
     'dsh-connect/client.js', 'cordis.patch.yml', 'dist/admin/index.html', 'dist/admin/theme.js', 'dist/central-admin/index.html', 'deploy/synapse/dscord_guard.py', 'scripts/admin.mjs']) assert.ok(result.files.includes(name), name);
-  assert.equal(result.files.some(name => /\.local|\.npmrc|artifacts|\.env|\.vite|credentials|personal-config|实施与长程测试|vendor\/ds-bot\/README/.test(name)), false);
+  assert.equal(result.files.some(name => /\.local|\.npmrc|artifacts|\.env|\.vite|credentials|personal-config|实施与长程测试|vendor\/ds-bot\/README|dsh-connect\/client\//.test(name)), false);
   assert.equal(JSON.parse(await readFile(path.join(root, 'package.json'), 'utf8')).private, true);
   const { stdout } = await promisify(execFile)('tar', ['-xOf', result.archive, 'package/package.json']);
   const manifest = JSON.parse(stdout);
@@ -83,6 +83,8 @@ test('npm packs the exact source version, runtime and licenses without internal 
   assert.deepEqual(manifest.dscord.protocol, KERNEL_PROTOCOL, 'nodes choose a release by the protocol range it speaks');
   assert.equal(manifest.engines.dsh, dshEngineRange(DSH_VERSION));
   assert.equal(manifest.engines.node, '>=24.19.0 <25');
+  assert.equal(manifest.icon, './icon.png', 'DSH shows the DSCord mark in its plugin list');
+  assert.ok(result.files.includes('icon.png'));
   const guide = (await promisify(execFile)('tar', ['-xOf', result.archive, 'package/README.md'])).stdout;
   assert.match(guide, /\[Package\]\(package\.json\)/);
   assert.match(guide, /blob\/ds-group-v0\.2\.0\/apps\/ds-group\/deploy\/README\.md/);

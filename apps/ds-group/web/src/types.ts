@@ -13,6 +13,8 @@ export interface Session {
   };
   home?: { serverName: string; coreUrl: string | null; matrixUrl: string };
   binding?: import("./session").SessionBinding;
+  /** The central session from signing in, kept to make DSH connection keys. */
+  central?: { token: string };
 }
 export interface Participant {
   id: string;
