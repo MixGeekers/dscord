@@ -5,11 +5,11 @@ import vm from 'node:vm';
 
 const source = await readFile(new URL('../dsh-connect/client.js', import.meta.url), 'utf8');
 const loggedOut = {
-  serverUrl: '', user: null, bots: [], runtime: { available: true, message: null },
+  servers: [], user: null, bots: [], runtime: { available: true, message: null },
 };
 const loggedIn = {
-  serverUrl: 'https://chat.example.test', user: { id: '@alice:test', name: 'Alice' },
-  bots: [{ id: 'finance', name: '财务', localpart: 'finance', status: 'offline', lastError: null }],
+  servers: [{ url: 'https://chat.example.test', serverName: 'chat.example.test' }], user: { id: 'alice@id.test', name: 'Alice', globalId: 'alice@id.test' },
+  bots: [{ id: '@finance:chat.example.test', name: '财务', localpart: 'finance', serverUrl: 'https://chat.example.test', serverName: 'chat.example.test', status: 'offline', lastError: null }],
   runtime: { available: true, message: null }, dataDirectory: '/synthetic/profile/dscord',
 };
 
@@ -86,7 +86,7 @@ function harness(oracle = () => loggedOut, language = 'zh') {
   });
   const main = entries.find(entry => entry.options.name === 'main');
   return {
-    descriptor, plugin, requests, entries, intervals, timeouts, main, locale, dictionaries,
+    descriptor, plugin, requests, entries, intervals, timeouts, main, locale, dictionaries, react,
     connection: main.options.inject().connection,
     dispose: () => disposers.forEach(dispose => dispose()),
   };
@@ -223,7 +223,7 @@ test('an older status response cannot replace a completed login', async t => {
   await fixture.connection.login('https://chat.example.test', 'alice', 'synthetic-password');
   resolveStatus(loggedOut);
   await staleRead;
-  assert.equal(fixture.connection.getSnapshot().value.user.id, '@alice:test');
+  assert.equal(fixture.connection.getSnapshot().value.user.id, 'alice@id.test');
   assert.equal(fixture.connection.getSnapshot().error, null);
 });
 
@@ -261,7 +261,7 @@ test('the login form clears its password before dispatching the login request', 
   const form = find(tree, element => element.type === 'form');
   const inputs = {
     serverUrl: { value: ' https://chat.example.test ' },
-    user: { value: ' alice ' }, password: { value: 'synthetic-password' },
+    user: { value: ' alice ' }, password: { value: 'synthetic-password' }, inviteCode: { value: ' wxyz-2345 ' },
   };
   let sent;
   fixture.connection.login = (...args) => {
@@ -269,12 +269,13 @@ test('the login form clears its password before dispatching the login request', 
     sent = args;
   };
   form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: name => inputs[name] } } });
-  assert.deepEqual(sent, ['https://chat.example.test', 'alice', 'synthetic-password']);
+  assert.deepEqual(sent, ['https://chat.example.test', 'alice', 'synthetic-password', 'wxyz-2345']);
   assert.equal(find(tree, element => element.type === 'input' && element.props.name === 'password').props.autoComplete, 'off');
 });
 
 test('page exposes only safe server links and disables unavailable bot execution', async t => {
-  const fixture = harness(() => ({ ...loggedIn, serverUrl: 'javascript:alert(1)', lastError: '登录已失效', runtime: { available: false, message: 'DS-Bot 未就绪' } }));
+  const fixture = harness(() => ({ ...loggedIn, servers: [{ url: 'javascript:alert(1)', serverName: 'chat.example.test' }],
+    bots: loggedIn.bots.map(bot => ({ ...bot, serverUrl: 'javascript:alert(1)' })), lastError: '登录已失效', runtime: { available: false, message: 'DS-Bot 未就绪' } }));
   t.after(fixture.dispose);
   await fixture.connection.refresh();
   const tree = render(fixture.main.component(fixture.main.options.inject()));
@@ -302,4 +303,59 @@ test('shared page subscriptions own one polling timer and plugin disposal stops 
   assert.equal(abortSignal.aborted, true);
   await fixture.connection.refresh();
   assert.equal(fixture.requests.length, 1);
+});
+
+test('the page lists each chat server with its own Bots and adds or removes servers', async t => {
+  const two = { url: 'https://two.example.test', serverName: 'two.example.test' };
+  const fixture = harness(() => ({ ...loggedIn, servers: [...loggedIn.servers, two],
+    bots: [...loggedIn.bots, { ...loggedIn.bots[0], id: '@finance:two.example.test', serverUrl: two.url, serverName: two.serverName, status: 'online' }] }));
+  t.after(fixture.dispose);
+  await fixture.connection.refresh();
+  const tree = render(fixture.main.component(fixture.main.options.inject()));
+  for (const server of ['chat.example.test', 'two.example.test']) {
+    const section = find(tree, element => element.type === 'section' && element.props['aria-label'] === server);
+    assert.ok(section, server);
+    assert.equal(find(section, element => element.props['data-status'])?.props['data-status'], server === 'chat.example.test' ? 'offline' : 'online');
+  }
+  assert.ok(find(tree, element => element.props['aria-label'] === '移除 two.example.test'));
+  const sent = [];
+  fixture.connection.addServer = (url, code) => sent.push(['add', url, code]);
+  fixture.connection.removeServer = url => sent.push(['remove', url]);
+  const form = find(tree, element => element.type === 'form' && element.props['aria-label'] === '添加服务器');
+  const input = { value: ' https://three.example.test ' };
+  const invite = { value: ' wxyz-2345 ' };
+  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: name => name === 'inviteCode' ? invite : input } } });
+  find(tree, element => element.props['aria-label'] === '移除 two.example.test').props.onClick();
+  assert.deepEqual(sent, [['add', 'https://three.example.test', 'wxyz-2345'], ['remove', two.url]]);
+  assert.deepEqual([input.value, invite.value], ['', '']);
+});
+
+test('the add-server area searches the central index and adds a listed server', async t => {
+  const listed = [{ origin: 'https://robots.example.test', number: 48213907, join: 'open', name: 'Robotics club', description: 'Arms and wheels',
+    tags: ['robots'], members: { people: 12, bots: 2 }, added: false }, { origin: loggedIn.servers[0].url, number: 10000001, join: 'open', name: 'Home',
+    description: '', tags: [], members: { people: 3, bots: 1 }, added: true }, { origin: 'https://closed.example.test', number: 55555555, join: 'invite',
+    name: 'Closed club', description: '', tags: [], members: { people: 4, bots: 0 }, added: false }];
+  const fixture = harness(payload => payload.action === 'search-servers' ? { servers: listed } : loggedIn);
+  t.after(fixture.dispose);
+  await fixture.connection.refresh();
+  let tree = render(fixture.main.component(fixture.main.options.inject()));
+  const form = find(tree, element => element.type === 'form' && element.props['aria-label'] === '搜索服务器');
+  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: () => ({ value: 'robot' }) } } });
+  await new Promise(resolve => setImmediate(resolve));
+  const search = fixture.requests.find(request => request.payload.action === 'search-servers');
+  assert.deepEqual(search.payload, { action: 'search-servers', query: 'robot' });
+
+  // Render with the results the search returned.
+  fixture.react.useState = value => [value === null ? listed : value, () => {}];
+  tree = render(fixture.main.component(fixture.main.options.inject()));
+  const sent = [];
+  fixture.connection.addServer = url => sent.push(url);
+  const add = find(tree, element => element.props['aria-label'] === '添加 Robotics club');
+  assert.ok(find(tree, element => element.type === 'p' && element.children.includes('12 人 · 2 个 Bot · #robots')));
+  add.props.onClick();
+  assert.deepEqual(sent, ['https://robots.example.test']);
+  assert.equal(find(tree, element => element.props['aria-label'] === '添加 Home').props.disabled, true, 'an added server cannot be added again');
+  assert.ok(find(tree, element => element.type === 'p' && element.children.includes('号码 48213907 · https://robots.example.test')));
+  const closed = find(tree, element => element.props['aria-label'] === '添加 Closed club');
+  assert.deepEqual([closed.props.disabled, closed.children], [true, ['只凭邀请加入']], 'an invite-only server is added with a code in the form below');
 });

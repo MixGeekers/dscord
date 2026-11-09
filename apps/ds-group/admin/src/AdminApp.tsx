@@ -13,6 +13,7 @@ import {
   RefreshCw,
   AlertCircle,
   CheckCircle2,
+  Globe,
 } from "lucide-react";
 import { useLocale } from "./locale";
 import { Button, Input, NativeSelect } from "../../ui/controls";
@@ -23,6 +24,7 @@ import {
   AdministratorsPanel,
   AuditPanel,
   DeploymentPanel,
+  DirectoryPanel,
   OverviewPanel,
   StoragePanel,
 } from "./panels";
@@ -36,6 +38,7 @@ const sections = [
   "members",
   "rooms",
   "bots",
+  "directory",
   "storage",
   "deployment",
   "administrators",
@@ -48,6 +51,7 @@ const icons = {
   members: Users,
   rooms: DoorOpen,
   bots: Bot,
+  directory: Globe,
   storage: HardDrive,
   deployment: Settings,
   administrators: ShieldCheck,
@@ -65,6 +69,7 @@ const policySections: Section[] = [
   "members",
   "rooms",
   "bots",
+  "directory",
   "deployment",
 ];
 
@@ -407,6 +412,7 @@ function Workspace({ admin }: { admin: AdminState }) {
             }
           />
         )}
+        {section === "directory" && <DirectoryPanel admin={admin} />}
         {section === "storage" && <StoragePanel admin={admin} />}
         {section === "deployment" && <DeploymentPanel admin={admin} />}
         {section === "administrators" && <AdministratorsPanel admin={admin} />}

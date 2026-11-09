@@ -24,6 +24,13 @@ function displayName(value, fallback) {
   return value.trim() || fallback;
 }
 
+/** An account that may sign in: closed and disabled accounts are refused. */
+function usable(account) {
+  if (account.status === 'closed') throw failure(403, 'ACCOUNT_CLOSED');
+  if (account.status === 'disabled') throw failure(403, 'ACCOUNT_DISABLED', 'An administrator has disabled this account');
+  return account;
+}
+
 /** Accounts, sessions, server grants and device codes. No chat data lives here. */
 export class CentralStore {
   constructor({ filename, rule, domain, now = Date.now }) {
@@ -32,13 +39,14 @@ export class CentralStore {
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;
       CREATE TABLE IF NOT EXISTS accounts (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, kind TEXT NOT NULL CHECK(kind IN ('human','bot')),
         display_name TEXT NOT NULL, owner_id TEXT REFERENCES accounts(id), salt TEXT, password_hash TEXT,
-        status TEXT NOT NULL CHECK(status IN ('active','closed')), created_at INTEGER NOT NULL);
+        status TEXT NOT NULL CHECK(status IN ('active','disabled','closed')), created_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, account_id TEXT NOT NULL REFERENCES accounts(id),
         kind TEXT NOT NULL CHECK(kind IN ('login','node')), label TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, expires_at INTEGER);
       CREATE TABLE IF NOT EXISTS grants (account_id TEXT NOT NULL REFERENCES accounts(id), audience TEXT NOT NULL, granted_at INTEGER NOT NULL,
         last_used INTEGER NOT NULL, PRIMARY KEY(account_id, audience));
       CREATE TABLE IF NOT EXISTS device_codes (device_hash TEXT PRIMARY KEY, user_code TEXT NOT NULL UNIQUE, label TEXT NOT NULL,
-        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, account_id TEXT REFERENCES accounts(id), approved_by TEXT, consumed INTEGER NOT NULL DEFAULT 0);`);
+        created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, account_id TEXT REFERENCES accounts(id), approved_by TEXT, consumed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
   }
 
   close() { this.db.close(); }
@@ -53,6 +61,37 @@ export class CentralStore {
   }
 
   account(id) { return this.db.prepare('SELECT * FROM accounts WHERE id=?').get(id); }
+
+  setting(key, fallback) { return this.db.prepare('SELECT value FROM settings WHERE key=?').get(key)?.value ?? fallback; }
+
+  saveSetting(key, value) { this.db.prepare('INSERT INTO settings VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value').run(key, value); }
+
+  /** Accounts for administrators: newest first, matching a username or display name, optionally of one kind or status. */
+  accounts({ q = '', kind = '', status = '', limit = 100 } = {}) {
+    const like = `%${String(q).trim().toLowerCase().replace(/[%_\\]/g, '\\$&')}%`;
+    const size = Math.min(Math.max(Number.parseInt(limit, 10) || 100, 1), 500);
+    return this.db.prepare(`SELECT a.*, (SELECT MAX(last_seen) FROM sessions s WHERE s.account_id=a.id) AS last_seen,
+        (SELECT COUNT(*) FROM grants g WHERE g.account_id=a.id) AS servers FROM accounts a
+        WHERE (lower(a.username) LIKE ? ESCAPE '\\' OR lower(a.display_name) LIKE ? ESCAPE '\\') AND (?='' OR a.kind=?) AND (?='' OR a.status=?)
+        ORDER BY a.created_at DESC LIMIT ?`).all(like, like, kind, kind, status, status, size)
+      .map(row => ({ ...this.view(row), lastSeen: row.last_seen ? new Date(row.last_seen).toISOString() : null, servers: row.servers }));
+  }
+
+  accountCounts() {
+    const rows = this.db.prepare('SELECT kind, status, COUNT(*) AS n FROM accounts GROUP BY kind, status').all();
+    const count = (kind, status) => rows.filter(row => row.kind === kind && (!status || row.status === status)).reduce((sum, row) => sum + row.n, 0);
+    return { people: count('human', 'active'), bots: count('bot', 'active'), disabled: rows.filter(row => row.status === 'disabled').reduce((sum, row) => sum + row.n, 0) };
+  }
+
+  /** An administrator disables or restores an account. Disabling ends its sessions; a closed account stays closed. */
+  setDisabled(id, disabled) {
+    const account = this.account(id);
+    if (!account) throw failure(404, 'ACCOUNT_NOT_FOUND');
+    if (account.status === 'closed') throw failure(409, 'ACCOUNT_CLOSED');
+    this.db.prepare('UPDATE accounts SET status=? WHERE id=?').run(disabled ? 'disabled' : 'active', id);
+    if (disabled) this.db.prepare('DELETE FROM sessions WHERE account_id=?').run(id);
+    return this.account(id);
+  }
 
   insertAccount({ username, kind, name, ownerId = null, salt = null, hash = null }) {
     const checked = this.rule.check(username);
@@ -87,7 +126,7 @@ export class CentralStore {
   ownedBot(owner, botId) {
     const bot = this.account(botId);
     if (!bot || bot.kind !== 'bot' || bot.owner_id !== owner.id) throw failure(404, 'BOT_NOT_FOUND');
-    if (bot.status !== 'active') throw failure(409, 'ACCOUNT_CLOSED');
+    if (bot.status === 'closed') throw failure(409, 'ACCOUNT_CLOSED');
     return bot;
   }
 
@@ -106,7 +145,7 @@ export class CentralStore {
     const expected = Buffer.from(row?.password_hash || '0'.repeat(128), 'hex');
     const actual = Buffer.from(await passwordHash(typeof password === 'string' && password.length >= 8 ? password : '        ', salt), 'hex');
     if (!row || !timingSafeEqual(expected, actual)) throw failure(401, 'LOGIN_FAILED', 'Wrong username or password');
-    if (row.status !== 'active') throw failure(403, 'ACCOUNT_CLOSED');
+    usable(row);
     return { token: this.openSession(row, 'login', 'password'), account: row };
   }
 
@@ -115,8 +154,7 @@ export class CentralStore {
     const session = this.db.prepare('SELECT * FROM sessions WHERE token_hash=?').get(digest(token));
     const at = this.now();
     if (!session || (session.expires_at !== null && session.expires_at <= at)) throw failure(401, 'SIGN_IN_REQUIRED');
-    const account = this.account(session.account_id);
-    if (account.status !== 'active') throw failure(403, 'ACCOUNT_CLOSED');
+    const account = usable(this.account(session.account_id));
     this.db.prepare('UPDATE sessions SET last_seen=?, expires_at=CASE WHEN expires_at IS NULL THEN NULL ELSE ? END WHERE id=?')
       .run(at, at + SESSION_MS, session.id);
     return { account, session };
@@ -180,15 +218,14 @@ export class CentralStore {
     if (!row || row.consumed) throw failure(404, 'DEVICE_CODE_UNKNOWN');
     if (row.expires_at <= this.now()) throw failure(410, 'DEVICE_CODE_EXPIRED');
     if (!row.account_id) throw failure(428, 'AUTHORIZATION_PENDING');
-    const bot = this.account(row.account_id);
-    if (bot.status !== 'active') throw failure(403, 'ACCOUNT_CLOSED');
+    const bot = usable(this.account(row.account_id));
     this.db.prepare('UPDATE device_codes SET consumed=1 WHERE device_hash=?').run(row.device_hash);
     return { token: this.openSession(bot, 'node', row.label), account: bot };
   }
 
   /** Closing keeps the username taken; the account's sessions and grants end. A person closes their Bots first. */
   closeAccount(account) {
-    if (this.botsOf(account).some(bot => bot.status === 'active')) throw failure(409, 'OWNS_ACTIVE_BOTS', 'Close your Bots first');
+    if (this.botsOf(account).some(bot => bot.status !== 'closed')) throw failure(409, 'OWNS_ACTIVE_BOTS', 'Close your Bots first');
     this.db.exec('BEGIN IMMEDIATE');
     try {
       this.db.prepare("UPDATE accounts SET status='closed', salt=NULL, password_hash=NULL WHERE id=?").run(account.id);

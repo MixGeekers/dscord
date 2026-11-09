@@ -54,7 +54,7 @@ test('native connection processes Matrix traffic in the original Bot and disconn
   });
   server.listen(0, '127.0.0.1'); await once(server, 'listening');
   const serverUrl = `http://127.0.0.1:${server.address().port}`;
-  const handlers = new Map(); const ctx = { on(name, handler) { handlers.set(name, handler); return () => handlers.delete(name); } };
+  const handlers = new Map(); const ctx = { on(name, handler) { if (!handlers.has(name)) handlers.set(name, new Set()); handlers.get(name).add(handler); return () => handlers.get(name).delete(handler); } };
   const native = new NativeBots(ctx);
   native.list = async () => [bot];
   native.bot = async () => ({ id: 'original', sessionId: 'original', name: 'Native', model: 'native/model' });
@@ -68,7 +68,7 @@ test('native connection processes Matrix traffic in the original Bot and disconn
     streamCalls++;
     const input = JSON.parse(text.split('\n').at(-1));
     assert.equal(input.context.room.name, '测试群'); assert.equal(input.context.source.sender.id, human.id);
-    const event = (type, data) => handlers.get('session/event')({ id: 'original' }, { type, data });
+    const event = async (type, data) => { for (const handler of handlers.get('session/event') || []) await handler({ id: 'original' }, { type, data }); };
     await event('turn/start', { turn: 1 });
     await event('user/message', { content: [{ type: 'text', text }], source: { kind: 'user' } });
     await event('assistant/message', { turn: 1, message: { content: [{ type: 'text', text: '原生 Bot 的群回复' }] } });

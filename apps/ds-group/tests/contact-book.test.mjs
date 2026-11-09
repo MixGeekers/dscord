@@ -7,7 +7,7 @@ const book = (t, self, options = {}) => {
   const db = new DatabaseSync(':memory:');
   t.after(() => db.close());
   let now = 1000;
-  return new ContactBook({ db, self: { id: self }, now: () => now++, ...options });
+  return new ContactBook({ db, now: () => now++ }).on({ self: { id: self }, ...options });
 };
 
 test('each Bot keeps its own book: the same contact has different shared rooms in two books', t => {
@@ -25,7 +25,7 @@ test('each Bot keeps its own book: the same contact has different shared rooms i
   planner.member('!r1', qa, 'leave');
   assert.deepEqual([planner.contact(qa).reach, planner.contact(qa).rooms], ['direct', []]);
   assert.equal(promo.contact(qa).firstRoomId, '!r2');
-  assert.deepEqual(promo.reachableBots(), [{ id: qa, name: 'QA', reach: 'room', rooms: ['!r2'] }]);
+  assert.deepEqual(promo.reachableBots(), [{ id: qa, account: qa, name: 'QA', reach: 'room', rooms: ['!r2'] }]);
 });
 
 test('a room is used only while both are in it, and the preferred room wins when shared', t => {
@@ -88,4 +88,30 @@ test('a request names a Bot by its full ID, a Matrix link to it, or a name only 
   // A Bot met before but sharing no room now is still reached, in a direct room.
   contacts.open({ id: 'old', direction: 'out', peer: '@qa2:c.test', via: 'matrix', status: 'returned' });
   assert.equal(contacts.resolve('QA2').reach, 'direct');
+});
+
+test('one book for every server a Bot is on: a person is one contact keyed by global identity, reached through the account on each server', t => {
+  const db = new DatabaseSync(':memory:');
+  t.after(() => db.close());
+  const book = new ContactBook({ db });
+  const lin = { id: '@lin:a.test', globalId: 'lin@central.test' };
+  const people = { a: [lin, { id: '@qa:a.test', name: 'QA', kind: 'bot', globalId: 'qa@central.test' }, { id: '@ann:a.test', name: 'Ann', kind: 'human', globalId: 'ann@central.test' }],
+    b: [{ id: '@lin:b.test', globalId: 'lin@central.test' }, { id: '@qa:b.test', name: 'QA', kind: 'bot', globalId: 'qa@central.test' }] };
+  const onA = book.on({ self: lin, people: () => people.a });
+  const onB = book.on({ self: people.b[0], people: () => people.b });
+  onA.seeRoom('!x:a.test', [lin, people.a[1], people.a[2]]);
+  onB.seeRoom('!y:b.test', [people.b[0], people.b[1]]);
+  // Meeting the same person on two servers is one contact; the Bot itself is never its own contact.
+  assert.deepEqual(onA.list().map(contact => contact.id).sort(), ['ann@central.test', 'qa@central.test']);
+  assert.deepEqual(onA.contact('qa@central.test').servers, ['a.test', 'b.test']);
+  // Each server reaches the contact through its own account and rooms there.
+  assert.deepEqual([onA.resolve('qa@central.test').account, onA.contact('@qa:a.test').rooms], ['@qa:a.test', ['!x:a.test']]);
+  assert.deepEqual([onB.resolve('QA').account, onB.contact('qa@central.test').rooms], ['@qa:b.test', ['!y:b.test']]);
+  // Someone with no account on this server is in the book but cannot be reached from here.
+  assert.deepEqual([onB.contact('ann@central.test').account, onB.contact('ann@central.test').reach], [null, null]);
+  // Exchanges are keyed by identity; what is still open is listed on the server it was sent from.
+  onB.open({ id: 'T-1>@qa:b.test', direction: 'out', peer: '@qa:b.test', via: 'matrix', status: 'sent', detail: '核对' });
+  assert.deepEqual(onB.pending().map(exchange => [exchange.peerId, exchange.account]), [['qa@central.test', '@qa:b.test']]);
+  assert.deepEqual(onA.pending(), []);
+  assert.deepEqual(onA.view({ contact: '@qa:a.test' }).exchanges.map(exchange => exchange.id), ['T-1>@qa:b.test']);
 });

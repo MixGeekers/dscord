@@ -6,7 +6,8 @@ const short = (value, length = 512) => typeof value === 'string' ? value.slice(0
 const unique = values => [...new Set(values.filter(Boolean).map(canonicalIdentity))];
 const preferencePredicates = new Set(['preference', 'language', 'report-language', 'report-style', 'report-format', 'preferred-language', 'communication-style', 'response-length', 'tone']);
 const isPreference = row => row.facets?.includes('preference') || preferencePredicates.has(row.predicate);
-const person = id => /^(matrix:@|native:|tool:)/.test(id || '') && !id.startsWith('tool:');
+// A person is a global identity (user@central-domain), or an account with none.
+const person = id => /^(?:matrix:@|native:)/.test(id || '') || /^[^:@\s]+@[^:@\s]+$/.test(id || '');
 const project = id => /^(project:|matrix:!)/.test(id || '');
 const refKey = ref => `${ref.id}:${ref.revision}`;
 const tokens = text => [...new Set((String(text || '').toLowerCase().match(/[a-z\d_@:.!-]{2,}|[\p{Script=Han}]{2,}/gu) || [])
@@ -251,7 +252,7 @@ export function memoryProfiles(memory, botId, { kind = 'person', query = '', roo
 }
 
 export function memoryProfile(memory, botId, options = {}) {
-  const id = canonicalIdentity(options.id);
+  const id = memory.store.identity(options.id);
   const known = memoryProfiles(memory, botId, { kind: options.kind, query: id, roomId: options.roomId, limit: 100 }).items.find(item => item.id === id);
   if (!known) throw new Error('MEMORY_PROFILE_NOT_KNOWN');
   const context = { ...(options.roomId ? { roomId: options.roomId, scope: `room:${options.roomId}` } : {}),

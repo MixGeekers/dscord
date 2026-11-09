@@ -13,12 +13,17 @@ const botId = '@alice-helper:chat.example';
 const bot = { id: botId, name: 'Helper', kind: 'bot', localpart: 'alice-helper', ownerId: userId };
 const centralBot = { id: 'central-bot-1', username: 'alice-helper', displayName: 'Helper', globalId: 'alice-helper@id.example', kind: 'bot', status: 'active' };
 
-function bundle() {
+// Chat servers by origin; the last one trusts another central server.
+const serverNames = { [serverUrl]: 'chat.example', 'https://two.example': 'two.example', 'https://elsewhere.example': 'elsewhere.example', 'https://invite.example': 'invite.example' };
+
+function bundle(serverName = 'chat.example') {
+  const origin = Object.keys(serverNames).find(origin => serverNames[origin] === serverName);
+  const account = { ...bot, id: `@${bot.localpart}:${serverName}`, ownerId: `@alice:${serverName}` };
   return {
-    schemaVersion: 1, nodeId: bot.localpart, coreUrl: serverUrl,
-    setup: { serverName: 'chat.example', roomId: '!lobby:chat.example', homeserverUrl: 'https://matrix.example',
-      publicHomeserverUrl: 'https://matrix.example', participants: [{ ...bot, accessToken: 'synthetic-bot-token' }] },
-    coreConfig: { nodeSecret: 'synthetic-node-key', publicUrl: serverUrl, modelCallLimit: 0, maxOutputTokens: 1024 },
+    schemaVersion: 1, nodeId: bot.localpart, coreUrl: origin,
+    setup: { serverName, roomId: `!lobby:${serverName}`, homeserverUrl: `https://matrix.${serverName}`,
+      publicHomeserverUrl: `https://matrix.${serverName}`, participants: [{ ...account, accessToken: 'synthetic-bot-token' }] },
+    coreConfig: { nodeSecret: 'synthetic-node-key', publicUrl: origin, modelCallLimit: 0, maxOutputTokens: 1024 },
   };
 }
 
@@ -53,17 +58,25 @@ async function fixture(t, options = {}) {
       if (pathname === '/api/device/token') return Response.json({ token: `synthetic-bot-central-${body.deviceCode}` });
       if (pathname === '/api/identity-tokens') return Response.json({ token: `identity:${init.headers.Authorization.slice(7)}` });
       if (pathname === '/api/logout') return Response.json({ loggedOut: true });
+      if (pathname === '/api/servers') return Response.json({ servers: [
+        { origin: serverUrl, name: 'Chat', description: '', tags: [], members: { people: 3, bots: 1 }, owner: 'carol@id.example' },
+        { origin: 'https://two.example', name: 'Two', description: 'Robots', tags: ['robots'], members: { people: 9, bots: 0 }, owner: 'carol@id.example' }] });
     }
-    if (pathname === '/.well-known/dscord/client') return Response.json({ home: { serverName: 'chat.example' }, central: { issuer: centralUrl },
-      auth: { audience: serverUrl, sessionPath: '/api/session' } });
+    const serverName = serverNames[origin];
+    if (pathname === '/.well-known/dscord/client') return Response.json({ home: { serverName },
+      central: { issuer: origin === 'https://elsewhere.example' ? 'https://id.elsewhere.example' : centralUrl },
+      auth: { audience: origin, sessionPath: '/api/session' } });
     if (pathname === '/api/session') {
       const bot = body.identityToken.startsWith('identity:synthetic-bot-central');
-      return Response.json(bot ? { user_id: botId, access_token: 'synthetic-bot-session' } : { user_id: userId, access_token: `synthetic-human-token-${logins}` });
+      if (origin === 'https://invite.example' && !bot && body.inviteCode !== 'WXYZ-2345')
+        return Response.json({ error: body.inviteCode ? 'INVITE_INVALID' : 'INVITE_REQUIRED', code: body.inviteCode ? 'INVITE_INVALID' : 'INVITE_REQUIRED' }, { status: 403 });
+      return Response.json(bot ? { user_id: `@${centralBot.username}:${serverName}`, access_token: 'synthetic-bot-session' }
+        : { user_id: `@alice:${serverName}`, access_token: `synthetic-human-token-${logins}${origin === serverUrl ? '' : `-${serverName}`}` });
     }
     if (pathname === '/api/status') return Response.json({ budget: options.policy || { maxTokens: 8192, allowedModels: null } });
-    if (pathname === `/api/bots/${encodeURIComponent(botId)}/connect`) {
+    if (pathname === `/api/bots/${encodeURIComponent(`@${centralBot.username}:${serverName}`)}/connect`) {
       await options.beforeBundle?.();
-      return Response.json({ bundle: options.bundle?.() || bundle() });
+      return Response.json({ bundle: options.bundle?.() || bundle(serverName) });
     }
     if (pathname === '/api/logout') return Response.json({});
     return Response.json({ error: 'Unknown route' }, { status: 404 });
@@ -80,14 +93,15 @@ test('DSH connection login stores a private client token and never persists or r
   assert.deepEqual(await readdir(directory), []);
   assert.equal((await controller.handle({ action: 'status' })).user, null);
   const result = await login();
-  assert.equal(result.user.id, userId);
+  assert.equal(result.user.id, 'alice@id.example');
+  assert.deepEqual(result.servers, [{ url: serverUrl, serverName: 'chat.example' }]);
   assert.equal(result.bots[0].status, 'offline');
   assert.equal(result.dataDirectory, directory);
   assert.equal(JSON.stringify(result).includes('synthetic-human-token'), false);
   const filename = path.join(directory, 'connection.json');
   const saved = await readFile(filename, 'utf8');
   assert.equal(saved.includes('synthetic-password'), false);
-  assert.equal(JSON.parse(saved).accessToken, 'synthetic-human-token-1');
+  assert.equal(JSON.parse(saved).servers[serverUrl].accessToken, 'synthetic-human-token-1');
   assert.equal(JSON.parse(saved).centralToken, 'synthetic-central-token-1');
   assert.equal(result.user.globalId, 'alice@id.example');
   if (process.platform !== 'win32') assert.equal((await stat(filename)).mode & 0o777, 0o600);
@@ -221,7 +235,7 @@ test('failed login persistence retains the previous identity and revokes the unu
   controller.filename = path.join(directory, 'missing-parent', 'connection.json');
   await assert.rejects(login(), /ENOENT/);
   assert.equal(controller.state, previous);
-  assert.equal(JSON.parse(await readFile(savedFilename, 'utf8')).accessToken, 'synthetic-human-token-1');
+  assert.equal(JSON.parse(await readFile(savedFilename, 'utf8')).servers[serverUrl].accessToken, 'synthetic-human-token-1');
   const logouts = calls.filter(call => call.pathname === '/api/logout').map(call => [call.origin, call.init.headers.Authorization]);
   assert.deepEqual(logouts, [[serverUrl, 'Bearer synthetic-human-token-2'], [centralUrl, 'Bearer synthetic-central-token-2']]);
   controller.filename = savedFilename;
@@ -371,4 +385,39 @@ test('server model policy rejects a selection before persistence or node startup
   await assert.rejects(controller.handle({ action: 'save-model', botId: bot.id,
     selection: { model: 'second/chat', maxTokens: 9000 } }), { code: 'MODEL_OUTPUT_LIMIT' });
   await controller.dispose();
+});
+
+test('the owner signs in once and a Bot joins several chat servers, one node per server', async t => {
+  const { controller, login, effects, calls } = await fixture(t);
+  t.after(() => controller.dispose());
+  await login();
+  const added = await controller.handle({ action: 'add-server', serverUrl: 'https://two.example' });
+  assert.deepEqual(added.servers.map(server => server.serverName), ['chat.example', 'two.example']);
+  // One central Bot is an account on each server; it goes online only where the owner connects it.
+  assert.deepEqual(added.bots.map(entry => [entry.id, entry.serverUrl]), [[botId, serverUrl], ['@alice-helper:two.example', 'https://two.example']]);
+  await controller.handle({ action: 'connect', botId });
+  await controller.handle({ action: 'connect', botId: '@alice-helper:two.example' });
+  assert.deepEqual(effects, [['start', botId], ['start', '@alice-helper:two.example']]);
+  assert.notEqual(controller.state.nodes[botId].directory, controller.state.nodes['@alice-helper:two.example'].directory);
+  assert.equal(controller.state.nodes['@alice-helper:two.example'].serverUrl, 'https://two.example');
+  // The central server is signed in to once; each server gets the owner's own session.
+  assert.equal(calls.filter(call => call.pathname === '/api/login').length, 1);
+  await assert.rejects(controller.handle({ action: 'add-server', serverUrl: 'https://elsewhere.example' }), /另一个中央服务器/);
+  // The central index lists servers to add; ones already added are marked.
+  const found = await controller.handle({ action: 'search-servers', query: ' robots ' });
+  assert.deepEqual(found.servers.map(server => [server.origin, server.added]), [[serverUrl, true], ['https://two.example', true]]);
+  // A server that only takes invited people is added with the code a member gave.
+  await assert.rejects(controller.handle({ action: 'add-server', serverUrl: 'https://invite.example' }), /只接受邀请加入/);
+  await assert.rejects(controller.handle({ action: 'add-server', serverUrl: 'https://invite.example', inviteCode: 'NOPE' }), /邀请码不对/);
+  const invited = await controller.handle({ action: 'add-server', serverUrl: 'https://invite.example', inviteCode: ' WXYZ-2345 ' });
+  assert.ok(invited.servers.some(server => server.url === 'https://invite.example'));
+  await controller.handle({ action: 'remove-server', serverUrl: 'https://invite.example' });
+  const search = calls.find(call => call.pathname === '/api/servers');
+  assert.equal(search.init.headers.Authorization, undefined, 'the index is searched without a credential');
+  const removed = await controller.handle({ action: 'remove-server', serverUrl: 'https://two.example' });
+  assert.deepEqual(removed.servers.map(server => server.serverName), ['chat.example']);
+  assert.deepEqual(effects.at(-1), ['stop', '@alice-helper:two.example']);
+  assert.deepEqual(Object.keys(controller.state.nodes), [botId]);
+  assert.ok(calls.some(call => call.origin === 'https://two.example' && call.pathname === '/api/logout'
+    && call.init.headers.Authorization === 'Bearer synthetic-human-token-1-two.example'));
 });

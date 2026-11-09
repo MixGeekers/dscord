@@ -13,12 +13,16 @@ export interface AuthSubmission {
   username: string;
   password: string;
   displayName: string;
+  inviteCode: string;
 }
 
 export interface AuthDialogProps {
   open: boolean;
   /** The central server whose accounts sign in here. */
   central: CentralInfo | null;
+  /** This server only takes invited people; a code from an invitation link fills the field. */
+  inviteRequired?: boolean;
+  initialInvite?: string;
   session: Session | null;
   busy: boolean;
   error: string;
@@ -34,6 +38,8 @@ type Field = "username" | "password" | "displayName";
 export function AuthDialog({
   open,
   central,
+  inviteRequired = false,
+  initialInvite = "",
   session,
   busy,
   error,
@@ -53,6 +59,7 @@ export function AuthDialog({
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [inviteCode, setInviteCode] = useState(initialInvite);
   const [showPassword, setShowPassword] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submittedMode, setSubmittedMode] = useState<Mode | null>(null);
@@ -164,6 +171,7 @@ export function AuthDialog({
         username: username.trim(),
         password,
         displayName: displayName.trim(),
+        inviteCode: inviteRequired ? inviteCode.trim() : "",
       });
     } catch (cause) {
       setLocalError(messageOf(cause));
@@ -317,6 +325,28 @@ export function AuthDialog({
             <p id="password-error" className="field-error" role="alert">
               {t("passwordRequired")}
             </p>
+          )}
+          {inviteRequired && (
+            <>
+              <label htmlFor="login-invite">{t("inviteCode")}</label>
+              <Input
+                id="login-invite"
+                type="text"
+                name="inviteCode"
+                autoComplete="off"
+                autoCapitalize="characters"
+                spellCheck={false}
+                maxLength={20}
+                placeholder="ABCD-2345"
+                value={inviteCode}
+                disabled={disabled}
+                aria-describedby="login-invite-hint"
+                onChange={(event) => setInviteCode(event.target.value)}
+              />
+              <p id="login-invite-hint" className="muted small">
+                {t("inviteHint")}
+              </p>
+            </>
           )}
           <div
             id="login-error"

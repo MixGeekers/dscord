@@ -1,4 +1,4 @@
-import { MemoryStore, sourceId, identityId, canonicalIdentity, canonical, sha } from './store.mjs';
+import { MemoryStore, sourceId, identityId, canonical, sha } from './store.mjs';
 import { OmbreBackend } from './ombre.mjs';
 import { assembleAttentionView, memoryProfiles, memoryProfile, reviewPacket, memoryContacts } from './views.mjs';
 import { prepareReviewProposal, validateReviewProposal } from './review.mjs';
@@ -91,13 +91,17 @@ export class MemoryService {
     const sender = source.sender || { id: event.senderId || event.sender, name: event.senderName || event.senderId || event.sender, kind: event.senderKind || 'human' };
     if (!sender.id || !event.eventId) throw new Error('EVENT_IDENTITY_REQUIRED');
     const account = id => id.startsWith(`${transport}:`) ? id : identityId(transport, id);
-    const authorId = account(sender.id);
+    // A person on several chat servers is one identity: the global ID their server's roster gives, else the account itself.
+    const identityOf = member => member.globalId ? this.store.link(account(member.id), member.globalId) : this.store.identity(account(member.id));
+    const authorId = identityOf(sender);
+    // The account the source came from, and with it the chat server.
+    const authorAccount = account(sender.id);
     const members = context.members || context.participants || [];
     const conversationKind = context.room?.kind === 'direct' || event.conversationKind === 'direct' || source.conversationKind === 'direct'
       || members.length > 0 && members.length <= 2 ? 'direct' : members.length > 2 ? 'group' : 'unknown';
     for (const member of [...members, sender]) {
       if (!member.id) continue;
-      this.store.contact({ id: account(member.id), name: member.name || member.id, kind: member.kind || 'human', ownerId: member.ownerId, botId,
+      this.store.contact({ id: identityOf(member), name: member.name || member.id, kind: member.kind || 'human', ownerId: member.ownerId, botId,
         source: { transport, roomId, eventId: event.eventId }, observedAt: source.timestamp ?? event.timestamp ?? this.store.clock() });
     }
     if (roomId) {
@@ -118,7 +122,7 @@ export class MemoryService {
     let observed, notice;
     if (source.retractsEventId) {
       const targetId = sourceId(transport, roomId, source.retractsEventId), old = this.store.source(targetId);
-      notice = this.store.observe({ id, body: '', authorId, authorKind: sender.kind || 'unknown', transport, roomId,
+      notice = this.store.observe({ id, body: '', authorId, authorAccount, authorKind: sender.kind || 'unknown', transport, roomId,
         conversationKind, roomName: context.room?.name || null,
         eventId: event.eventId, eventKind: 'redaction-notice', targetEventId: source.retractsEventId, targetSourceId: targetId,
         timestamp: source.timestamp ?? event.timestamp ?? this.store.clock() });
@@ -135,7 +139,7 @@ export class MemoryService {
         if (head && head.authorId !== authorId) throw new Error('SOURCE_AUTHOR_CONFLICT');
         // Visible room history may contain a redaction overlay. The placeholder
         // is transport metadata, never new bytes authored by the original person.
-        observed = head?.withdrawn ? head : this.store.observe({ ...(head || { id, authorId, authorKind: sender.kind || 'unknown', roomId,
+        observed = head?.withdrawn ? head : this.store.observe({ ...(head || { id, authorId, authorAccount, authorKind: sender.kind || 'unknown', roomId,
           transport, eventId: event.eventId, timestamp: source.timestamp ?? event.timestamp ?? this.store.clock(), contentUnavailable: true }),
           body: '', revision: head ? head.revision + 1 : revision, withdrawn: true, withdrawalEvidence: 'redacted-history-overlay' });
       } else if (head?.withdrawn && (head.contentUnavailable || head.originalContentRecovered)) {
@@ -145,7 +149,7 @@ export class MemoryService {
           observed = head;
         } else observed = this.store.observe({ ...head, revision: head.revision + 1, body: event.body || '', authorKind: sender.kind || head.authorKind,
           contentUnavailable: false, originalContentRecovered: true, withdrawn: true });
-      } else observed = this.store.observe({ id, body: event.body || '', authorId, authorKind: sender.kind || 'human', roomId,
+      } else observed = this.store.observe({ id, body: event.body || '', authorId, authorAccount, authorKind: sender.kind || 'human', roomId,
         conversationKind, roomName: context.room?.name || null,
         transport, eventId: event.eventId, timestamp: source.timestamp ?? event.timestamp ?? this.store.clock(),
         replyTo: source.replyTo || context.replyTo || null, relay: source.relay || null,
@@ -202,8 +206,18 @@ export class MemoryService {
       watermarks: this.store.watermarks(botId), version: sha(canonical(current)) };
     return this.attentionView(botId, { ...options, sessionId, context: current });
   }
-  attentionView(botId, options = {}) { return assembleAttentionView(this, botId, options); }
-  querySources(botId, options = {}) { return queryObservedSources(this, botId, options); }
+  attentionView(botId, options = {}) { return assembleAttentionView(this, botId, this.identified(options)); }
+  querySources(botId, options = {}) { return queryObservedSources(this, botId, this.identified(options)); }
+
+  /** People named by account (a Matrix ID) are looked up by the global identity behind it. */
+  identified(options) {
+    const identity = id => id && this.store.identity(id);
+    return { ...options,
+      ...(options.subjectIds ? { subjectIds: options.subjectIds.map(identity) } : {}),
+      ...(options.speakerId ? { speakerId: identity(options.speakerId) } : {}),
+      ...(options.kind === 'person' && options.id ? { id: identity(options.id) } : {}),
+      ...(options.context?.authorId ? { context: { ...options.context, authorId: identity(options.context.authorId) } } : {}) };
+  }
   sourceUse(botId, ref, context = this.current(botId), options) { return sourceUse(this.store, botId, ref, context, options); }
   memoryUse(botId, row, context = this.current(botId)) { return memoryUse(this.store, botId, row, context); }
   pendingRequests(botId, context = this.current(botId)) { return pendingRequests(this.store, botId, context); }
@@ -215,7 +229,7 @@ export class MemoryService {
   }
   profiles(botId, options = {}) { return memoryProfiles(this, botId, options); }
   contacts(botId, options = {}) { return memoryContacts(this, botId, options); }
-  profile(botId, options = {}) { return memoryProfile(this, botId, options); }
+  profile(botId, options = {}) { return memoryProfile(this, botId, this.identified(options)); }
   reviewPacket(botId, options = {}) { return reviewPacket(this, botId, options); }
   acknowledgeContext(botId, view) {
     const through = view?.watermarks?.receivedThrough;
@@ -265,13 +279,13 @@ export class MemoryService {
     // keep the human request in sourceRefs/originRefs as provenance.
     const observers = kind === 'observation' ? refs.map(ref => this.store.source(ref.id, ref.revision))
       .filter(item => item?.authorKind === 'tool') : [];
-    const requestedAuthor = canonicalIdentity(args.saidBy);
+    const requestedAuthor = this.store.identity(args.saidBy);
     const saidBy = observers.length ? (observers.find(item => item.authorId === requestedAuthor) || observers[0]).authorId
       : requestedAuthor || source?.authorId;
     const scope = this.scope(context, args.scope);
     const replaces = args.replaces || args.replaceId;
     const previous = replaces ? this.store.get(replaces) : null;
-    const subjectId = canonicalIdentity(args.subjectId || previous?.subjectId || source?.authorId || context.authorId);
+    const subjectId = this.store.identity(args.subjectId || previous?.subjectId || source?.authorId || context.authorId);
     this.assertUsable(botId, { sourceRefs: refs, basisRefs: args.basisRefs || [] }, context);
     return this.store.prepare({ ...args, botId, scope, subjectId, predicate: args.predicate || previous?.predicate, sourceRefs: refs, replaces,
       expectedRevision: args.expectedRevision ?? previous?.revision,

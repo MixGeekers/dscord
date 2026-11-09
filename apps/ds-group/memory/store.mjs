@@ -32,6 +32,7 @@ export class MemoryStore {
     this.db = new DatabaseSync(filename);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000;
       CREATE TABLE IF NOT EXISTS contacts(id TEXT PRIMARY KEY, json TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS identity_accounts(account TEXT PRIMARY KEY, identity TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS sources(id TEXT, revision INTEGER, json TEXT NOT NULL, PRIMARY KEY(id,revision));
       CREATE TABLE IF NOT EXISTS source_heads(id TEXT PRIMARY KEY,revision INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS memories(id TEXT PRIMARY KEY,bot TEXT NOT NULL,scope TEXT NOT NULL,status TEXT NOT NULL,json TEXT NOT NULL);
@@ -67,6 +68,17 @@ export class MemoryStore {
       if (own !== prior) this.setMeta(key, own);
     }
     return next;
+  }
+  /** A chat-server account belongs to this global identity; returns the identity. */
+  link(account, identity) {
+    this.db.prepare('INSERT OR REPLACE INTO identity_accounts VALUES(?,?)').run(canonicalIdentity(account), identity);
+    return identity;
+  }
+  /** The identity an ID names: the global identity behind a known account, else the canonical ID itself. */
+  identity(id) {
+    const key = canonicalIdentity(id);
+    if (typeof key !== 'string') return key;
+    return this.db.prepare('SELECT identity FROM identity_accounts WHERE account=?').get(key)?.identity || key;
   }
   getContact(id) { return parsed(this.db.prepare('SELECT json FROM contacts WHERE id=?').get(id)); }
   contacts(query = '') {
@@ -191,22 +203,22 @@ export class MemoryStore {
       const source = this.source(ref.id);
       if (!source || source.revision !== ref.revision || source.withdrawn) fail('MEMORY_SOURCE_STALE');
     }
-    const subjectId = canonicalIdentity(nonempty(input.subjectId, 'SUBJECT_REQUIRED'));
+    const subjectId = this.identity(nonempty(input.subjectId, 'SUBJECT_REQUIRED'));
     const predicate = input.predicate?.trim() || 'note';
     const kind = input.kind || 'stated';
     if (!['stated', 'reported', 'observation', 'inference'].includes(kind)) fail('INVALID_CLAIM_KIND');
     const validFrom = input.validFrom ?? Math.min(...sourceRefs.map(ref => this.source(ref.id).timestamp ?? this.clock()));
     const validUntil = input.validUntil ?? null;
-    const saidBy = canonicalIdentity(input.saidBy) || null;
+    const saidBy = this.identity(input.saidBy) || null;
     if (!Number.isFinite(validFrom) || validUntil !== null && (!Number.isFinite(validUntil) || validUntil <= validFrom)) fail('INVALID_VALIDITY');
     const claimState = input.claimState || 'statement';
     if (!['statement', 'proposal', 'confirmed', 'uncertain'].includes(claimState)) fail('INVALID_CLAIM_STATE');
-    const ids = values => {
+    const ids = (values, identify = canonicalIdentity) => {
       if (values === undefined) return [];
       if (!Array.isArray(values) || values.length > 32 || values.some(id => typeof id !== 'string' || !id.trim() || id.length > 512)) fail('INVALID_MEMORY_ENTITIES');
-      return [...new Set(values.map(id => canonicalIdentity(id.trim())))].sort();
+      return [...new Set(values.map(id => identify(id.trim())))].sort();
     };
-    const entityIds = ids(input.entityIds), projectIds = ids(input.projectIds), facets = ids(input.facets);
+    const entityIds = ids(input.entityIds, id => this.identity(id)), projectIds = ids(input.projectIds), facets = ids(input.facets);
     if (input.basisRefs !== undefined && (!Array.isArray(input.basisRefs) || input.basisRefs.some(ref => !ref || typeof ref.id !== 'string' || !Number.isSafeInteger(ref.revision) || ref.revision < 1))) fail('INVALID_MEMORY_BASIS');
     const basisRefs = [...new Map((input.basisRefs || []).map(ref => [`${ref.id}:${ref.revision}`, { id: ref.id, revision: ref.revision }])).values()]
       .sort((a,b) => a.id.localeCompare(b.id));
@@ -227,7 +239,7 @@ export class MemoryStore {
     const reclassify = old && input.reclassify === true && old.text === text
       && canonical(old.sourceRefs) === canonical(sourceRefs);
     if (input.replaces && (!old || old.status !== 'active' || old.revision !== input.expectedRevision
-      || old.botId !== botId || old.scope !== scope || canonicalIdentity(old.subjectId) !== subjectId && !reclassify)) fail('MEMORY_REVISION_CONFLICT');
+      || old.botId !== botId || old.scope !== scope || this.identity(old.subjectId) !== subjectId && !reclassify)) fail('MEMORY_REVISION_CONFLICT');
     return this.write({ id, rootId: old?.rootId || id, revision: (old?.revision || 0) + 1,
       botId, scope, text, subjectId, predicate, kind, claimState, entityIds, projectIds, facets, basisRefs, saidBy, topic: input.topic || null,
       sourceRefs, validFrom, validUntil, observedAt: this.clock(), replaces: old?.id || null,
@@ -325,7 +337,7 @@ export class MemoryStore {
   list({ botId, scopes, subjectId, topic, asOf, history = false } = {}) {
     const rows = this.db.prepare('SELECT json FROM memories ORDER BY rowid').all().map(parsed)
       .filter(row => (!botId || row.botId === botId || row.scope === 'team')
-        && (!scopes || scopes.includes(row.scope)) && (!subjectId || canonicalIdentity(row.subjectId) === canonicalIdentity(subjectId)) && (!topic || row.topic === topic))
+        && (!scopes || scopes.includes(row.scope)) && (!subjectId || this.identity(row.subjectId) === this.identity(subjectId)) && (!topic || row.topic === topic))
       .map(row => ({ ...row, derivation: this.derivation(row, asOf) }));
     return history ? rows : rows.filter(row => row.derivation === 'current');
   }

@@ -196,7 +196,7 @@ export function deliveriesFor(event, output, botId, participants, seed = event.e
 export class BotNode {
   constructor({ participant, participants, roomId, matrix, store, bridge, heartbeat, files, tasks, delivery, roster, work, pollTimeout = 10000,
     transferAttempts = 3, transferRetryDelayMs = 500, controlIntervalMs = 500, onError = console.error,
-    attention = {}, decisionProvider, readAttentionView, observe, executionMode, nativeBinding, localBots }) {
+    attention = {}, decisionProvider, readAttentionView, observe, executionMode, nativeBinding, localBots, contactBook }) {
     this.participant = participant;
     this.participants = participants;
     this.roomId = roomId;
@@ -215,8 +215,8 @@ export class BotNode {
     this.nativeBinding = nativeBinding;
     this.roomRosters = new Map();
     this.roomRosterTimes = new Map();
-    // This Bot's own contact book; every route to another Bot is looked up here.
-    this.contacts = new ContactBook({ db: store.db, self: participant, people: () => this.participants, local: localBots });
+    // This Bot's own contact book, shared by its accounts on every chat server; every route to another Bot is looked up here.
+    this.contacts = (contactBook || new ContactBook({ db: store.db })).on({ self: participant, people: () => this.participants, local: localBots });
     this.transferAttempts = transferAttempts;
     this.transferRetryDelayMs = transferRetryDelayMs;
     this.controlIntervalMs = controlIntervalMs;
@@ -531,7 +531,7 @@ export class BotNode {
       const updated = participants.map(person => {
         const record = existing.get(person.id) || {};
         delete record.identitySource;
-        for (const field of ['id', 'localpart', 'name', 'kind', 'ownerId', 'role', 'instructions']) {
+        for (const field of ['id', 'localpart', 'name', 'kind', 'ownerId', 'globalId', 'role', 'instructions']) {
           if (person[field] !== undefined) record[field] = person[field];
         }
         return record;
@@ -759,8 +759,8 @@ export class BotNode {
         threadRoot: inRoom(this.store.message(threadOf(event))), threadRootRoom: this.store.roomContextForEvent(threadOf(event)) }),
       event: { eventId: event.event_id, roomId: event.room_id, senderId: event.sender, senderName: this.senderName(event.sender, sourceRoom),
         botIdentity: { id: this.participant.id, name: this.senderName(this.participant.id, room), role: this.roleOf() },
-        contacts: this.contacts.reachableBots().map(contact => ({ ...contact, name: this.senderName(contact.id, room), role: this.roleOf(this.participants.find(person => person.id === contact.id) || contact) })),
-        openRequests: this.contacts.pending().map(exchange => ({ to: exchange.peerId, name: this.senderName(exchange.peerId, room),
+        contacts: this.contacts.reachableBots().map(contact => ({ ...contact, name: this.senderName(contact.account, room), role: this.roleOf(this.participants.find(person => person.id === contact.account) || contact) })),
+        openRequests: this.contacts.pending().map(exchange => ({ to: exchange.peerId, name: this.senderName(exchange.account, room),
           request: exchange.detail, forSenderId: exchange.origin?.senderId || null, forEventId: exchange.origin?.eventId || null,
           since: new Date(exchange.at).toISOString() })),
         senderKind: this.participants.find(person => person.id === event.sender)?.kind,

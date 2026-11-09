@@ -28,8 +28,8 @@ async function interruptible(operation, signal) {
 
 /** The Matrix binding and its native kernel Bot share one durable identity. */
 export class NativeBridge {
-  constructor({ ctx, native, node, timeoutMs = 0 }) {
-    Object.assign(this, { ctx, native, node, timeoutMs });
+  constructor({ ctx, native, node, botDirectory, timeoutMs = 0 }) {
+    Object.assign(this, { ctx, native, node, botDirectory, timeoutMs });
     this.filename = path.join(node.directory, 'native-bridge.json');
     this.pending = new Map();
     this.jobs = new Map();
@@ -39,12 +39,15 @@ export class NativeBridge {
 
   async initialize() {
     await mkdir(this.node.directory, { recursive: true, mode: 0o700 });
-    this.state = await readOptionalJson(this.filename) || { version: 1, nativeBotId: this.node.nativeBotId, requests: {}, tasks: {} };
+    this.state = await readOptionalJson(this.filename) || { version: 1, nativeBotId: this.node.nativeBotId, requests: {} };
     if (this.state.nativeBotId !== this.node.nativeBotId) throw error('NATIVE_BINDING_CONFLICT');
     for (const record of Object.values(this.state.requests)) if (!terminal(record)) {
       record.status = 'unknown'; record.errorCode = 'HOST_RESTARTED';
     }
-    this.core = new WorkCore({ ctx: this.ctx, native: this.native, node: this.node, state: this.state, save: () => this.save() });
+    // The Bot's program core is shared by its connections to every chat server; this one takes a seat.
+    this.core = await WorkCore.acquire({ ctx: this.ctx, native: this.native, nativeBotId: this.node.nativeBotId,
+      directory: this.botDirectory || path.join(this.node.directory, 'bot') });
+    this.core.seat(this.node.id);
     await this.save();
     this.durable = new Set(Object.values(this.state.requests).filter(terminal).map(record => record.requestId));
     this.disposeEvents = this.ctx.on('session/event', (session, event) => this.event(session, event));
@@ -52,14 +55,9 @@ export class NativeBridge {
     return this;
   }
 
-  /** Worker results and questions go back to the front: through the Matrix node when the task came from a room. */
+  /** Worker results and questions for requests that came in through this server go back through this node. */
   async onWorkerResult(handler) {
-    this.core.onResult = async (task, message) => {
-      const text = this.core.resultText(task, message);
-      if (task.origin?.roomId) return handler(task, message, text);
-      const bot = await this.native.bot(this.node.nativeBotId);
-      await this.core.prompt(bot.sessionId, text);
-    };
+    this.core.seat(this.node.id).onResult = handler;
     await this.core.flush();
   }
 
@@ -162,7 +160,7 @@ export class NativeBridge {
   }
 
   async event(session, event) {
-    if (await this.core.event(session, event)) return;
+    if (this.core.ownsSession(session.id)) return;
     const run = this.run;
     if (!run) return;
     const message = event.data?.message || event.data;
@@ -251,7 +249,7 @@ export class NativeBridge {
     const record = { requestId: input.requestId, botId: input.botId, inputHash: hash, status: 'queued',
       stage: 'queued', summary: '等待原生 Bot', artifacts: [], calls: [], toolReceipts: [], mode: 'native' };
     this.state.requests[input.requestId] = record;
-    const task = input.event.workerKind === 'result' && this.state.tasks[input.event.workerTask];
+    const task = input.event.workerKind === 'result' && this.core.state.tasks[input.event.workerTask];
     if (task) return this.deliverResult(record, task);
     const pending = this.queue(record, input, options);
     this.pending.set(input.requestId, pending);
@@ -332,12 +330,13 @@ export class NativeBridge {
       check();
       const files = await prepareWorkFiles({ dataDir: this.node.directory, requestId: input.requestId, workdir: input.workdir, files: input.files });
       check();
-      const workerTask = input.event.workerTask && this.state.tasks[input.event.workerTask];
+      const workerTask = input.event.workerTask && this.core.state.tasks[input.event.workerTask];
       // Another Bot's result to this Bot's own request belongs to the message that started the request:
       // work dispatched from it answers that message, not the peer's result.
       const event = input.event;
       const answer = ['task.result', 'task.failure'].includes(event.kind) && event.senderKind === 'bot' && event.originEventId;
-      this.core.origin = workerTask?.origin || { requestId: input.requestId, hop: Number.isInteger(event.hop) ? event.hop : 0,
+      // botId is this Bot's account on the server the request came in on: its result goes back the same way.
+      this.core.origin = workerTask?.origin || { requestId: input.requestId, botId: this.node.id, hop: Number.isInteger(event.hop) ? event.hop : 0,
         ...(answer
           ? { roomId: event.originRoomId || event.roomId, eventId: event.originEventId, senderId: event.originSenderId,
             ...(event.originThreadRootId ? { threadRootId: event.originThreadRootId } : {}),
@@ -370,7 +369,7 @@ export class NativeBridge {
         source: input.context?.source || { sender: { id: input.event.senderId,
           name: input.event.senderName || input.event.senderId, kind: input.event.senderKind || 'human' },
           roomId: input.event.roomId, eventId: input.event.eventId }, memoryContext: input })
-        .catch(cause => { this.state.frontNotes.unshift(...workResults); throw cause; });
+        .catch(cause => { this.core.state.frontNotes.unshift(...workResults); throw cause; });
       run.sent = true;
       if (record.cancelRequested) run.cancelling ??= this.cancelNative(run);
       await run.cancelling;
@@ -459,7 +458,8 @@ export class NativeBridge {
     this.waiting?.reject(error('CONNECTION_DETACHED'));
     // Disconnect never cancels or stops the underlying native Bot.
     if (this.run) { this.run.error = 'CONNECTION_DETACHED'; this.run.resolve(); }
-    this.disposeEvents?.(); this.disposeUsage?.(); this.core?.dispose();
+    this.disposeEvents?.(); this.disposeUsage?.();
+    if (!this.released) { this.released = true; await this.core?.release(this.node.id); }
     await Promise.allSettled([...this.pending.values()]);
     await this.writes;
   }

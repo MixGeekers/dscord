@@ -14,12 +14,12 @@ test('front and worker tools register as object JSON Schemas under the pinned DS
   const registered = new Map();
   const agent = id => ({ session: { id }, cancel() {}, ctx: { tools: {
     register: def => { registered.set(def.name, def); return () => {}; }, restrict: () => () => {}, schemas: () => [] } } });
-  const core = new WorkCore({
+  const core = await new WorkCore({
     ctx: { tools: { guard: () => () => {} }, sessionController: {
       create: async () => ({ sessionId: 'worker-1' }), prompt: async () => ({ accepted: true }), selectModel: async () => ({}) } },
     native: { bot: async () => ({ id: 'native', name: 'Lin', sessionId: 'front' }), agent: async id => agent(id) },
-    node: { nativeBotId: 'native', directory }, state: { tasks: {} }, save: async () => {},
-  });
+    nativeBotId: 'native', directory,
+  }).initialize();
   t.after(() => core.dispose());
   await core.serveFront(agent('front'));
   core.origin = { roomId: '!room', eventId: '$ask', senderId: '@ann' };

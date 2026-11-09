@@ -1,4 +1,11 @@
-import { chmod, mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  readFile,
+  rename,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 
@@ -82,6 +89,75 @@ export function emptyPolicy(domain) {
     rooms: [],
     botPolicies: [],
     settings: { maxUploadBytes: null },
+    directory: emptyDirectory(),
+  };
+}
+
+/**
+ * How this server shows up in its central server's index. Core always publishes the page; the server is in the index
+ * once it has submitted itself, and `listing` and `listingNote` keep what the central server last answered.
+ */
+export const DIRECTORY_DISCOVERY = ["public", "number", "hidden"];
+export const DIRECTORY_JOIN = ["open", "invite"];
+export const DIRECTORY_LISTING = ["", "pending", "listed", "rejected", "banned"];
+export function emptyDirectory() {
+  return {
+    discovery: "hidden",
+    join: "open",
+    name: "",
+    description: "",
+    tags: [],
+    number: null,
+    listing: "",
+    listingNote: "",
+  };
+}
+
+function directoryText(value, name, max) {
+  if (value === undefined) return "";
+  if (
+    typeof value !== "string" ||
+    value.length > max ||
+    /[\x00-\x08\x0b-\x1f\x7f]/.test(value)
+  )
+    throw policyError(400, `Invalid directory ${name}`);
+  return value.trim();
+}
+
+function validateDirectory(value = emptyDirectory()) {
+  if (!value || typeof value !== "object")
+    throw policyError(400, "Invalid directory");
+  if (!DIRECTORY_DISCOVERY.includes(value.discovery))
+    throw policyError(400, "discovery must be public, number or hidden");
+  if (!DIRECTORY_JOIN.includes(value.join))
+    throw policyError(400, "join must be open or invite");
+  const number = value.number ?? null;
+  if (
+    number !== null &&
+    !(Number.isSafeInteger(number) && number >= 10000000 && number <= 99999999)
+  )
+    throw policyError(400, "Invalid server number");
+  const tags = value.tags ?? [];
+  if (!Array.isArray(tags) || tags.length > 10)
+    throw policyError(400, "Use at most 10 directory tags");
+  const listing = value.listing ?? "";
+  if (!DIRECTORY_LISTING.includes(listing))
+    throw policyError(400, "Invalid directory listing");
+  return {
+    discovery: value.discovery,
+    join: value.join,
+    name: directoryText(value.name, "name", 80),
+    description: directoryText(value.description, "description", 500),
+    tags: [
+      ...new Set(
+        tags
+          .map((tag) => directoryText(tag, "tag", 32).toLowerCase())
+          .filter(Boolean),
+      ),
+    ],
+    number,
+    listing,
+    listingNote: directoryText(value.listingNote, "listing note", 500),
   };
 }
 
@@ -196,6 +272,7 @@ export function validatePolicy(value, domain) {
     settings: {
       maxUploadBytes: settings.maxUploadBytes,
     },
+    directory: validateDirectory(value.directory),
   };
 }
 

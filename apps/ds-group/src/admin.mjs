@@ -7,6 +7,8 @@ import { Governance, policyError } from "./governance.mjs";
 import { SynapseControl } from "./synapse-control.mjs";
 import { localPath, packageRoot } from "./paths.mjs";
 import { readJsonBody } from "./http-json.mjs";
+import { listInCentral } from "./admin-directory.mjs";
+import { InviteStore } from "./invites.mjs";
 
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
@@ -43,6 +45,7 @@ export async function createAdmin({
   synapseRoot,
   controlFactory,
   governanceRoot,
+  fetch = globalThis.fetch,
 } = {}) {
   setup ||= await optional(path.join(dataRoot, "matrix-setup.json"));
   if (!setup?.serverName)
@@ -56,6 +59,7 @@ export async function createAdmin({
     governanceRoot,
   });
   await governance.ensure();
+  const invites = new InviteStore({ dataRoot });
   const control = controlFactory
     ? controlFactory({ dataRoot, setup, governance, synapseRoot })
     : new SynapseControl({ dataRoot, setup, governance, synapseRoot });
@@ -138,6 +142,42 @@ export async function createAdmin({
             revision: input.revision,
           });
           return send(200, receipt);
+        }
+        if (
+          request.method === "POST" &&
+          url.pathname === "/admin-api/directory/list"
+        ) {
+          write();
+          const listing = await listInCentral({
+            dataRoot,
+            governance,
+            fetch,
+          });
+          auth.audit(actor.username, "directory.list", {
+            central: listing.central,
+            number: listing.server.number,
+            status: listing.server.status,
+          });
+          return send(200, listing);
+        }
+        if (url.pathname === "/admin-api/invites") {
+          if (request.method === "GET")
+            return send(200, { invites: invites.list() });
+          if (request.method === "POST") {
+            write();
+            const invite = invites.create(`admin:${actor.username}`);
+            auth.audit(actor.username, "invite.create", {});
+            return send(201, { invite });
+          }
+        }
+        const revoking =
+          request.method === "DELETE" &&
+          /^\/admin-api\/invites\/([^/]+)$/.exec(url.pathname);
+        if (revoking) {
+          write();
+          invites.revoke(decodeURIComponent(revoking[1]));
+          auth.audit(actor.username, "invite.revoke", {});
+          return send(200, { revoked: true });
         }
         if (url.pathname === "/admin-api/administrators") {
           if (request.method === "GET")
@@ -266,6 +306,7 @@ export async function createAdmin({
     close: async () => {
       await new Promise((resolve) => server.close(resolve));
       auth.close();
+      invites.close();
     },
   };
 }
