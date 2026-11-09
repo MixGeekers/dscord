@@ -127,7 +127,10 @@ function validateDirectory(value = emptyDirectory()) {
   if (!DIRECTORY_JOIN.includes(value.join))
     throw policyError(400, "join must be open or invite");
   const number = value.number ?? null;
-  if (number !== null && !(Number.isSafeInteger(number) && number >= 10000000 && number <= 99999999))
+  if (
+    number !== null &&
+    !(Number.isSafeInteger(number) && number >= 10000000 && number <= 99999999)
+  )
     throw policyError(400, "Invalid server number");
   const tags = value.tags ?? [];
   if (!Array.isArray(tags) || tags.length > 10)

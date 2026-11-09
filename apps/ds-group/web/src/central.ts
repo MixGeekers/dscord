@@ -99,6 +99,8 @@ export async function centralIdentityToken(
 /** A chat server as the central server's index lists it. */
 export interface ListedServer {
   origin: string;
+  number: number;
+  join: "open" | "invite";
   name: string;
   description: string;
   tags: string[];

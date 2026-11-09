@@ -277,18 +277,36 @@ try {
   });
   checks.push("Deployment controls persist the upload policy");
   await page.getByRole("button", { name: "Server directory", exact: true }).click();
-  await page.getByRole("checkbox", { name: "Show this server in central search", exact: true }).click();
+  await page.getByLabel("How people find this server", { exact: true }).selectOption("number");
+  await page.getByLabel("How people join", { exact: true }).selectOption("invite");
   await page.getByLabel("Name", { exact: true }).fill("Robotics club");
+  await page.getByLabel("Description", { exact: true }).fill("Arms, wheels and weekly build nights");
   await page.getByLabel("Tags (comma-separated, up to 10)", { exact: true }).fill("Robots, arms");
   assert.equal(await page.getByRole("button", { name: "List in central", exact: true }).isDisabled(), true);
   await page.getByRole("button", { name: "Save policy", exact: true }).click();
   await page.getByText("Saved revision 7", { exact: true }).waitFor();
   assert.deepEqual((await admin.governance.read()).directory, {
-    listed: true, name: "Robotics club", description: "", tags: ["robots", "arms"], challenge: "",
+    discovery: "number", join: "invite", name: "Robotics club", description: "Arms, wheels and weekly build nights",
+    tags: ["robots", "arms"], challenge: "", number: null,
   });
   await page.getByText("Not listed in a central server yet.", { exact: true }).waitFor();
-  await page.screenshot({ path: path.join(output, "admin-directory-desktop.png"), animations: "disabled" });
-  checks.push("Directory controls persist the public listing and wait for a saved policy before listing in central");
+  await page.getByRole("button", { name: "Create invitation", exact: true }).click();
+  await page.locator(".admin-invite-code").first().waitFor();
+  const inviteCode = await page.locator(".admin-invite-code").first().textContent();
+  assert.match(inviteCode, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  await page.screenshot({ path: path.join(output, "admin-directory-desktop.png"), fullPage: true, animations: "disabled" });
+  // A listed server shows the number central gave it.
+  const listedPolicy = await admin.governance.read();
+  await admin.governance.save({ ...listedPolicy, directory: { ...listedPolicy.directory, number: 48213907, challenge: "dscord-server-synthetic" } });
+  await page.getByRole("button", { name: "Reload", exact: true }).click();
+  await page.locator(".admin-server-number strong").filter({ hasText: "48213907" }).waitFor();
+  await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
+  await page.getByText("别人怎么找到本服务器", { exact: true }).waitFor();
+  await page.screenshot({ path: path.join(output, "admin-directory-zh-desktop.png"), fullPage: true, animations: "disabled" });
+  await page.getByRole("button", { name: "撤销", exact: true }).first().click();
+  await page.getByText("没有有效的邀请码", { exact: true }).waitFor();
+  await page.getByLabel("语言", { exact: true }).selectOption("en");
+  checks.push("Directory controls persist discovery and join modes, show the server number, and create and revoke invitations");
   await page.getByRole("button", { name: "Prepare and apply", exact: true }).click();
   await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
   await page.getByRole("button", { name: "概览", exact: true }).click();

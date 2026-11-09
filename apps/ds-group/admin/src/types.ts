@@ -42,7 +42,9 @@ export interface Policy {
   directory: Directory;
 }
 export interface Directory {
-  listed: boolean;
+  discovery: "public" | "number" | "hidden";
+  join: "open" | "invite";
+  number: number | null;
   name: string;
   description: string;
   tags: string[];

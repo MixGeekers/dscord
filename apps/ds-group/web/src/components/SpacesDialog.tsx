@@ -16,6 +16,8 @@ export function SpacesDialog(props: {
   api: Api;
   session: Session | null;
   centralIssuer: string | null;
+  /** The number the central index gave this server, if it is listed. */
+  serverNumber?: number | null;
   onClose(): void;
   onServer(name: string): void;
   onChanged(): void;
@@ -33,6 +35,11 @@ export function SpacesDialog(props: {
   const [found, setFound] = useState<ListedServer[] | null>(null);
   const [searchError, setSearchError] = useState("");
   const [searching, setSearching] = useState(false);
+  const [invite, setInvite] = useState<{ code: string; link: string } | null>(
+    null,
+  );
+  const [inviting, setInviting] = useState(false);
+  const [copied, setCopied] = useState(false);
   const [busy, setBusy] = useState(false);
   useEffect(() => {
     if (props.open && !dialog.current?.open) dialog.current?.showModal();
@@ -45,6 +52,22 @@ export function SpacesDialog(props: {
     setSearchError("");
   }, [props.open, props.session]);
   useEffect(() => () => discovery.current?.abort(), []);
+  async function createInvite() {
+    setInviting(true);
+    setCopied(false);
+    try {
+      const { invite: created } = await props.api<{
+        invite: { code: string };
+      }>("/api/invites", { method: "POST", body: {} });
+      const link = new URL(location.pathname, location.origin);
+      link.searchParams.set("invite", created.code);
+      setInvite({ code: created.code, link: link.href });
+    } catch (reason) {
+      setFeedback(messageOf(reason));
+    } finally {
+      setInviting(false);
+    }
+  }
   async function search() {
     const issuer = props.centralIssuer;
     if (!issuer) return;
@@ -268,6 +291,50 @@ export function SpacesDialog(props: {
         <p id="space-feedback" className="settings-feedback" role="status">
           {feedback}
         </p>
+        {props.session && (
+          <section id="server-invite">
+            <h3>{t("inviteTitle")}</h3>
+            {props.serverNumber != null && (
+              <p className="small">
+                {t("inviteNumber", { number: props.serverNumber })}
+              </p>
+            )}
+            <p className="muted small">{t("inviteHelp")}</p>
+            <Button
+              variant="secondary"
+              id="create-invite"
+              className="secondary-button"
+              type="button"
+              disabled={inviting}
+              onClick={() => void createInvite()}
+            >
+              {t(inviting ? "creatingInvite" : "createInvite")}
+            </Button>
+            {invite && (
+              <div className="invite-result">
+                <label htmlFor="invite-code">{t("inviteCodeLabel")}</label>
+                <Input id="invite-code" readOnly value={invite.code} />
+                <label htmlFor="invite-link">{t("inviteLinkLabel")}</label>
+                <div className="invite-link-row">
+                  <Input id="invite-link" readOnly value={invite.link} />
+                  <Button
+                    variant="secondary"
+                    className="secondary-button"
+                    type="button"
+                    onClick={() =>
+                      void navigator.clipboard
+                        ?.writeText(invite.link)
+                        .then(() => setCopied(true))
+                        .catch(() => {})
+                    }
+                  >
+                    {t(copied ? "copied" : "copyLink")}
+                  </Button>
+                </div>
+              </div>
+            )}
+          </section>
+        )}
         {props.centralIssuer && (
           <section>
             <h3>{t("discover")}</h3>
@@ -312,12 +379,18 @@ export function SpacesDialog(props: {
                     <div>
                       <strong>{server.name}</strong>
                       <span className="muted small">
+                        {t("serverNumber", { number: server.number })} ·{" "}
                         {new URL(server.origin).host} ·{" "}
                         {t("people", { count: server.members.people })} ·{" "}
                         {t("bots", { count: server.members.bots })}
                       </span>
                       {server.description && (
                         <span className="small">{server.description}</span>
+                      )}
+                      {server.join === "invite" && (
+                        <span className="listed-server-invite small">
+                          {t("inviteOnly")}
+                        </span>
                       )}
                       {!!server.tags.length && (
                         <span className="muted small">

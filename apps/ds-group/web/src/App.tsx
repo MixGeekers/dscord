@@ -21,6 +21,7 @@ import { matrixServer, roomsInSpace } from "./spaces";
 import type { SpacesResult } from "./spaces";
 import { useTranslation } from "./locale";
 import { appMessages } from "./locales/app";
+import { authMessages } from "./locales/auth";
 import { Shell } from "./components/Shell";
 import { MemberDialog, RoomDialog } from "./components/BasicDialogs";
 import { AuthDialog } from "./components/AuthDialog";
@@ -75,6 +76,11 @@ export default function App({
 }: { config?: ClientConfig } = {}) {
   const [config] = useState(() => suppliedConfig ?? defaultConfig());
   const t = useTranslation(appMessages);
+  const tAuth = useTranslation(authMessages);
+  // An invitation link carries its code as ?invite=CODE for the sign-in form.
+  const [invitation] = useState(
+    () => new URL(location.href).searchParams.get("invite") ?? "",
+  );
   const [session, setSession] = useState<Session | null>(() =>
     restoreSession(config),
   );
@@ -591,7 +597,10 @@ export default function App({
       );
       const receipt = await api<Session>(homeDiscovery.auth.sessionPath, {
         method: "POST",
-        body: { identityToken },
+        body: {
+          identityToken,
+          ...(input.inviteCode ? { inviteCode: input.inviteCode } : {}),
+        },
         auth: false,
         timeout: 30000,
       });
@@ -617,6 +626,11 @@ export default function App({
       initialNavigation.current = true;
       lastRead.current.clear();
       setLoginOpen(false);
+      if (invitation) {
+        const url = new URL(location.href);
+        url.searchParams.delete("invite");
+        history.replaceState(null, "", url);
+      }
       setView("chat");
       refresh();
       void pwa.current?.refresh();
@@ -625,6 +639,10 @@ export default function App({
         setLoginRateLimitUntil(
           reason.retryAfterMs > 0 ? Date.now() + reason.retryAfterMs : 0,
         );
+      else if (reason instanceof ApiError && reason.code === "INVITE_REQUIRED")
+        setLoginError(tAuth("inviteRequired"));
+      else if (reason instanceof ApiError && reason.code === "INVITE_INVALID")
+        setLoginError(tAuth("inviteInvalid"));
       else setLoginError(messageOf(reason));
     } finally {
       authBusyRef.current = false;
@@ -1179,6 +1197,8 @@ export default function App({
       <AuthDialog
         open={loginOpen}
         central={central}
+        inviteRequired={homeDiscovery?.directory?.join === "invite"}
+        initialInvite={invitation}
         session={session}
         busy={loginBusy || logoutBusy || !central}
         error={loginError}
@@ -1268,6 +1288,7 @@ export default function App({
       <SpacesDialog
         open={spacesOpen}
         centralIssuer={homeDiscovery?.central?.issuer ?? null}
+        serverNumber={homeDiscovery?.directory?.number ?? null}
         spaces={spaces}
         selectedServer={serverName}
         onRoles={() => {
