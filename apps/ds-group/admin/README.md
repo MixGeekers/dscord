@@ -43,9 +43,15 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml exec administration
 
 ## 服务器目录
 
-“服务器目录”决定本服务器在中央服务器索引里的样子：是否在中央搜索里显示、名称、简介和标签。这些和其他策略一样，保存后生效；中央每小时重新读取一次。
+“服务器目录”决定别人怎么找到、怎么加入本服务器，和其他策略一样保存后生效：
 
-第一次登记时，在同一页填中央账号和密码，点“登记到中央”。管理服务用这个账号登录中央，认领 `core-config.json` 里的 `publicUrl`，把中央给的挑战码写进策略，再请中央读取 Core 的 `/.well-known/dscord/server`，最后退出中央。中央密码只用于这一次请求，不保存。需要登记前先保存策略；再登记一次会让中央立即重新读取。管理服务访问中央的地址和中央的公开地址不同时（Compose 内），用 `DS_GROUP_CENTRAL_FETCH_URL` 指定前者。中央这一侧的规则见[中央服务器说明](../central/README.md#服务器索引)。
+- 怎么被找到：公开（能被关键词搜到，也能凭服务器号找到）、只能凭服务器号找到、不公开（新服务器的默认值）。改动在中央下次读取时生效（每小时一次，或再登记一次立即生效）。
+- 怎么加入：任何中央账号都能直接加入（默认），或者只能凭邀请加入。只凭邀请时，从没在本服务器登录过的人要在登录框填邀请码；已经是成员的人不受影响；成员的 Bot 随所属人加入，不用邀请码。
+- 名称、简介和标签：显示在搜索结果里。
+
+页面下方的“邀请”可以生成和撤销邀请码。邀请码 7 天内有效、可以多人使用，撤销后立即失效；成员也能在聊天网页的“协作服务器”里自己生成邀请码和邀请链接（`?invite=邀请码`）。邀请码存在 Core 数据目录的 `invites.sqlite`。
+
+第一次登记时，在同一页填中央账号和密码，点“登记到中央”。管理服务用这个账号登录中央，认领 `core-config.json` 里的 `publicUrl`，把中央给的挑战码写进策略，再请中央读取 Core 的 `/.well-known/dscord/server`，把中央分配的服务器号也记进策略，最后退出中央。中央密码只用于这一次请求，不保存。需要登记前先保存策略；再登记一次会让中央立即重新读取。管理服务访问中央的地址和中央的公开地址不同时（Compose 内），用 `DS_GROUP_CENTRAL_FETCH_URL` 指定前者。中央这一侧的规则见[中央服务器说明](../central/README.md#服务器索引)。
 
 ## Bot 工作限制
 
@@ -75,6 +81,7 @@ API 仅由独立管理服务提供，不挂到 Core 的聊天监听器。
 | `POST /admin-api/apply` | 应用指定 revision，返回各房间和服务状态 |
 | `POST /admin-api/invite` | 邀请已批准的精确成员进入本服房间 |
 | `POST /admin-api/directory/list` | `{username, password}` 用中央账号把本服务器登记到中央索引 |
+| `GET /admin-api/invites`、`POST /admin-api/invites`、`DELETE /admin-api/invites/:code` | 列出、生成、撤销邀请码 |
 | `GET /admin-api/administrators`、`PUT /admin-api/administrators` | 查看或管理实例管理员；仅 owner 可写 |
 | `GET /admin-api/audit?before=SEQUENCE` | 分页读取审计，每页最多 100 条 |
 

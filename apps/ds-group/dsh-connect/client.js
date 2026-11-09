@@ -49,7 +49,8 @@ window.__ModuleLoader__.load({
       servers: '聊天服务器', serversHelp: '一个中央账号可以加入多台聊天服务器，Bot 在每台服务器上分别上线。',
       addServer: '添加服务器', addingServer: '正在添加…', searchServers: '搜索服务器', searchServersHelp: '在中央服务器的索引里按名称、主题或标签找服务器。',
       searchQuery: '搜索', searchingServers: '正在搜索…', noServerResults: '没有符合的服务器', serverAdded: '已添加', addThisServer: '添加',
-      serverMembers: '{people} 人 · {bots} 个 Bot', addServerLabel: '添加 {server}', removeServer: '移除', removeServerLabel: '移除 {server}',
+      serverMembers: '{people} 人 · {bots} 个 Bot', addServerLabel: '添加 {server}', serverNumber: '号码 {number}',
+      inviteOnly: '只凭邀请加入', inviteOnlyHint: '这台服务器只接受邀请：在下面填它的地址和成员给你的邀请码再添加。', inviteCodeOptional: '邀请码（服务器只接受邀请时填写）', removeServer: '移除', removeServerLabel: '移除 {server}',
       chooseServer: '选择服务器', noServerBots: '这台服务器上还没有你的 Bot。',
       runtimeUnavailable: 'Bot 运行环境暂不可用', account: '当前账号',
       logout: '退出登录', loggingOut: '正在退出…', myBots: '我的 Bot',
@@ -107,7 +108,9 @@ window.__ModuleLoader__.load({
       servers: 'Chat servers', serversHelp: 'One central account can join several chat servers. Each Bot goes online on each server separately.',
       addServer: 'Add server', addingServer: 'Adding…', searchServers: 'Search servers', searchServersHelp: 'Find servers in the central index by name, topic or tag.',
       searchQuery: 'Search', searchingServers: 'Searching…', noServerResults: 'No listed server matches', serverAdded: 'Added', addThisServer: 'Add',
-      serverMembers: '{people} people · {bots} Bots', addServerLabel: 'Add {server}', removeServer: 'Remove', removeServerLabel: 'Remove {server}',
+      serverMembers: '{people} people · {bots} Bots', addServerLabel: 'Add {server}', serverNumber: 'No. {number}',
+      inviteOnly: 'Invitation only', inviteOnlyHint: 'This server only takes invited people: add it below with its address and the code a member gave you.',
+      inviteCodeOptional: 'Invitation code (for servers that only take invited people)', removeServer: 'Remove', removeServerLabel: 'Remove {server}',
       chooseServer: 'Choose a server', noServerBots: 'You have no Bots on this server yet.',
       runtimeUnavailable: 'The Bot runtime is currently unavailable', account: 'Current account',
       logout: 'Sign out', loggingOut: 'Signing out…', myBots: 'My Bots',
@@ -386,8 +389,8 @@ body[data-ds-dark-theme] .dscord-connect {
         getSnapshot: () => snapshot,
         subscribe,
         refresh,
-        login: (serverUrl, user, password) => mutate('login', { serverUrl, user, password }),
-        addServer: serverUrl => mutate('add-server', { serverUrl }),
+        login: (serverUrl, user, password, inviteCode = '') => mutate('login', { serverUrl, user, password, ...(inviteCode ? { inviteCode } : {}) }),
+        addServer: (serverUrl, inviteCode = '') => mutate('add-server', { serverUrl, ...(inviteCode ? { inviteCode } : {}) }),
         searchServers: query => request('search-servers', { query }, new AbortController(), false),
         removeServer: serverUrl => mutate('remove-server', { serverUrl }),
         logout: () => mutate('logout'),
@@ -429,7 +432,8 @@ body[data-ds-dark-theme] .dscord-connect {
           const passwordInput = fields.namedItem('password');
           const password = passwordInput.value;
           passwordInput.value = '';
-          void connection.login(fields.namedItem('serverUrl').value.trim(), fields.namedItem('user').value.trim(), password);
+          void connection.login(fields.namedItem('serverUrl').value.trim(), fields.namedItem('user').value.trim(), password,
+            fields.namedItem('inviteCode').value.trim());
         },
       },
       h('h2', null, t('loginTitle')),
@@ -444,6 +448,10 @@ body[data-ds-dark-theme] .dscord-connect {
       })),
       h('label', { className: 'dc-field' }, t('password'), h(Input, {
         name: 'password', type: 'password', required: true, autoComplete: 'off', disabled: Boolean(state.busy),
+      })),
+      h('label', { className: 'dc-field' }, t('inviteCodeOptional'), h(Input, {
+        name: 'inviteCode', type: 'text', autoComplete: 'off', autoCapitalize: 'characters', spellCheck: false, maxLength: 20,
+        placeholder: 'ABCD-2345', disabled: Boolean(state.busy),
       })),
       h(Button, { variant: 'primary', type: 'submit', className: 'dc-primary', disabled: Boolean(state.busy) }, t(state.busy?.action === 'login' ? 'loggingIn' : 'login')));
     }
@@ -769,14 +777,16 @@ body[data-ds-dark-theme] .dscord-connect {
         h('p', { className: 'dc-muted' }, error || (results && !results.length ? t('noServerResults') : t('searchServersHelp'))),
         results?.length > 0 && h('ul', { className: 'dc-bots dc-server-list', 'aria-label': t('searchServers') }, results.map(server => {
           const isAdded = server.added || added.has(server.origin);
+          const inviteOnly = server.join === 'invite' && !isAdded;
           return h('li', { key: server.origin, className: 'dc-bot' },
             h('div', { className: 'dc-bot-copy' }, h('strong', null, server.name),
-              h('p', { className: 'dc-server' }, server.origin),
+              h('p', { className: 'dc-server' }, `${t('serverNumber', { number: server.number })} · ${server.origin}`),
               h('p', { className: 'dc-muted' }, t('serverMembers', { people: server.members?.people ?? 0, bots: server.members?.bots ?? 0 })
                 + (server.tags?.length ? ` · ${server.tags.map(tag => `#${tag}`).join(' ')}` : '')),
-              server.description && h('p', { className: 'dc-muted' }, server.description)),
-            h(Button, { variant: 'outline', type: 'button', disabled: isAdded || Boolean(state.busy), 'aria-label': t('addServerLabel', { server: server.name }),
-              onClick: () => void connection.addServer(server.origin) }, t(isAdded ? 'serverAdded' : 'addThisServer')));
+              server.description && h('p', { className: 'dc-muted' }, server.description),
+              inviteOnly && h('p', { className: 'dc-muted' }, t('inviteOnlyHint'))),
+            h(Button, { variant: 'outline', type: 'button', disabled: isAdded || inviteOnly || Boolean(state.busy), 'aria-label': t('addServerLabel', { server: server.name }),
+              onClick: () => void connection.addServer(server.origin) }, t(isAdded ? 'serverAdded' : inviteOnly ? 'inviteOnly' : 'addThisServer')));
         })));
     }
 
@@ -797,11 +807,14 @@ body[data-ds-dark-theme] .dscord-connect {
         h('form', { className: 'dc-model-form', 'aria-label': t('addServer'), onSubmit(event) {
           event.preventDefault();
           const input = event.currentTarget.elements.namedItem('serverUrl');
+          const invite = event.currentTarget.elements.namedItem('inviteCode');
           const url = input.value.trim();
-          if (url) { input.value = ''; void connection.addServer(url); }
+          if (url) { input.value = ''; const code = invite.value.trim(); invite.value = ''; void connection.addServer(url, code); }
         } },
         h('label', { className: 'dc-field' }, t('serverUrl'), h(Input, { name: 'serverUrl', type: 'url', required: true,
           placeholder: 'https://chat.example.com', autoComplete: 'url', disabled: Boolean(state.busy) })),
+        h('label', { className: 'dc-field' }, t('inviteCodeOptional'), h(Input, { name: 'inviteCode', type: 'text', autoComplete: 'off',
+          autoCapitalize: 'characters', spellCheck: false, maxLength: 20, placeholder: 'ABCD-2345', disabled: Boolean(state.busy) })),
         h(Button, { type: 'submit', variant: 'outline', disabled: Boolean(state.busy) }, t(state.busy?.action === 'add-server' ? 'addingServer' : 'addServer'))));
     }
 

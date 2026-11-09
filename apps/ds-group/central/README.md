@@ -61,9 +61,9 @@ npm run central
 | `POST /api/device` | Bot 节点 | `{label?}` 开始设备码授权，返回 `deviceCode`、`userCode`（10 分钟有效） |
 | `POST /api/device/approve` | Bot 的所属人 | `{userCode, botId}` 把这个节点授权给自己的 Bot |
 | `POST /api/device/token` | Bot 节点 | `{deviceCode}` 换取 Bot 的节点会话；所属人批准前返回 `AUTHORIZATION_PENDING`，只能换一次 |
-| `GET /api/servers?q=&tag=&limit=` | 任何人（不用令牌，允许任意网页跨域） | 搜索服务器索引 |
+| `GET /api/servers?q=&tag=&limit=` | 任何人（不用令牌，允许任意网页跨域） | 搜索服务器索引；`q` 是 8 位数字时按服务器号精确查找 |
 | `POST /api/servers` | 人 | `{origin}` 认领一台聊天服务器，返回挑战码 `challenge`；同一个人再认领拿到同一个挑战码 |
-| `POST /api/servers/:origin/verify` | 人 | 读取 `origin` 的公开页面，挑战码对得上就把这台服务器记在自己名下 |
+| `POST /api/servers/:origin/verify` | 人 | 读取 `origin` 的公开页面，挑战码对得上就把这台服务器记在自己名下；第一次验证时分配服务器号 |
 | `GET /api/servers/mine` | 人 | 自己名下的服务器（含最近一次读取的结果）和还没验证的认领 |
 | `POST /api/servers/:origin/refresh` / `DELETE /api/servers/:origin` | 服务器所属人 | 立即重新读取 / 从索引里删除 |
 
@@ -73,8 +73,11 @@ npm run central
 
 - 登记：服务器管理员在中央认领服务器的 origin，拿到一个挑战码，把它写进聊天服务器的策略（管理后台“服务器目录”一步完成）。Core 随即在 `GET /.well-known/dscord/server` 公开这个挑战码、它信任的中央地址和自己的介绍。中央从这个 origin 读到页面、核对 `central` 是自己、挑战码和认领人的一致，就把认领人记为所属人。
 - 为什么是中央去读，而不是聊天服务器推送：能在这个 origin 上放出挑战码，就证明管理员控制这个域名；聊天服务器也就不需要在中央持有任何凭据。后验证的人接手所属权，因为能改页面的人才是实际的控制者。
-- 刷新：中央每小时重新读一遍所有登记过的服务器（读取不跟随跳转，页面上限 64 KB）。页面读不到、换了挑战码或改信任别的中央时，保留上次的介绍并记下错误；连续三天没读到成功的页面，就从搜索结果里消失，读到后自动恢复。管理员把“在中央搜索里显示”关掉，下次读取后也会从搜索里消失。
-- 搜索：只列公开、三天内读到过的服务器，按人数排序。`q` 里的每个词都要出现在名称、简介或标签里（不分大小写）；`tag` 按标签精确筛选；`limit` 默认 20，最多 50。结果不含挑战码。
+- 服务器号：第一次验证成功时，中央随机分配一个 8 位数字作为服务器号（像 QQ 群号），之后一直不变；从索引里删除后再登记会拿到新号码。
+- 发现方式由聊天服务器自己决定（页面里的 `discovery`）：`public` 能被关键词搜到，也能凭号码找到；`number` 关键词搜不到，只能输入完整号码找到；`hidden` 搜不到也查不到号码，所属人仍能在 `GET /api/servers/mine` 看到。
+- 加入方式也由聊天服务器决定（`join`）：`open` 任何中央账号都能直接加入，`invite` 只接受凭邀请码加入。中央只把它显示在搜索结果里，真正的检查在聊天服务器上。
+- 刷新：中央每小时重新读一遍所有登记过的服务器（读取不跟随跳转，页面上限 64 KB）。页面读不到、换了挑战码或改信任别的中央时，保留上次的介绍并记下错误；连续三天没读到成功的页面，就从搜索结果里消失，读到后自动恢复。发现方式的改动在下次读取后生效。
+- 搜索：只列三天内读到过的服务器。`q` 是 8 位数字时先按号码精确查找（`public` 和 `number` 的服务器）；否则只搜 `public` 的服务器，`q` 里的每个词都要出现在名称、简介或标签里（不分大小写），按人数排序；`tag` 按标签精确筛选；`limit` 默认 20，最多 50。结果含服务器号和加入方式，不含挑战码。
 
 公开页面的格式（`schemaVersion: 1`）：
 
@@ -84,11 +87,11 @@ npm run central
   "central": "https://id.example.org",
   "origin": "https://chat.example.org",
   "challenge": "dscord-server-…",
-  "listed": true,
+  "discovery": "public",
   "name": "机器人社",
   "description": "机械臂和小车",
   "tags": ["robots"],
-  "join": "central-account",
+  "join": "invite",
   "members": { "people": 12, "bots": 3 }
 }
 ```

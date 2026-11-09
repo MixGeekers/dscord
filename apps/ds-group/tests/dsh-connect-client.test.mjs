@@ -261,7 +261,7 @@ test('the login form clears its password before dispatching the login request', 
   const form = find(tree, element => element.type === 'form');
   const inputs = {
     serverUrl: { value: ' https://chat.example.test ' },
-    user: { value: ' alice ' }, password: { value: 'synthetic-password' },
+    user: { value: ' alice ' }, password: { value: 'synthetic-password' }, inviteCode: { value: ' wxyz-2345 ' },
   };
   let sent;
   fixture.connection.login = (...args) => {
@@ -269,7 +269,7 @@ test('the login form clears its password before dispatching the login request', 
     sent = args;
   };
   form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: name => inputs[name] } } });
-  assert.deepEqual(sent, ['https://chat.example.test', 'alice', 'synthetic-password']);
+  assert.deepEqual(sent, ['https://chat.example.test', 'alice', 'synthetic-password', 'wxyz-2345']);
   assert.equal(find(tree, element => element.type === 'input' && element.props.name === 'password').props.autoComplete, 'off');
 });
 
@@ -319,20 +319,22 @@ test('the page lists each chat server with its own Bots and adds or removes serv
   }
   assert.ok(find(tree, element => element.props['aria-label'] === '移除 two.example.test'));
   const sent = [];
-  fixture.connection.addServer = url => sent.push(['add', url]);
+  fixture.connection.addServer = (url, code) => sent.push(['add', url, code]);
   fixture.connection.removeServer = url => sent.push(['remove', url]);
   const form = find(tree, element => element.type === 'form' && element.props['aria-label'] === '添加服务器');
   const input = { value: ' https://three.example.test ' };
-  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: () => input } } });
+  const invite = { value: ' wxyz-2345 ' };
+  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: name => name === 'inviteCode' ? invite : input } } });
   find(tree, element => element.props['aria-label'] === '移除 two.example.test').props.onClick();
-  assert.deepEqual(sent, [['add', 'https://three.example.test'], ['remove', two.url]]);
-  assert.equal(input.value, '');
+  assert.deepEqual(sent, [['add', 'https://three.example.test', 'wxyz-2345'], ['remove', two.url]]);
+  assert.deepEqual([input.value, invite.value], ['', '']);
 });
 
 test('the add-server area searches the central index and adds a listed server', async t => {
-  const listed = [{ origin: 'https://robots.example.test', name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'],
-    members: { people: 12, bots: 2 }, added: false }, { origin: loggedIn.servers[0].url, name: 'Home', description: '', tags: [],
-    members: { people: 3, bots: 1 }, added: true }];
+  const listed = [{ origin: 'https://robots.example.test', number: 48213907, join: 'open', name: 'Robotics club', description: 'Arms and wheels',
+    tags: ['robots'], members: { people: 12, bots: 2 }, added: false }, { origin: loggedIn.servers[0].url, number: 10000001, join: 'open', name: 'Home',
+    description: '', tags: [], members: { people: 3, bots: 1 }, added: true }, { origin: 'https://closed.example.test', number: 55555555, join: 'invite',
+    name: 'Closed club', description: '', tags: [], members: { people: 4, bots: 0 }, added: false }];
   const fixture = harness(payload => payload.action === 'search-servers' ? { servers: listed } : loggedIn);
   t.after(fixture.dispose);
   await fixture.connection.refresh();
@@ -353,4 +355,7 @@ test('the add-server area searches the central index and adds a listed server', 
   add.props.onClick();
   assert.deepEqual(sent, ['https://robots.example.test']);
   assert.equal(find(tree, element => element.props['aria-label'] === '添加 Home').props.disabled, true, 'an added server cannot be added again');
+  assert.ok(find(tree, element => element.type === 'p' && element.children.includes('号码 48213907 · https://robots.example.test')));
+  const closed = find(tree, element => element.props['aria-label'] === '添加 Closed club');
+  assert.deepEqual([closed.props.disabled, closed.children], [true, ['只凭邀请加入']], 'an invite-only server is added with a code in the form below');
 });

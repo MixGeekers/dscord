@@ -14,7 +14,7 @@ const bot = { id: botId, name: 'Helper', kind: 'bot', localpart: 'alice-helper',
 const centralBot = { id: 'central-bot-1', username: 'alice-helper', displayName: 'Helper', globalId: 'alice-helper@id.example', kind: 'bot', status: 'active' };
 
 // Chat servers by origin; the last one trusts another central server.
-const serverNames = { [serverUrl]: 'chat.example', 'https://two.example': 'two.example', 'https://elsewhere.example': 'elsewhere.example' };
+const serverNames = { [serverUrl]: 'chat.example', 'https://two.example': 'two.example', 'https://elsewhere.example': 'elsewhere.example', 'https://invite.example': 'invite.example' };
 
 function bundle(serverName = 'chat.example') {
   const origin = Object.keys(serverNames).find(origin => serverNames[origin] === serverName);
@@ -68,6 +68,8 @@ async function fixture(t, options = {}) {
       auth: { audience: origin, sessionPath: '/api/session' } });
     if (pathname === '/api/session') {
       const bot = body.identityToken.startsWith('identity:synthetic-bot-central');
+      if (origin === 'https://invite.example' && !bot && body.inviteCode !== 'WXYZ-2345')
+        return Response.json({ error: body.inviteCode ? 'INVITE_INVALID' : 'INVITE_REQUIRED', code: body.inviteCode ? 'INVITE_INVALID' : 'INVITE_REQUIRED' }, { status: 403 });
       return Response.json(bot ? { user_id: `@${centralBot.username}:${serverName}`, access_token: 'synthetic-bot-session' }
         : { user_id: `@alice:${serverName}`, access_token: `synthetic-human-token-${logins}${origin === serverUrl ? '' : `-${serverName}`}` });
     }
@@ -404,6 +406,12 @@ test('the owner signs in once and a Bot joins several chat servers, one node per
   // The central index lists servers to add; ones already added are marked.
   const found = await controller.handle({ action: 'search-servers', query: ' robots ' });
   assert.deepEqual(found.servers.map(server => [server.origin, server.added]), [[serverUrl, true], ['https://two.example', true]]);
+  // A server that only takes invited people is added with the code a member gave.
+  await assert.rejects(controller.handle({ action: 'add-server', serverUrl: 'https://invite.example' }), /只接受邀请加入/);
+  await assert.rejects(controller.handle({ action: 'add-server', serverUrl: 'https://invite.example', inviteCode: 'NOPE' }), /邀请码不对/);
+  const invited = await controller.handle({ action: 'add-server', serverUrl: 'https://invite.example', inviteCode: ' WXYZ-2345 ' });
+  assert.ok(invited.servers.some(server => server.url === 'https://invite.example'));
+  await controller.handle({ action: 'remove-server', serverUrl: 'https://invite.example' });
   const search = calls.find(call => call.pathname === '/api/servers');
   assert.equal(search.init.headers.Authorization, undefined, 'the index is searched without a credential');
   const removed = await controller.handle({ action: 'remove-server', serverUrl: 'https://two.example' });

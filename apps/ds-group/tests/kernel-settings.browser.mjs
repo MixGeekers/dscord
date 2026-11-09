@@ -271,6 +271,34 @@ try {
   const nativeBounds = await page.locator('.dscord-connect').evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth }));
   assert.ok(nativeBounds.scroll <= nativeBounds.client + 1);
   await screenshot('local-kernel-light-zh-mobile.png');
+  // Adding a chat server: search the central index by keyword or server number; invite-only servers take a code.
+  controller.state.centralUrl = 'https://central.test';
+  const fetchCentral = controller.request;
+  controller.request = async (url, init) => {
+    if (!String(url).startsWith('https://central.test/api/servers')) return fetchCentral(url, init);
+    return Response.json({ servers: [
+      { origin: 'https://robots.example.test', number: 48213907, join: 'open', name: '机器人社', description: '机械臂、小车，每周四晚上一起做', tags: ['robots', 'hardware'],
+        members: { people: 12, bots: 3 } },
+      { origin: 'https://lab.example.test', number: 61530284, join: 'invite', name: '机器人实验室', description: '只接受邀请', tags: ['robots'],
+        members: { people: 5, bots: 1 } }] });
+  };
+  await page.setViewportSize({ width: 1000, height: 900 });
+  const serverSearch = page.getByRole('search', { name: '搜索服务器' });
+  await serverSearch.locator('input[name="query"]').fill('机器人');
+  await serverSearch.getByRole('button', { name: '搜索', exact: true }).click();
+  await page.getByText('号码 48213907 · https://robots.example.test', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: '添加 机器人实验室', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: '添加 机器人社', exact: true }).isDisabled(), false);
+  assert.equal(nativeRequests.filter(item => item.action === 'search-servers').at(-1).query, '机器人');
+  await page.getByRole('region', { name: '聊天服务器' }).scrollIntoViewIfNeeded();
+  await screenshot('servers-search-light-zh.png');
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole('region', { name: '聊天服务器' }).scrollIntoViewIfNeeded();
+  const searchBounds = await page.locator('.dscord-connect').evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth }));
+  assert.ok(searchBounds.scroll <= searchBounds.client + 1);
+  await screenshot('servers-search-light-zh-mobile.png');
+  controller.request = fetchCentral;
+  checks.push('dshAddServerSearchesCentralIndexShowsNumbersAndKeepsInviteOnlyServersForTheCodeForm');
   await page.evaluate(() => {
     const value = window.fixture.connection.getSnapshot().value;
     sessionStorage.setItem(`dscord.pending-native.${value.hostId}.${value.user.id}`, JSON.stringify({
