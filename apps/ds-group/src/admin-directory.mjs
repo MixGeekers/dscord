@@ -81,6 +81,13 @@ export async function listInCentral({
       `/api/servers/${encodeURIComponent(origin)}/verify`,
       { token },
     );
+    // Members pass the number central handed out on, so others can find the server by it.
+    const current = await governance.read();
+    if (current.directory.number !== server.number)
+      await governance.save({
+        ...current,
+        directory: { ...current.directory, number: server.number },
+      });
     return { central: issuer, server, policy: await governance.read() };
   } finally {
     await call("/api/logout", { token }).catch(() => {});

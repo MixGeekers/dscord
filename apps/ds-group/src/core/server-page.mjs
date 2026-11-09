@@ -11,11 +11,11 @@ export function serverPage({ policy, identity, participants }) {
     central: identity.central.issuer,
     origin: identity.home.coreUrl,
     challenge: directory.challenge,
-    listed: directory.listed,
+    discovery: directory.discovery,
     name: directory.name || identity.home.serverName || new URL(identity.home.coreUrl).hostname,
     description: directory.description,
     tags: directory.tags,
-    join: 'central-account',
+    join: directory.join,
     members: {
       people: participants.filter(person => person.kind === 'human').length,
       bots: participants.filter(person => person.kind === 'bot').length,

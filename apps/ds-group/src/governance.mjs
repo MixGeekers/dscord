@@ -94,8 +94,18 @@ export function emptyPolicy(domain) {
 }
 
 /** How this server shows up in its central server's index. Nothing is published until a challenge is set. */
+export const DIRECTORY_DISCOVERY = ["public", "number", "hidden"];
+export const DIRECTORY_JOIN = ["open", "invite"];
 export function emptyDirectory() {
-  return { listed: false, name: "", description: "", tags: [], challenge: "" };
+  return {
+    discovery: "hidden",
+    join: "open",
+    name: "",
+    description: "",
+    tags: [],
+    challenge: "",
+    number: null,
+  };
 }
 
 function directoryText(value, name, max) {
@@ -112,8 +122,13 @@ function directoryText(value, name, max) {
 function validateDirectory(value = emptyDirectory()) {
   if (!value || typeof value !== "object")
     throw policyError(400, "Invalid directory");
-  if (typeof value.listed !== "boolean")
-    throw policyError(400, "listed must be a boolean");
+  if (!DIRECTORY_DISCOVERY.includes(value.discovery))
+    throw policyError(400, "discovery must be public, number or hidden");
+  if (!DIRECTORY_JOIN.includes(value.join))
+    throw policyError(400, "join must be open or invite");
+  const number = value.number ?? null;
+  if (number !== null && !(Number.isSafeInteger(number) && number >= 10000000 && number <= 99999999))
+    throw policyError(400, "Invalid server number");
   const tags = value.tags ?? [];
   if (!Array.isArray(tags) || tags.length > 10)
     throw policyError(400, "Use at most 10 directory tags");
@@ -121,7 +136,8 @@ function validateDirectory(value = emptyDirectory()) {
   if (challenge && !/^dscord-server-[A-Za-z0-9_-]+$/.test(challenge))
     throw policyError(400, "Invalid directory challenge");
   return {
-    listed: value.listed,
+    discovery: value.discovery,
+    join: value.join,
     name: directoryText(value.name, "name", 80),
     description: directoryText(value.description, "description", 500),
     tags: [
@@ -132,6 +148,7 @@ function validateDirectory(value = emptyDirectory()) {
       ),
     ],
     challenge,
+    number,
   };
 }
 

@@ -1,4 +1,4 @@
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomInt } from 'node:crypto';
 import { failure } from './store.mjs';
 
 export const SERVER_WELL_KNOWN = '/.well-known/dscord/server';
@@ -7,6 +7,13 @@ export const LISTING_STALE_MS = 3 * 24 * 60 * 60 * 1000;
 const FETCH_TIMEOUT_MS = 10_000;
 const MAX_BODY_BYTES = 64 * 1024;
 const MAX_RESULTS = 50;
+/** How a server can be found: by keyword search, only by its exact number, or not at all. */
+export const DISCOVERY = ['public', 'number', 'hidden'];
+/** How people join: anyone with a central account, or only with an invitation from the server. */
+export const JOIN = ['open', 'invite'];
+// Server numbers are eight digits, handed out at random so they say nothing about when a server was listed.
+const NUMBER_MIN = 10_000_000;
+const NUMBER_SPAN = 90_000_000;
 
 const iso = value => value === null || value === undefined ? null : new Date(value).toISOString();
 
@@ -29,13 +36,13 @@ export function readServerPage(value, origin) {
   return {
     central: typeof value.central === 'string' ? value.central : '',
     challenge: typeof value.challenge === 'string' ? value.challenge : '',
-    listed: value.listed === true,
+    discovery: DISCOVERY.includes(value.discovery) ? value.discovery : 'hidden',
     page: {
       name: text(value.name, 80, 'name') || new URL(origin).hostname,
       description: text(value.description, 500, 'description'),
       tags: [...new Set(tags.map(tag => text(tag, 32, 'tag').toLowerCase()).filter(Boolean))],
       members: { people: count(value.members?.people), bots: count(value.members?.bots) },
-      join: value.join === 'central-account' ? 'central-account' : 'unknown',
+      join: JOIN.includes(value.join) ? value.join : 'invite',
     },
   };
 }
@@ -66,7 +73,7 @@ export class ServerDirectory {
     db.exec(`CREATE TABLE IF NOT EXISTS server_claims (origin TEXT NOT NULL, account_id TEXT NOT NULL REFERENCES accounts(id), challenge TEXT NOT NULL,
         created_at INTEGER NOT NULL, PRIMARY KEY(origin, account_id));
       CREATE TABLE IF NOT EXISTS servers (origin TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES accounts(id), challenge TEXT NOT NULL,
-        listed INTEGER NOT NULL, page_json TEXT NOT NULL, verified_at INTEGER NOT NULL, fetched_at INTEGER, last_error TEXT, checked_at INTEGER NOT NULL);`);
+        number INTEGER NOT NULL UNIQUE, discovery TEXT NOT NULL, page_json TEXT NOT NULL, verified_at INTEGER NOT NULL, fetched_at INTEGER, last_error TEXT, checked_at INTEGER NOT NULL);`);
   }
 
   claim(account, origin) {
@@ -99,10 +106,21 @@ export class ServerDirectory {
     const read = await this.read(origin);
     if (read.challenge !== claim.challenge) throw failure(409, 'CHALLENGE_MISMATCH', 'The server page shows a different challenge');
     const at = this.now();
-    this.db.prepare(`INSERT INTO servers VALUES (?,?,?,?,?,?,?,NULL,?) ON CONFLICT(origin) DO UPDATE SET owner_id=excluded.owner_id,
-        challenge=excluded.challenge, listed=excluded.listed, page_json=excluded.page_json, verified_at=excluded.verified_at,
-        fetched_at=excluded.fetched_at, last_error=NULL, checked_at=excluded.checked_at`)
-      .run(origin, account.id, claim.challenge, read.listed ? 1 : 0, JSON.stringify(read.page), at, at, at);
+    const existing = this.server(origin);
+    if (existing) {
+      this.db.prepare(`UPDATE servers SET owner_id=?, challenge=?, discovery=?, page_json=?, verified_at=?, fetched_at=?, last_error=NULL,
+          checked_at=? WHERE origin=?`).run(account.id, claim.challenge, read.discovery, JSON.stringify(read.page), at, at, at, origin);
+    } else {
+      // A server keeps its number for as long as it stays in the index.
+      for (;;) {
+        const number = NUMBER_MIN + randomInt(NUMBER_SPAN);
+        try {
+          this.db.prepare('INSERT INTO servers VALUES (?,?,?,?,?,?,?,?,NULL,?)')
+            .run(origin, account.id, claim.challenge, number, read.discovery, JSON.stringify(read.page), at, at, at);
+          break;
+        } catch (error) { if (!String(error.message).includes('UNIQUE')) throw error; }
+      }
+    }
     return this.ownedView(this.server(origin));
   }
 
@@ -122,8 +140,8 @@ export class ServerDirectory {
     try {
       const read = await this.read(origin);
       if (read.challenge !== row.challenge) throw failure(409, 'CHALLENGE_MISMATCH', 'The server page shows a different challenge');
-      this.db.prepare('UPDATE servers SET listed=?, page_json=?, fetched_at=?, last_error=NULL, checked_at=? WHERE origin=?')
-        .run(read.listed ? 1 : 0, JSON.stringify(read.page), at, at, origin);
+      this.db.prepare('UPDATE servers SET discovery=?, page_json=?, fetched_at=?, last_error=NULL, checked_at=? WHERE origin=?')
+        .run(read.discovery, JSON.stringify(read.page), at, at, origin);
     } catch (error) {
       if (!error.code) throw error;
       this.db.prepare('UPDATE servers SET last_error=?, checked_at=? WHERE origin=?').run(error.code, at, origin);
@@ -149,7 +167,7 @@ export class ServerDirectory {
   }
 
   ownedView(row) {
-    return { origin: row.origin, verified: true, challenge: row.challenge, listed: Boolean(row.listed), ...JSON.parse(row.page_json),
+    return { origin: row.origin, verified: true, number: row.number, challenge: row.challenge, discovery: row.discovery, ...JSON.parse(row.page_json),
       verifiedAt: iso(row.verified_at), fetchedAt: iso(row.fetched_at), checkedAt: iso(row.checked_at), lastError: row.last_error };
   }
 
@@ -162,12 +180,21 @@ export class ServerDirectory {
     return [...owned, ...pending];
   }
 
-  /** Listed servers read within the last three days; every word of the query must appear in the name, description or tags. */
+  /**
+   * Servers read within the last three days. A query of digits finds the server with that number, unless it is hidden;
+   * otherwise only public servers are searched, and every word must appear in the name, description or tags.
+   */
   search({ q = '', tag = '', limit = 20 } = {}) {
-    const words = String(q).toLowerCase().split(/\s+/).filter(Boolean);
+    const query = String(q).trim();
+    const fresh = this.now() - LISTING_STALE_MS;
+    if (/^\d{8}$/.test(query)) {
+      const row = this.db.prepare("SELECT * FROM servers WHERE number=? AND discovery IN ('public','number') AND fetched_at>=?").get(Number(query), fresh);
+      if (row) return [this.publicView(row, JSON.parse(row.page_json))];
+    }
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
     const wanted = String(tag).trim().toLowerCase();
     const size = Math.min(Math.max(Number.parseInt(limit, 10) || 20, 1), MAX_RESULTS);
-    return this.db.prepare('SELECT * FROM servers WHERE listed=1 AND fetched_at>=?').all(this.now() - LISTING_STALE_MS)
+    return this.db.prepare("SELECT * FROM servers WHERE discovery='public' AND fetched_at>=?").all(fresh)
       .map(row => ({ row, page: JSON.parse(row.page_json) }))
       .filter(({ page }) => {
         if (wanted && !page.tags.includes(wanted)) return false;
@@ -176,7 +203,11 @@ export class ServerDirectory {
       })
       .sort((a, b) => b.page.members.people - a.page.members.people || a.page.name.localeCompare(b.page.name))
       .slice(0, size)
-      .map(({ row, page }) => ({ origin: row.origin, ...page, owner: this.store.view(this.store.account(row.owner_id))?.globalId,
-        updatedAt: iso(row.fetched_at) }));
+      .map(({ row, page }) => this.publicView(row, page));
+  }
+
+  publicView(row, page) {
+    return { origin: row.origin, number: row.number, ...page, owner: this.store.view(this.store.account(row.owner_id))?.globalId,
+      updatedAt: iso(row.fetched_at) };
   }
 }

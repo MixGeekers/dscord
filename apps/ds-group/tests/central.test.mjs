@@ -201,8 +201,8 @@ test('first start seeds the saved configuration from the environment and the fil
 });
 
 
-const serverPage = (origin, challenge, extra = {}) => ({ schemaVersion: 1, central: 'https://id.example.org', origin, challenge, listed: true,
-  name: 'Chat A', description: 'A place for robotics', tags: ['Robotics', 'hardware'], join: 'central-account',
+const serverPage = (origin, challenge, extra = {}) => ({ schemaVersion: 1, central: 'https://id.example.org', origin, challenge, discovery: 'public',
+  name: 'Chat A', description: 'A place for robotics', tags: ['Robotics', 'hardware'], join: 'open',
   members: { people: 12, bots: 3 }, ...extra });
 
 test('a person lists a chat server by publishing its challenge on the server origin; the index reads the page from there', async t => {
@@ -234,7 +234,9 @@ test('a person lists a chat server by publishing its challenge on the server ori
   assert.ok(fetched.every(entry => entry.redirect === 'error'), 'the index never follows a redirect away from the origin');
 
   const found = (await call('GET', '/api/servers?q=ROBOT')).body.servers;
-  assert.deepEqual(found.map(server => [server.origin, server.owner, server.join]), [[CHAT_A, 'alice@id.example.org', 'central-account']]);
+  assert.deepEqual(found.map(server => [server.origin, server.owner, server.join]), [[CHAT_A, 'alice@id.example.org', 'open']]);
+  assert.match(String(found[0].number), /^\d{8}$/, 'central gives each listed server an eight-digit number');
+  assert.equal(verified.body.server.number, found[0].number);
   assert.equal(found[0].challenge, undefined, 'search never shows the challenge');
   assert.deepEqual((await call('GET', '/api/servers?q=robotics+gardening')).body.servers, [], 'every word must match');
   assert.equal((await call('GET', '/api/servers?tag=hardware')).body.servers.length, 1);
@@ -252,7 +254,7 @@ test('a person lists a chat server by publishing its challenge on the server ori
   assert.deepEqual((await call('GET', '/api/servers')).body.servers, []);
 });
 
-test('the index keeps reading listed servers; unlisted, changed or silent servers drop out of search', async t => {
+test('the index keeps reading listed servers; hidden, changed or silent servers drop out of search', async t => {
   const { call, register, pages, central, advance } = await fixture(t);
   const alice = await register('alice');
   const claim = (await call('POST', '/api/servers', { token: alice.token, body: { origin: CHAT_A } })).body;
@@ -261,10 +263,17 @@ test('the index keeps reading listed servers; unlisted, changed or silent server
   await call('POST', `/api/servers/${encodeURIComponent(CHAT_A)}/verify`, { token: alice.token });
   assert.equal((await call('GET', '/api/servers')).body.servers.length, 1);
 
-  page = { ...page, name: 'Chat A renamed', listed: false };
+  const { number } = (await call('GET', '/api/servers')).body.servers[0];
+  page = { ...page, name: 'Chat A renamed', discovery: 'number' };
   await central.directory.refreshAll();
-  assert.deepEqual((await call('GET', '/api/servers')).body.servers, [], 'an operator can hide a server from its own admin page');
-  page = { ...page, listed: true };
+  assert.deepEqual((await call('GET', '/api/servers?q=chat')).body.servers, [], 'a server found only by number stays out of keyword search');
+  assert.deepEqual((await call('GET', `/api/servers?q=${number}`)).body.servers.map(server => server.name), ['Chat A renamed']);
+  assert.deepEqual((await call('GET', `/api/servers?q=${number === 99999999 ? 10000000 : number + 1}`)).body.servers, [], 'a number matches exactly');
+  page = { ...page, discovery: 'hidden' };
+  await central.directory.refreshAll();
+  assert.deepEqual((await call('GET', `/api/servers?q=${number}`)).body.servers, [], 'a hidden server cannot be found even by number');
+  assert.equal((await call('GET', '/api/servers/mine', { token: alice.token })).body.servers[0].number, number, 'the owner still sees its number');
+  page = { ...page, discovery: 'public' };
   await central.directory.refreshAll();
   assert.equal((await call('GET', '/api/servers')).body.servers[0].name, 'Chat A renamed');
 

@@ -41,14 +41,18 @@ async function chatServer(t) {
   return { central, matrix, core, base, root, adminCall, adminToken };
 }
 
-test('the directory section of the policy is validated and defaults to unlisted', () => {
+test('the directory section of the policy is validated; a new server is hidden and open to join', () => {
   const policy = emptyPolicy('chat.test');
-  assert.deepEqual(policy.directory, { listed: false, name: '', description: '', tags: [], challenge: '' });
-  const checked = validatePolicy({ ...policy, directory: { listed: true, name: ' Robotics ', description: 'Line one\nline two', tags: ['Robots', 'robots', 'arm'], challenge: 'dscord-server-abc_DEF-1' } }, 'chat.test');
-  assert.deepEqual(checked.directory, { listed: true, name: 'Robotics', description: 'Line one\nline two', tags: ['robots', 'arm'], challenge: 'dscord-server-abc_DEF-1' });
+  assert.deepEqual(policy.directory, { discovery: 'hidden', join: 'open', name: '', description: '', tags: [], challenge: '', number: null });
+  const checked = validatePolicy({ ...policy, directory: { discovery: 'number', join: 'invite', name: ' Robotics ', description: 'Line one\nline two',
+    tags: ['Robots', 'robots', 'arm'], challenge: 'dscord-server-abc_DEF-1', number: 12345678 } }, 'chat.test');
+  assert.deepEqual(checked.directory, { discovery: 'number', join: 'invite', name: 'Robotics', description: 'Line one\nline two', tags: ['robots', 'arm'],
+    challenge: 'dscord-server-abc_DEF-1', number: 12345678 });
+  assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, join: 'anyone' } }, 'chat.test'), /join/);
+  assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, number: 123 } }, 'chat.test'), /number/);
   assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, challenge: 'anything' } }, 'chat.test'), /challenge/);
   assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, tags: Array(11).fill('x') } }, 'chat.test'), /10 directory tags/);
-  assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, listed: 'yes' } }, 'chat.test'), /listed/);
+  assert.throws(() => validatePolicy({ ...policy, directory: { ...policy.directory, discovery: 'yes' } }, 'chat.test'), /discovery/);
 });
 
 test('an operator lists the chat server from its administration service and anyone finds it in the central index', async t => {
@@ -59,7 +63,7 @@ test('an operator lists the chat server from its administration service and anyo
   await f.central.person('bob', 'Bob');
   const governance = new Governance({ dataRoot: f.root, serverName: 'chat.test' });
   const before = await governance.read();
-  await governance.save({ ...before, directory: { ...before.directory, listed: true, name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'] } });
+  await governance.save({ ...before, directory: { ...before.directory, discovery: 'public', name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'] } });
 
   const wrong = await f.adminCall('directory/list', { method: 'POST', token: f.adminToken, body: { username: 'alice', password: 'wrong password' } });
   assert.deepEqual([wrong.status, wrong.value.error], [409, 'Central server refused: LOGIN_FAILED']);
@@ -70,15 +74,61 @@ test('an operator lists the chat server from its administration service and anyo
   assert.equal(listed.value.server.origin, CORE_URL);
 
   const page = await (await fetch(`${f.base}/.well-known/dscord/server`)).json();
-  assert.deepEqual({ ...page, challenge: undefined }, { schemaVersion: 1, central: f.central.url, origin: CORE_URL, challenge: undefined, listed: true,
-    name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'], join: 'central-account', members: { people: 0, bots: 0 } });
+  assert.deepEqual({ ...page, challenge: undefined }, { schemaVersion: 1, central: f.central.url, origin: CORE_URL, challenge: undefined, discovery: 'public',
+    name: 'Robotics club', description: 'Arms and wheels', tags: ['robots'], join: 'open', members: { people: 0, bots: 0 } });
+  assert.equal(listed.value.policy.directory.number, listed.value.server.number, 'the server keeps the number central gave it');
+  const client = await (await fetch(`${f.base}/.well-known/dscord/client`)).json();
+  assert.deepEqual(client.directory, { join: 'open', number: listed.value.server.number });
 
   const found = await f.central.api('/api/servers?q=robot');
   assert.deepEqual(found.servers.map(server => [server.origin, server.name, server.owner]), [[CORE_URL, 'Robotics club', `alice@${f.central.domain}`]]);
 
   // Hiding the server in its own policy takes it out of search at the next read.
   const current = await governance.read();
-  await governance.save({ ...current, directory: { ...current.directory, listed: false } });
+  await governance.save({ ...current, directory: { ...current.directory, discovery: 'hidden' } });
   await f.central.central.directory.refreshAll();
   assert.deepEqual((await f.central.api('/api/servers')).servers, []);
+});
+
+test('a server that only takes invited people lets in members, invited people and members\' Bots', async t => {
+  const f = await chatServer(t);
+  const governance = new Governance({ dataRoot: f.root, serverName: 'chat.test' });
+  const alice = await f.central.person('alice', 'Alice');
+  const bob = await f.central.person('bob', 'Bob');
+  const carol = await f.central.person('carol', 'Carol');
+  const signIn = async (token, extra = {}) => {
+    const response = await fetch(`${f.base}/api/session`, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ identityToken: await f.central.identityToken(token, CORE_URL), ...extra }) });
+    return { status: response.status, value: await response.json() };
+  };
+  // Alice joins while the server is open; then it switches to invitations only.
+  const aliceSession = (await signIn(alice)).value;
+  const before = await governance.read();
+  await governance.save({ ...before, directory: { ...before.directory, join: 'invite' } });
+  assert.equal((await (await fetch(`${f.base}/.well-known/dscord/client`)).json()).directory.join, 'invite');
+  assert.equal((await signIn(alice)).status, 200, 'a member keeps signing in');
+  assert.deepEqual([(await signIn(bob)).status, (await signIn(bob)).value.code], [403, 'INVITE_REQUIRED']);
+  assert.equal((await signIn(bob, { inviteCode: 'NOPE-NOPE' })).value.code, 'INVITE_INVALID');
+
+  const member = (route, init = {}) => fetch(`${f.base}${route}`, { ...init,
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${aliceSession.access_token}` } }).then(async response => ({ status: response.status, value: await response.json() }));
+  const created = await member('/api/invites', { method: 'POST', body: '{}' });
+  assert.equal(created.status, 201);
+  assert.match(created.value.invite.code, /^[A-Z2-9]{4}-[A-Z2-9]{4}$/);
+  assert.equal((await signIn(bob, { inviteCode: created.value.invite.code.toLowerCase() })).status, 200, 'codes are read without case or dashes');
+  assert.deepEqual((await member('/api/invites')).value.invites.map(invite => [invite.code, invite.uses]), [[created.value.invite.code, 1]]);
+  assert.equal((await member(`/api/invites/${created.value.invite.code}`, { method: 'DELETE' })).status, 200);
+  assert.equal((await signIn(carol, { inviteCode: created.value.invite.code })).value.code, 'INVITE_INVALID', 'a revoked code lets nobody else in');
+
+  // Administrators make invitations from the administration service.
+  const fromAdmin = await f.adminCall('invites', { method: 'POST', token: f.adminToken });
+  assert.equal(fromAdmin.value.invite.createdBy, 'admin:admin');
+  assert.equal((await signIn(carol, { inviteCode: fromAdmin.value.invite.code })).status, 200);
+
+  // A Bot gets in because its owner is a member; a Bot whose owner is not stays out.
+  const helper = await f.central.bot(alice, 'helper');
+  assert.equal((await signIn(helper.token)).status, 200);
+  const dave = await f.central.person('dave', 'Dave');
+  const stray = await f.central.bot(dave, 'stray');
+  assert.equal((await signIn(stray.token)).value.code, 'INVITE_REQUIRED');
 });
