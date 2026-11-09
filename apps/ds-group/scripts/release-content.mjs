@@ -52,9 +52,9 @@ export function includedSourceFile(relative) {
     || /\/(?:package\.json|UPSTREAM\.json|cordis\.patch\.yml|SKILL\.md)$/.test(relative);
   if (relative.startsWith('service/')) return licenseFile.test(path.basename(relative))
     || /\/(?:SOURCE\.json|requirements(?:\.lock)?\.txt)$/.test(relative);
-  if (pluginManifests.has(relative)) return true;
+  if (pluginManifests.has(relative) || relative === 'dsh-connect/client/tsconfig.json') return true;
   if (['web', 'admin', 'ui'].includes(directory)) return asset.test(relative) && !relative.endsWith('.json')
-    || ['web/client-config.json', 'admin/tsconfig.json', 'dsh-connect/client/tsconfig.json'].includes(relative)
+    || ['web/client-config.json', 'admin/tsconfig.json'].includes(relative)
     || /\/licenses\/[^/]+\.txt$/.test(relative);
   return false;
 }
