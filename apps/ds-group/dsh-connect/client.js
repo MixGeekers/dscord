@@ -123,7 +123,9 @@ body[data-ds-dark-theme] .dscord-connect {
 .dscord-connect .dc-notice[data-tone="success"] { border-color: color-mix(in srgb, var(--color-status-success) 45%, transparent); background: color-mix(in srgb, var(--color-status-success) 10%, var(--color-bg-primary)); }
 .dscord-connect .dc-notice[data-tone="error"] { border-color: color-mix(in srgb, var(--color-status-danger) 45%, transparent); background: color-mix(in srgb, var(--color-status-danger) 8%, var(--color-bg-primary)); color: var(--color-text-danger); }
 
-.dscord-connect .dc-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.dscord-connect .dc-notice[data-tone="warning"] { border-color: color-mix(in srgb, var(--color-status-warning) 45%, transparent); background: color-mix(in srgb, var(--color-status-warning) 10%, var(--color-bg-primary)); }
+
+.dscord-connect .dc-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); }
 .dscord-connect .dc-step { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-5) var(--space-6); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-xl); color: var(--color-text-muted); line-height: var(--line-height-compact); }
 .dscord-connect .dc-step-mark { display: grid; place-items: center; flex: 0 0 auto; width: var(--space-11); height: var(--space-11); border: 1px solid currentColor; border-radius: var(--radius-round); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
 .dscord-connect .dc-step-copy { display: grid; gap: var(--space-1); min-width: 0; }
@@ -135,6 +137,9 @@ body[data-ds-dark-theme] .dscord-connect {
 
 .dscord-connect .dc-panel { display: grid; gap: var(--space-8); padding: var(--space-10) var(--space-12); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-xl); background: var(--color-bg-secondary); }
 .dscord-connect .dc-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2) var(--space-8); }
+.dscord-connect .dc-decision:is([data-state="missing"], [data-state="disabled"]) { border-color: color-mix(in srgb, var(--color-status-warning) 55%, transparent); }
+.dscord-connect .dc-decision[data-state="failed"] { border-color: color-mix(in srgb, var(--color-status-danger) 55%, transparent); }
+.dscord-connect .dc-points { display: grid; gap: var(--space-3); padding-left: var(--space-9); list-style: disc; }
 .dscord-connect .dc-how { display: grid; gap: var(--space-3); counter-reset: dc-how; color: var(--color-text-muted); }
 .dscord-connect .dc-how li { display: flex; gap: var(--space-4); counter-increment: dc-how; }
 .dscord-connect .dc-how li::before { content: counter(dc-how) "."; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
@@ -176,6 +181,7 @@ body[data-ds-dark-theme] .dscord-connect {
 .dscord-connect .dc-status[data-status="online"] { color: var(--color-status-success); }
 .dscord-connect .dc-status[data-status="error"] { color: var(--color-status-danger); }
 .dscord-connect .dc-status[data-status="connecting"] { color: var(--color-accent); }
+.dscord-connect .dc-status[data-status="warning"] { color: var(--color-status-warning); }
 
 .dscord-connect .dc-disclosure > summary { display: flex; align-items: center; gap: var(--space-4); width: fit-content; cursor: pointer; font-weight: var(--font-weight-medium); list-style: none; }
 .dscord-connect .dc-disclosure > summary::-webkit-details-marker { display: none; }
@@ -399,111 +405,224 @@ function LoginForm({ connection, state, t }) {
 }
 // dsh-connect/client/components/kernel.tsx
 var message = (reason) => reason.message;
-function FeedbackLine({ feedback, ok }) {
-	if (!feedback) return null;
-	const error = "error" in feedback ? feedback.error : null;
-	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-		role: error ? "alert" : "status",
-		className: error ? "dc-error dc-small" : "dc-meta",
-		children: error || ok
-	});
+/** Where the decision model stands, in the order the owner would fix it: a key, the switch, then a working answer. */
+function decisionState(provider) {
+	if (!provider?.configured) return "missing";
+	if (provider.enabled === false) return "disabled";
+	if (provider.available === false) return "failed";
+	return provider.available ? "ready" : "unchecked";
 }
-/** The private key for the natural-participation decision service; a saved key is never shown again. */
-function DecisionProviderForm({ connection, t }) {
-	const [provider, setProvider] = (0, react.useState)(null);
+/** Whether Bots on this device can rely on the decision model. A model that was never asked counts until it fails. */
+var decisionWorks = (provider) => ["ready", "unchecked"].includes(decisionState(provider));
+var STATE_TEXT = {
+	missing: "decisionMissing",
+	disabled: "decisionDisabled",
+	failed: "decisionFailed",
+	unchecked: "decisionUnchecked",
+	ready: "decisionReady"
+};
+var SAVED_TEXT = {
+	missing: "decisionSavedNoKey",
+	disabled: "decisionSavedDisabled",
+	failed: "decisionSavedFailed",
+	unchecked: "decisionSaved",
+	ready: "decisionSaved"
+};
+var STATE_TONE = {
+	missing: "warning",
+	disabled: "warning",
+	failed: "error",
+	unchecked: "online",
+	ready: "online"
+};
+var ERRORS = [
+	[/^ATTENTION_HTTP_40[13]$/, "decisionErrorKey"],
+	[/^ATTENTION_HTTP_404$/, "decisionErrorAddress"],
+	[/^ATTENTION_HTTP_429$/, "decisionErrorLimit"],
+	[/^ATTENTION_(INVALID_RESPONSE|REFUSAL)$/, "decisionErrorProtocol"],
+	[/^ATTENTION_(TIMEOUT|PROVIDER_ERROR)$/, "decisionErrorUnreachable"]
+];
+/**
+* The model that decides when Bots speak. Bots lose most of their conversational sense without it, so it has
+* its own panel: what it does, what is missing, and a form that checks the settings as it saves them.
+*/
+function DecisionPanel({ connection, status, t }) {
+	const [form, setForm] = (0, react.useState)(null);
 	const [busy, setBusy] = (0, react.useState)(false);
-	const [feedback, setFeedback] = (0, react.useState)(null);
-	const [enabled, setEnabled] = (0, react.useState)(true);
+	const [error, setError] = (0, react.useState)(null);
+	const [saved, setSaved] = (0, react.useState)(null);
+	const [round, setRound] = (0, react.useState)(0);
+	const [enabled, setEnabled] = (0, react.useState)(status?.enabled !== false);
 	(0, react.useEffect)(() => {
 		const controller = new AbortController();
-		connection.kernel("kernel-state", {}, controller).then((kernel) => {
-			if (controller.signal.aborted) return;
-			setProvider(kernel.decisionProvider || null);
-			setEnabled(kernel.decisionProvider?.enabled !== false);
+		connection.kernel("kernel-state", {}, controller).then((value) => {
+			if (!controller.signal.aborted) setForm(value.decisionForm);
 		}).catch((reason) => {
-			if (!controller.signal.aborted) setFeedback({ error: message(reason) });
+			if (!controller.signal.aborted) setError(message(reason));
 		});
 		return () => controller.abort();
 	}, [connection]);
-	return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("details", {
-		className: "dc-disclosure",
-		children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("summary", { children: t("decisionTitle") }), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-			className: "dc-body",
-			children: [
-				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-					className: "dc-meta",
-					children: t("decisionHelp")
-				}),
-				/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
-					className: "dc-meta",
-					children: provider ? `${t(provider.configured ? "configured" : "notConfigured")} · ${t(provider.available === true ? "available" : provider.available === false ? "serviceUnavailable" : "availabilityUnknown")}${provider.model ? ` · ${provider.model}` : ""}` : t("unknown")
-				}),
-				/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("form", {
-					className: "dc-form",
-					onSubmit: async (event) => {
-						event.preventDefault();
-						const input = event.currentTarget.elements.namedItem("decisionApiKey");
-						const apiKey = input.value.trim();
-						input.value = "";
-						setBusy(true);
-						setFeedback(null);
-						try {
-							setProvider(await connection.kernel("save-decision-provider", {
-								enabled,
-								...apiKey ? { apiKey } : {}
-							}));
-							setFeedback({ ok: true });
-						} catch (reason) {
-							setFeedback({ error: message(reason) });
-						} finally {
-							setBusy(false);
-						}
-					},
-					children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
-							className: "dc-field",
-							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-								className: "dc-field",
-								children: [t("decisionApiKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
-									name: "decisionApiKey",
-									type: "password",
-									autoComplete: "new-password",
-									disabled: busy,
-									spellCheck: false,
-									autoCapitalize: "none"
-								})]
-							}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
-								className: "dc-hint",
-								children: t("decisionKeyHelp")
-							})]
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
-							className: "dc-check",
-							children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-								name: "enabled",
-								type: "checkbox",
-								checked: enabled,
-								onChange: (event) => setEnabled(event.target.checked),
-								disabled: busy
-							}), t("enableDecision")]
-						}),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
-							className: "dc-actions",
-							children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								type: "submit",
-								variant: "outline",
-								disabled: busy,
-								children: t("saveDecision")
-							})
-						})
-					]
-				}),
-				/* @__PURE__ */ (0, react_jsx_runtime.jsx)(FeedbackLine, {
-					feedback,
-					ok: t("decisionSaved")
+	const state = decisionState(status);
+	const working = decisionWorks(status);
+	const reason = status?.error ? t(ERRORS.find(([pattern]) => pattern.test(status.error))?.[1] ?? "decisionErrorOther", { code: status.error }) : null;
+	async function submit(event) {
+		event.preventDefault();
+		const fields = event.currentTarget.elements;
+		const field = (name) => fields.namedItem(name);
+		const apiKey = field("decisionApiKey").value.trim();
+		const model = field("decisionModel").value.trim();
+		const endpoint = field("decisionEndpoint").value.trim();
+		setBusy(true);
+		setError(null);
+		setSaved(null);
+		try {
+			const next = await connection.kernel("save-decision-provider", {
+				enabled,
+				...apiKey ? { apiKey } : {},
+				...model === (form?.model ?? "") ? {} : { model },
+				...endpoint === (form?.endpoint ?? "") ? {} : { endpoint }
+			});
+			const kernel = await connection.kernel("kernel-state");
+			await connection.refresh({ clearError: false });
+			setForm(kernel.decisionForm);
+			setSaved(decisionState(next));
+			setRound((value) => value + 1);
+		} catch (reason) {
+			setError(message(reason));
+		} finally {
+			setBusy(false);
+		}
+	}
+	const settings = /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("form", {
+		className: "dc-form",
+		onSubmit: (event) => void submit(event),
+		children: [
+			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: "dc-field",
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					className: "dc-field",
+					children: [t("decisionApiKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+						name: "decisionApiKey",
+						type: "password",
+						autoComplete: "new-password",
+						required: enabled && form?.hasKey === false,
+						disabled: busy,
+						spellCheck: false,
+						autoCapitalize: "none"
+					})]
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: "dc-hint",
+					children: t(form?.hasKey ? "decisionKeyHelp" : "decisionKeyNeeded")
+				})]
+			}),
+			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: "dc-field",
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					className: "dc-field",
+					children: [t("decisionModelName"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+						name: "decisionModel",
+						defaultValue: form?.model ?? "",
+						disabled: busy,
+						spellCheck: false,
+						autoCapitalize: "none"
+					})]
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: "dc-hint",
+					children: t("decisionModelHelp")
+				})]
+			}),
+			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: "dc-field",
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+					className: "dc-field",
+					children: [t("decisionEndpoint"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+						name: "decisionEndpoint",
+						defaultValue: form?.endpoint ?? "",
+						disabled: busy,
+						spellCheck: false,
+						autoCapitalize: "none"
+					})]
+				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+					className: "dc-hint",
+					children: t("decisionEndpointHelp")
+				})]
+			}),
+			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
+				className: "dc-check",
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+					name: "enabled",
+					type: "checkbox",
+					checked: enabled,
+					onChange: (event) => setEnabled(event.target.checked),
+					disabled: busy
+				}), t("enableDecision")]
+			}),
+			/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+				className: "dc-actions",
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+					type: "submit",
+					variant: working ? "outline" : "primary",
+					disabled: busy,
+					children: t(busy ? "decisionSaving" : "saveDecision")
 				})
-			]
-		})]
+			})
+		]
+	}, `${form?.hasKey}\n${form?.model}\n${form?.endpoint}\n${round}`);
+	return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+		className: "dc-panel dc-decision",
+		"aria-label": t("decisionTitle"),
+		"data-state": state,
+		children: [
+			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: "dc-heading",
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", { children: t("decisionTitle") }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+					className: "dc-status",
+					"data-status": STATE_TONE[state],
+					children: [t(STATE_TEXT[state]), working && status?.model].filter(Boolean).join(" · ")
+				})]
+			}),
+			/* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				className: "dc-meta",
+				children: t("decisionHelp")
+			}),
+			!working && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("ul", {
+				className: "dc-points",
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: t("decisionDoesJoin") }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: t("decisionDoesTurns") })]
+			}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				className: "dc-notice",
+				"data-tone": "warning",
+				children: t("decisionWithout")
+			})] }),
+			error && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				role: "alert",
+				className: "dc-error dc-small",
+				children: error
+			}),
+			saved && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				role: "status",
+				className: saved === "ready" || saved === "unchecked" ? "dc-meta" : "dc-error dc-small",
+				children: t(SAVED_TEXT[saved])
+			}),
+			state === "failed" && reason && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+				role: "alert",
+				className: "dc-error dc-small",
+				children: reason
+			}),
+			working ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("details", {
+				className: "dc-disclosure",
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("summary", { children: t("decisionEdit") }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+					className: "dc-body",
+					children: settings
+				})]
+			}) : /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [state === "missing" && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("ol", {
+				className: "dc-how",
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: t("decisionSetup1") }),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: t("decisionSetup2") }),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("li", { children: t("decisionSetup3") })
+				]
+			}), settings] })
+		]
 	});
 }
 var POLICIES = [
@@ -619,17 +738,22 @@ function ConfigDirectory({ directory, t }) {
 // dsh-connect/client/components/page.tsx
 var STEPS = [
 	["stepAccount", "stepAccountHint"],
+	["stepDecision", "stepDecisionHint"],
 	["stepBot", "stepBotHint"],
 	["stepOnline", "stepOnlineHint"]
 ];
-/** The three steps from a fresh install to a Bot that answers, shown until the last one is done. */
+/**
+* The steps from a fresh install to a Bot that answers the way it is meant to, shown until all are done.
+* The decision model is one of them: a Bot can go online without it, but it is not complete.
+*/
 function SetupGuide({ value, t }) {
 	const done = [
 		Boolean(value.user),
+		decisionWorks(value.decision),
 		value.bots.length > 0,
 		value.bots.some((bot) => bot.servers.some((server) => server.status === "online"))
 	];
-	if (done[2]) return null;
+	if (done.every(Boolean)) return null;
 	const current = done.indexOf(false);
 	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("ol", {
 		className: "dc-steps",
@@ -689,8 +813,8 @@ function Notices({ state, value, t }) {
 	});
 }
 /**
-* DSCord's page in DSH. It links this DSH to the owner's account and shows the Bots that account runs here;
-* Bots themselves are set up on the DSCord web page.
+* DSCord's page in DSH. It links this DSH to the owner's account, holds the decision model this device's Bots
+* share, and shows the Bots that account runs here; Bots themselves are set up on the DSCord web page.
 */
 function ConnectionPage({ connection, t }) {
 	const state = (0, react.useSyncExternalStore)(connection.subscribe, connection.getSnapshot, connection.getSnapshot);
@@ -756,6 +880,11 @@ function ConnectionPage({ connection, t }) {
 					state,
 					t
 				}),
+				value && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(DecisionPanel, {
+					connection,
+					status: value.decision,
+					t
+				}),
 				value && user && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(BotsPanel, {
 					value,
 					t
@@ -765,20 +894,13 @@ function ConnectionPage({ connection, t }) {
 					initial: value.kernelUpdates,
 					t
 				}),
-				value && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
+				value?.dataDirectory && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 					className: "dc-panel",
 					"aria-label": t("advanced"),
-					children: [
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", { children: t("advanced") }),
-						/* @__PURE__ */ (0, react_jsx_runtime.jsx)(DecisionProviderForm, {
-							connection,
-							t
-						}),
-						value.dataDirectory && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ConfigDirectory, {
-							directory: value.dataDirectory,
-							t
-						})
-					]
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("h2", { children: t("advanced") }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(ConfigDirectory, {
+						directory: value.dataDirectory,
+						t
+					})]
 				})
 			]
 		})]
@@ -796,7 +918,9 @@ var ERROR_KEYS = {
 	DSCORD_KERNEL_CONFLICT: "kernelConflict",
 	CONNECT_KEY_INVALID: "connectKeyInvalid",
 	CONNECT_CODE_UNKNOWN: "connectKeyUnknown",
-	CONNECT_CODE_EXPIRED: "connectKeyExpired"
+	CONNECT_CODE_EXPIRED: "connectKeyExpired",
+	INVALID_DECISION_ENDPOINT: "decisionEndpointInvalid",
+	INVALID_DECISION_MODEL: "decisionModelInvalid"
 };
 /**
 * The page's one view of the DSH host route: it reads the connection status every five seconds while the page is
@@ -981,17 +1105,42 @@ function createConnectionModel(t) {
 var localeNamespace = "dscord.connection";
 var zh = {
 	unknown: "未知",
-	decisionTitle: "参与判断服务",
-	decisionApiKey: "判断服务 API key",
-	decisionKeyHelp: "只保存在这台设备。已保存的 key 不会再显示，留空则保留现有的 key。",
-	enableDecision: "启用自然参与判断",
-	saveDecision: "保存判断服务",
-	configured: "已配置",
-	notConfigured: "未配置",
-	available: "可用",
-	availabilityUnknown: "可用状态未知",
-	decisionSaved: "判断服务已保存",
-	serviceUnavailable: "不可用",
+	decisionTitle: "决策模型",
+	decisionHelp: "Bot 靠它判断什么时候该开口。它和 Bot 回答用的模型是两回事，只保存在这台设备上，这台设备运行的 Bot 共用。",
+	decisionDoesJoin: "设为「自然参与」的 Bot 没被 @ 时，靠它判断该接话、等一等，还是继续听。",
+	decisionDoesTurns: "对方连发几条消息时，靠它判断是等对方说完、并进正在写的回答，还是分开回答。",
+	decisionWithout: "没有它，Bot 只在被 @ 或私聊时回答，「自然参与」不起作用；连发的消息只能按固定时间等一下再答，分不清你有没有说完。",
+	decisionMissing: "未配置",
+	decisionDisabled: "已停用",
+	decisionFailed: "验证失败",
+	decisionUnchecked: "已配置，尚未验证",
+	decisionReady: "运行正常",
+	decisionSetup1: "准备一把决策服务的 API key，默认是 OpenAI 的 key。",
+	decisionSetup2: "填在下面。模型和服务地址已填好默认值，用别的服务时再改。",
+	decisionSetup3: "点「保存并验证」，这里会立刻问服务一次，告诉你能不能用。",
+	decisionApiKey: "决策模型 API key",
+	decisionKeyNeeded: "必填。只保存在这台设备，保存后不会再显示。",
+	decisionKeyHelp: "已保存一把 key，不会再显示。留空则继续用它，填写则替换。",
+	decisionModelName: "决策模型名",
+	decisionModelHelp: "决策服务里的模型名。清空后恢复默认。",
+	decisionEndpoint: "服务地址",
+	decisionEndpointHelp: "Decisions 接口的完整地址。清空后恢复默认。",
+	enableDecision: "启用决策模型",
+	saveDecision: "保存并验证",
+	decisionSaving: "正在验证…",
+	decisionEdit: "修改设置",
+	decisionSaved: "已保存，决策模型可以用了。",
+	decisionSavedNoKey: "已保存，但还没有 API key，决策模型还不能用。",
+	decisionSavedDisabled: "已保存。决策模型现在是停用的。",
+	decisionSavedFailed: "已保存，但验证没有通过。",
+	decisionErrorKey: "服务拒绝了这把 key（{code}）。检查 key 有没有填对、能不能用这个模型。",
+	decisionErrorAddress: "服务地址不对，或服务里没有这个模型（{code}）。",
+	decisionErrorLimit: "服务说请求太多或额度用完了（{code}）。稍后再点一次「保存并验证」。",
+	decisionErrorProtocol: "服务有回应，但不是决策模型该有的回答（{code}）。检查地址是不是 Decisions 接口、模型名是否一致。",
+	decisionErrorUnreachable: "连不上服务或等待超时（{code}）。检查网络和服务地址。",
+	decisionErrorOther: "服务没有正常回答（{code}）。",
+	decisionEndpointInvalid: "服务地址要以 http:// 或 https:// 开头，不能带账号密码或 # 片段。",
+	decisionModelInvalid: "模型名不能为空，也不能有空格。",
 	kernelConflict: "这台设备正在运行旧的 Bot 内核。请先停用旧插件，按迁移说明启用 DSCord。",
 	model: "模型",
 	title: "DSCord",
@@ -1042,7 +1191,6 @@ var zh = {
 	updateNotRegistry: "插件不是从 npm 安装的，请手动安装新版本。",
 	notJoined: "还没有加入聊天服务器。在网页的「我的 Bot」里让它加入。",
 	openChat: "去聊天",
-	decisionHelp: "「自然参与」的 Bot 用这个服务判断什么时候该说话。",
 	loginStep1: "在 DSCord 网页点「添加 Bot」，或打开「设置 → 账号 → 连接 DSH」。",
 	loginStep2: "点「复制连接密钥」。",
 	loginStep3: "回到这里粘贴，粘贴后自动连接。",
@@ -1052,6 +1200,8 @@ var zh = {
 	guideLabel: "开始使用",
 	stepAccount: "连接账号",
 	stepAccountHint: "粘贴网页上复制的连接密钥",
+	stepDecision: "配置决策模型",
+	stepDecisionHint: "在下面填 API key 并验证",
 	stepBot: "添加 Bot",
 	stepBotHint: "在 DSCord 网页点「添加 Bot」",
 	stepOnline: "上线",
@@ -1068,17 +1218,42 @@ var zh = {
 };
 var en = {
 	unknown: "Unknown",
-	decisionTitle: "Participation service",
-	decisionApiKey: "Decision service API key",
-	decisionKeyHelp: "Stored only on this device. A saved key is never shown again; leave this blank to keep it.",
-	enableDecision: "Enable natural participation decisions",
-	saveDecision: "Save participation service",
-	configured: "Configured",
-	notConfigured: "Not configured",
-	available: "Available",
-	availabilityUnknown: "Availability unknown",
-	decisionSaved: "Participation service saved",
-	serviceUnavailable: "Unavailable",
+	decisionTitle: "Decision model",
+	decisionHelp: "Bots use it to judge when to speak. It is separate from the model a Bot answers with, is kept only on this device, and is shared by the Bots this device runs.",
+	decisionDoesJoin: "A Bot set to “Join naturally” uses it, when nobody mentions the Bot, to decide whether to join in, wait, or keep listening.",
+	decisionDoesTurns: "When someone sends several messages in a row, it decides whether to wait for the rest, fold them into the answer being written, or answer each one.",
+	decisionWithout: "Without it, Bots answer only when mentioned or messaged directly and “Join naturally” does nothing; messages sent in a row are answered after a fixed pause, with no sense of whether you have finished.",
+	decisionMissing: "Not set up",
+	decisionDisabled: "Turned off",
+	decisionFailed: "Check failed",
+	decisionUnchecked: "Set up, not checked yet",
+	decisionReady: "Working",
+	decisionSetup1: "Get an API key for the decision service. By default that is an OpenAI key.",
+	decisionSetup2: "Enter it below. The model and address are filled in with the defaults; change them only for another service.",
+	decisionSetup3: "Choose “Save and check”. The service is asked once right away, and this panel says whether it works.",
+	decisionApiKey: "Decision model API key",
+	decisionKeyNeeded: "Required. Stored only on this device and never shown again.",
+	decisionKeyHelp: "A key is saved and is never shown again. Leave this blank to keep it, or enter a new one to replace it.",
+	decisionModelName: "Decision model name",
+	decisionModelHelp: "The model’s name at the decision service. Clear it to return to the default.",
+	decisionEndpoint: "Service address",
+	decisionEndpointHelp: "The full address of the Decisions endpoint. Clear it to return to the default.",
+	enableDecision: "Use the decision model",
+	saveDecision: "Save and check",
+	decisionSaving: "Checking…",
+	decisionEdit: "Change settings",
+	decisionSaved: "Saved. The decision model is working.",
+	decisionSavedNoKey: "Saved, but there is no API key yet, so the decision model cannot work.",
+	decisionSavedDisabled: "Saved. The decision model is turned off.",
+	decisionSavedFailed: "Saved, but the check did not pass.",
+	decisionErrorKey: "The service refused this key ({code}). Check the key and that it may use this model.",
+	decisionErrorAddress: "The address is wrong, or the service does not have this model ({code}).",
+	decisionErrorLimit: "The service says there are too many requests or the quota is used up ({code}). Choose “Save and check” again later.",
+	decisionErrorProtocol: "The service answered, but not the way a decision model does ({code}). Check that the address is a Decisions endpoint and the model name matches.",
+	decisionErrorUnreachable: "The service could not be reached or took too long ({code}). Check the network and the address.",
+	decisionErrorOther: "The service did not answer properly ({code}).",
+	decisionEndpointInvalid: "The address must start with http:// or https:// and carry no credentials or # fragment.",
+	decisionModelInvalid: "The model name cannot be empty or contain spaces.",
 	kernelConflict: "An older Bot kernel is running on this device. Stop its plugin and follow the migration instructions to enable DSCord.",
 	model: "Model",
 	title: "DSCord",
@@ -1129,7 +1304,6 @@ var en = {
 	updateNotRegistry: "This plugin was not installed from npm. Install the new version by hand.",
 	notJoined: "Not on any chat server yet. Add it to one under “My Bots” on the web page.",
 	openChat: "Open chat",
-	decisionHelp: "Bots that join naturally use this service to decide when to speak.",
 	loginStep1: "On the DSCord web page, choose “Add a Bot”, or open Settings → Account → Connect DSH.",
 	loginStep2: "Choose “Copy connection key”.",
 	loginStep3: "Paste it here. It connects as soon as you paste.",
@@ -1139,6 +1313,8 @@ var en = {
 	guideLabel: "Getting started",
 	stepAccount: "Connect your account",
 	stepAccountHint: "Paste the key copied from the web page",
+	stepDecision: "Set up the decision model",
+	stepDecisionHint: "Enter an API key below and check it",
 	stepBot: "Add a Bot",
 	stepBotHint: "Choose “Add a Bot” on the DSCord web page",
 	stepOnline: "Go online",

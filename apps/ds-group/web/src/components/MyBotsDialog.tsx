@@ -14,7 +14,7 @@ import { connectionLabel } from "../bot-kernel";
 import { botStage, sameServer, useManagedBots } from "../managed-bots";
 import type { ManagedBots } from "../managed-bots";
 import type { Participant, ServerStatus, Session } from "../types";
-import { BotSetupFields, StageLabel } from "./BotSetup";
+import { BotSetupFields, DecisionWarning, StageLabel } from "./BotSetup";
 import type { BotSetup } from "./BotSetup";
 import { ConnectDsh } from "./ConnectDsh";
 
@@ -172,6 +172,7 @@ function DeviceRow({
           {t("removeDevice")}
         </Button>
       </header>
+      <DecisionWarning device={device} />
       {error && <p className="node-error">{error}</p>}
     </article>
   );

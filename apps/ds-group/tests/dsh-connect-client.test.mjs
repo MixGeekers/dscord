@@ -12,6 +12,8 @@ const loggedIn = {
   runtime: { available: true, message: null }, lastError: null, dataDirectory: '/synthetic/profile/dscord',
 };
 
+const working = { configured: true, enabled: true, available: true, model: 'gpt-6-luna' };
+
 function harness(oracle = () => loggedOut, language = 'zh') {
   const requests = [];
   const entries = [];
@@ -149,7 +151,8 @@ test('the DSH locale namespace covers both languages and switches page labels wi
 });
 
 test('the linked page shows the account, this device and the Bots it runs, in the host language, with nothing to edit', async t => {
-  const online = { ...loggedIn, bots: [{ ...loggedIn.bots[0], name: 'Finance', servers: [{ ...loggedIn.bots[0].servers[0], status: 'online' }] }] };
+  const online = { ...loggedIn, decision: working,
+    bots: [{ ...loggedIn.bots[0], name: 'Finance', servers: [{ ...loggedIn.bots[0].servers[0], status: 'online' }] }] };
   const fixture = harness(() => online, 'en');
   t.after(fixture.dispose);
   await fixture.connection.refresh();
@@ -167,11 +170,11 @@ test('the linked page shows the account, this device and the Bots it runs, in th
     assert.equal(find(panel, element => ['button', 'input', 'select', 'textarea', 'form'].includes(element.type)), undefined, 'Bots are set up on the web');
     assert.ok(find(tree, element => element.type === 'button' && element.children.includes(labels.logout)));
     assert.ok(find(tree, element => element.children.includes('alice@id.test · DSH laptop')));
-    assert.equal(find(tree, element => element.type === 'ol'), undefined, 'the guide leaves once a Bot is online');
+    assert.equal(find(tree, element => element.type === 'ol'), undefined, 'the guide leaves once the decision model works and a Bot is online');
   }
 });
 
-test('the guide names the next step: link, add a Bot on the web, then the Bot goes online', async t => {
+test('the guide names the next step: link, set up the decision model, add a Bot on the web, then the Bot goes online', async t => {
   let value = loggedOut;
   const fixture = harness(() => value);
   t.after(fixture.dispose);
@@ -183,11 +186,61 @@ test('the guide names the next step: link, add a Bot on the web, then the Bot go
   };
   assert.deepEqual(await current(), ['连接账号', '粘贴网页上复制的连接密钥']);
   value = { ...loggedIn, bots: [] };
+  assert.deepEqual(await current(), ['配置决策模型', '在下面填 API key 并验证']);
+  value = { ...loggedIn, bots: [], decision: working };
   assert.deepEqual(await current(), ['添加 Bot', '在 DSCord 网页点「添加 Bot」']);
   const tree = render(fixture.main.component(fixture.main.options.inject()));
   assert.ok(find(tree, element => element.children.includes('还没有 Bot。在 DSCord 网页点「添加 Bot」，它会自动出现在这里并上线。')));
-  value = loggedIn;
+  value = { ...loggedIn, decision: working };
   assert.deepEqual(await current(), ['上线', 'Bot 自动上线，去聊天里 @ 它']);
+  // A Bot that is online without its decision model is not finished: the guide stays on that step.
+  value = { ...loggedIn, decision: { ...working, available: false, error: 'ATTENTION_HTTP_401' },
+    bots: [{ ...loggedIn.bots[0], servers: [{ ...loggedIn.bots[0].servers[0], status: 'online' }] }] };
+  assert.deepEqual(await current(), ['配置决策模型', '在下面填 API key 并验证']);
+});
+
+test('the decision model has its own panel: what is missing, why it matters, and the form in reach until it works', async t => {
+  let value = loggedIn;
+  const fixture = harness(() => value);
+  t.after(fixture.dispose);
+  const panel = async () => {
+    await fixture.connection.refresh();
+    const tree = render(fixture.main.component(fixture.main.options.inject()));
+    const sections = tree.children[1].children.filter(element => element?.type === 'section').map(element => element.props['aria-label']);
+    assert.deepEqual(sections.slice(0, 2), ['决策模型', '这台设备运行的 Bot'], 'the decision model comes before the Bots');
+    return find(tree, element => element.props['aria-label'] === '决策模型');
+  };
+  const text = (element, className) => find(element, node => node.props.className?.split(' ').includes(className))?.children.join('');
+  const open = element => !find(element, node => node.type === 'details') && Boolean(find(element, node => node.type === 'form'));
+
+  let section = await panel();
+  assert.equal(section.props['data-state'], 'missing');
+  assert.equal(text(section, 'dc-status'), '未配置');
+  assert.match(text(section, 'dc-notice'), /只在被 @ 或私聊时回答/);
+  assert.equal(find(section, node => node.type === 'ol').children.length, 3, 'three steps to set it up');
+  assert.equal(open(section), true);
+  assert.deepEqual(['decisionApiKey', 'decisionModel', 'decisionEndpoint', 'enabled']
+    .map(name => Boolean(find(section, node => node.type === 'input' && node.props.name === name))), [true, true, true, true]);
+
+  value = { ...loggedIn, decision: { ...working, available: false, error: 'ATTENTION_HTTP_401' } };
+  section = await panel();
+  assert.equal(section.props['data-state'], 'failed');
+  assert.equal(text(section, 'dc-status'), '验证失败');
+  assert.ok(find(section, node => node.props.role === 'alert' && /拒绝了这把 key（ATTENTION_HTTP_401）/.test(node.children.join(''))));
+  assert.equal(find(section, node => node.type === 'ol'), undefined, 'the steps are for a first setup');
+  assert.equal(open(section), true);
+
+  value = { ...loggedIn, decision: { ...working, enabled: false, available: false } };
+  section = await panel();
+  assert.equal(section.props['data-state'], 'disabled');
+  assert.equal(open(section), true);
+
+  value = { ...loggedIn, decision: working };
+  section = await panel();
+  assert.equal(section.props['data-state'], 'ready');
+  assert.equal(text(section, 'dc-status'), '运行正常 · gpt-6-luna');
+  assert.equal(find(section, node => node.props['data-tone'] === 'warning'), undefined);
+  assert.equal(open(section), false, 'a working model keeps its form folded away');
 });
 
 test('a displayed client error changes language with DSH without repeating the failed request', async t => {

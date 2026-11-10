@@ -108,6 +108,7 @@ export async function connectFixture(options = {}) {
     async stop(node) { effects.push(['stop', node.id]); live.delete(node.id); },
     async probe(node) { return { status: live.has(node.id) ? 'online' : 'offline', lastError: null }; },
     async kernelState() { return { runtime: { id: 'dscord-kernel' }, decisionProvider: { configured: false } }; },
+    decisionStatus() { return { configured: false, enabled: true, available: false, model: 'gpt-6-luna' }; },
     ...options.processes,
   };
   const settings = { directory, processes, native, request, label: 'DSH laptop', now: () => clock, updates: options.updates };

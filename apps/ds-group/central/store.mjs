@@ -250,8 +250,8 @@ export class CentralStore {
   deviceOnline(row) { return this.now() - row.last_seen < DEVICE_ONLINE_MS; }
 
   deviceView(row) {
-    const { models = null, plugin = null } = JSON.parse(row.report_json);
-    return { id: row.id, label: row.label, online: this.deviceOnline(row), models, plugin,
+    const { models = null, plugin = null, decision = null } = JSON.parse(row.report_json);
+    return { id: row.id, label: row.label, online: this.deviceOnline(row), models, plugin, decision,
       createdAt: new Date(row.created_at).toISOString(), lastSeen: new Date(row.last_seen).toISOString() };
   }
 

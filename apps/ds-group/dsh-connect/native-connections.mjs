@@ -46,17 +46,22 @@ export class NativeConnections {
 
   async configure({ directory }) {
     this.directory = directory;
-    this.decisionSettings ||= await new DecisionSettings({ directory }).initialize();
+    if (this.decisionSettings) return;
+    this.decisionSettings = await new DecisionSettings({ directory }).initialize();
+    // Asked once at start, so a key that stopped working shows here before a Bot stays quiet because of it.
+    void this.decisionSettings.verify();
   }
 
   decisionStatus() {
     return this.decisionSettings?.publicStatus() || { configured: false, available: false, enabled: true, model: 'gpt-6-luna', health: 'unconfigured' };
   }
 
+  /** Saving asks the service one question, so the answer says whether the settings work. */
   async saveDecisionProvider(settings) {
     if (!this.decisionSettings) throw new Error('DECISION_SETTINGS_UNAVAILABLE');
     await this.decisionSettings.save(settings);
     for (const entry of this.connections.values()) entry.botNode.setDecisionProvider(this.decisionSettings.provider);
+    await this.decisionSettings.verify();
     return this.decisionStatus();
   }
 
@@ -191,6 +196,6 @@ export class NativeConnections {
 
   /** The kernel this DSH runs and the service that decides when Bots join in. */
   async kernelState() {
-    return { ...await this.native.info(), decisionProvider: this.decisionStatus() };
+    return { ...await this.native.info(), decisionProvider: this.decisionStatus(), decisionForm: this.decisionSettings?.form() ?? null };
   }
 }

@@ -58,6 +58,8 @@ const en = {
   deviceOffline: "Offline",
   deviceModel: "Default model {model}",
   devicePlugin: "Plugin {version}",
+  decisionMissing:
+    "This device has no working decision model, so its Bots answer only when mentioned or messaged directly and never join in by themselves. Set it up in the DSCord panel of DSH on that computer.",
   removeDevice: "Remove",
   connectDevice: "Connect a device",
   close: "Close",
@@ -121,6 +123,8 @@ export const botMessages: Catalog<keyof typeof en> = {
     deviceOffline: "离线",
     deviceModel: "默认模型 {model}",
     devicePlugin: "插件 {version}",
+    decisionMissing:
+      "这台设备还没有配好决策模型，上面的 Bot 只在被 @ 或私聊时回答，不会自己接话。请在那台电脑的 DSH 里打开 DSCord 面板配置。",
     removeDevice: "移除",
     connectDevice: "连接设备",
     close: "关闭",

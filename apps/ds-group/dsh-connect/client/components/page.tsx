@@ -8,26 +8,32 @@ import { BotsPanel } from "./bots";
 import { LoginForm } from "./forms";
 import {
   ConfigDirectory,
-  DecisionProviderForm,
+  DecisionPanel,
+  decisionWorks,
   KernelUpdatePanel,
 } from "./kernel";
 
 const STEPS: [MessageKey, MessageKey][] = [
   ["stepAccount", "stepAccountHint"],
+  ["stepDecision", "stepDecisionHint"],
   ["stepBot", "stepBotHint"],
   ["stepOnline", "stepOnlineHint"],
 ];
 
-/** The three steps from a fresh install to a Bot that answers, shown until the last one is done. */
+/**
+ * The steps from a fresh install to a Bot that answers the way it is meant to, shown until all are done.
+ * The decision model is one of them: a Bot can go online without it, but it is not complete.
+ */
 function SetupGuide({ value, t }: { value: ConnectionState; t: Translate }) {
   const done = [
     Boolean(value.user),
+    decisionWorks(value.decision),
     value.bots.length > 0,
     value.bots.some((bot) =>
       bot.servers.some((server) => server.status === "online"),
     ),
   ];
-  if (done[2]) return null;
+  if (done.every(Boolean)) return null;
   const current = done.indexOf(false);
   return (
     <ol className="dc-steps" aria-label={t("guideLabel")}>
@@ -102,8 +108,8 @@ function Notices({
 }
 
 /**
- * DSCord's page in DSH. It links this DSH to the owner's account and shows the Bots that account runs here;
- * Bots themselves are set up on the DSCord web page.
+ * DSCord's page in DSH. It links this DSH to the owner's account, holds the decision model this device's Bots
+ * share, and shows the Bots that account runs here; Bots themselves are set up on the DSCord web page.
  */
 export function ConnectionPage({
   connection,
@@ -173,6 +179,13 @@ export function ConnectionPage({
         {!state.loading && !user && (
           <LoginForm connection={connection} state={state} t={t} />
         )}
+        {value && (
+          <DecisionPanel
+            connection={connection}
+            status={value.decision}
+            t={t}
+          />
+        )}
         {value && user && <BotsPanel value={value} t={t} />}
         {value?.kernelUpdates && (
           <KernelUpdatePanel
@@ -181,13 +194,10 @@ export function ConnectionPage({
             t={t}
           />
         )}
-        {value && (
+        {value?.dataDirectory && (
           <section className="dc-panel" aria-label={t("advanced")}>
             <h2>{t("advanced")}</h2>
-            <DecisionProviderForm connection={connection} t={t} />
-            {value.dataDirectory && (
-              <ConfigDirectory directory={value.dataDirectory} t={t} />
-            )}
+            <ConfigDirectory directory={value.dataDirectory} t={t} />
           </section>
         )}
       </div>

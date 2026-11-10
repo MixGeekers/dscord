@@ -223,8 +223,9 @@ test('a Bot moved to another device, or a session the owner ended, stops here', 
   assert.deepEqual(effects.at(-1), ['stop', account]);
 });
 
-test('the connect page still reaches the decision service settings and plugin upgrades, and nothing else', async t => {
+test('the connect page still reaches the decision model settings and plugin upgrades, and nothing else', async t => {
   const received = [];
+  let decision = { configured: false, enabled: true, available: false, model: 'gpt-6-luna', health: 'unconfigured' };
   const steps = [];
   const updates = {
     view: () => ({ current: '0.4.0', available: '0.5.0', compatible: true, policy: 'notify' }),
@@ -234,6 +235,7 @@ test('the connect page still reaches the decision service settings and plugin up
   };
   const { controller, login, api, alice } = await fixture(t, { updates, processes: {
     async saveDecisionProvider(settings) { received.push(settings); return { configured: true, model: settings.model }; },
+    decisionStatus: () => decision,
   } });
   const input = { apiKey: 'synthetic-private-decision-key', enabled: true, model: 'company/decision-v2', endpoint: 'https://decision.example/v2/decisions' };
   const saved = await controller.handle({ action: 'save-decision-provider', ...input });
@@ -248,6 +250,15 @@ test('the connect page still reaches the decision service settings and plugin up
   assert.deepEqual(steps, [['check', { fresh: true }], ['policy', { policy: 'auto', channel: 'stable' }], ['install']]);
   await login();
   assert.deepEqual((await api('GET', '/api/devices', { token: alice })).devices[0].plugin, { version: '0.4.0', available: '0.5.0', compatible: true });
+
+  // The page and the owner's web page are told whether the decision model works; its settings never leave the device.
+  const missing = { configured: false, enabled: true, available: false, model: 'gpt-6-luna' };
+  assert.deepEqual((await controller.handle({ action: 'status' })).decision, missing);
+  assert.deepEqual((await api('GET', '/api/devices', { token: alice })).devices[0].decision, missing);
+  decision = { configured: true, enabled: true, available: false, model: 'company/decision-v2', health: 'error', error: 'ATTENTION_HTTP_401' };
+  await controller.synchronize({ force: true });
+  assert.deepEqual((await api('GET', '/api/devices', { token: alice })).devices[0].decision,
+    { configured: true, enabled: true, available: false, model: 'company/decision-v2', error: 'ATTENTION_HTTP_401' });
 
   // Setting Bots up is the web's job: the page's old actions are gone.
   for (const action of ['create-native', 'attach', 'connect', 'disconnect', 'add-server', 'remove-server', 'save-model', 'attention-update', 'kernel-update-everything']) {

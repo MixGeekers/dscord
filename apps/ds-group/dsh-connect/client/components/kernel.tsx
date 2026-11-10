@@ -1,126 +1,272 @@
 import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { Connection } from "../connection";
-import type { Translate } from "../locale";
+import type { MessageKey, Translate } from "../locale";
 import type { DecisionProvider, KernelState, KernelUpdates } from "../types";
 
-type Feedback = { ok: true; pending?: boolean } | { error: string } | null;
 const message = (reason: unknown) => (reason as Error).message;
 
-function FeedbackLine({ feedback, ok }: { feedback: Feedback; ok: string }) {
-  if (!feedback) return null;
-  const error = "error" in feedback ? feedback.error : null;
-  return (
-    <p
-      role={error ? "alert" : "status"}
-      className={error ? "dc-error dc-small" : "dc-meta"}
-    >
-      {error || ok}
-    </p>
-  );
+export type DecisionState =
+  "missing" | "disabled" | "failed" | "unchecked" | "ready";
+
+/** Where the decision model stands, in the order the owner would fix it: a key, the switch, then a working answer. */
+export function decisionState(
+  provider: DecisionProvider | null | undefined,
+): DecisionState {
+  if (!provider?.configured) return "missing";
+  if (provider.enabled === false) return "disabled";
+  if (provider.available === false) return "failed";
+  return provider.available ? "ready" : "unchecked";
 }
 
-/** The private key for the natural-participation decision service; a saved key is never shown again. */
-export function DecisionProviderForm({
+/** Whether Bots on this device can rely on the decision model. A model that was never asked counts until it fails. */
+export const decisionWorks = (provider: DecisionProvider | null | undefined) =>
+  ["ready", "unchecked"].includes(decisionState(provider));
+
+const STATE_TEXT: Record<DecisionState, MessageKey> = {
+  missing: "decisionMissing",
+  disabled: "decisionDisabled",
+  failed: "decisionFailed",
+  unchecked: "decisionUnchecked",
+  ready: "decisionReady",
+};
+const SAVED_TEXT: Record<DecisionState, MessageKey> = {
+  missing: "decisionSavedNoKey",
+  disabled: "decisionSavedDisabled",
+  failed: "decisionSavedFailed",
+  unchecked: "decisionSaved",
+  ready: "decisionSaved",
+};
+const STATE_TONE: Record<DecisionState, string> = {
+  missing: "warning",
+  disabled: "warning",
+  failed: "error",
+  unchecked: "online",
+  ready: "online",
+};
+// What the service's refusal means for the person filling in the form.
+const ERRORS: [RegExp, MessageKey][] = [
+  [/^ATTENTION_HTTP_40[13]$/, "decisionErrorKey"],
+  [/^ATTENTION_HTTP_404$/, "decisionErrorAddress"],
+  [/^ATTENTION_HTTP_429$/, "decisionErrorLimit"],
+  [/^ATTENTION_(INVALID_RESPONSE|REFUSAL)$/, "decisionErrorProtocol"],
+  [/^ATTENTION_(TIMEOUT|PROVIDER_ERROR)$/, "decisionErrorUnreachable"],
+];
+
+/**
+ * The model that decides when Bots speak. Bots lose most of their conversational sense without it, so it has
+ * its own panel: what it does, what is missing, and a form that checks the settings as it saves them.
+ */
+export function DecisionPanel({
   connection,
+  status,
   t,
 }: {
   connection: Connection;
+  /** What the device says about the service now; the page reads it again every few seconds. */
+  status: DecisionProvider | null | undefined;
   t: Translate;
 }) {
-  const [provider, setProvider] = useState<DecisionProvider | null>(null);
+  const [form, setForm] = useState<KernelState["decisionForm"]>(null);
   const [busy, setBusy] = useState(false);
-  const [feedback, setFeedback] = useState<Feedback>(null);
-  const [enabled, setEnabled] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState<DecisionState | null>(null);
+  const [round, setRound] = useState(0);
+  const [enabled, setEnabled] = useState(status?.enabled !== false);
   useEffect(() => {
     const controller = new AbortController();
     void connection
       .kernel<KernelState>("kernel-state", {}, controller)
-      .then((kernel) => {
-        if (controller.signal.aborted) return;
-        setProvider(kernel.decisionProvider || null);
-        setEnabled(kernel.decisionProvider?.enabled !== false);
+      .then((value) => {
+        if (!controller.signal.aborted) setForm(value.decisionForm);
       })
       .catch((reason) => {
-        if (!controller.signal.aborted) setFeedback({ error: message(reason) });
+        if (!controller.signal.aborted) setError(message(reason));
       });
     return () => controller.abort();
   }, [connection]);
-  return (
-    <details className="dc-disclosure">
-      <summary>{t("decisionTitle")}</summary>
-      <div className="dc-body">
-        <p className="dc-meta">{t("decisionHelp")}</p>
-        <p className="dc-meta">
-          {provider
-            ? `${t(provider.configured ? "configured" : "notConfigured")} · ${t(
-                provider.available === true
-                  ? "available"
-                  : provider.available === false
-                    ? "serviceUnavailable"
-                    : "availabilityUnknown",
-              )}${provider.model ? ` · ${provider.model}` : ""}`
-            : t("unknown")}
-        </p>
-        <form
-          className="dc-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const input = event.currentTarget.elements.namedItem(
-              "decisionApiKey",
-            ) as HTMLInputElement;
-            const apiKey = input.value.trim();
-            input.value = "";
-            setBusy(true);
-            setFeedback(null);
-            try {
-              setProvider(
-                await connection.kernel<DecisionProvider>(
-                  "save-decision-provider",
-                  { enabled, ...(apiKey ? { apiKey } : {}) },
-                ),
-              );
-              setFeedback({ ok: true });
-            } catch (reason) {
-              setFeedback({ error: message(reason) });
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <div className="dc-field">
-            <label className="dc-field">
-              {t("decisionApiKey")}
-              <Input
-                name="decisionApiKey"
-                type="password"
-                autoComplete="new-password"
-                disabled={busy}
-                spellCheck={false}
-                autoCapitalize="none"
-              />
-            </label>
-            <span className="dc-hint">{t("decisionKeyHelp")}</span>
-          </div>
-          <label className="dc-check">
-            <input
-              name="enabled"
-              type="checkbox"
-              checked={enabled}
-              onChange={(event) => setEnabled(event.target.checked)}
-              disabled={busy}
-            />
-            {t("enableDecision")}
-          </label>
-          <div className="dc-actions">
-            <Button type="submit" variant="outline" disabled={busy}>
-              {t("saveDecision")}
-            </Button>
-          </div>
-        </form>
-        <FeedbackLine feedback={feedback} ok={t("decisionSaved")} />
+  const state = decisionState(status);
+  const working = decisionWorks(status);
+  const reason = status?.error
+    ? t(
+        ERRORS.find(([pattern]) => pattern.test(status.error!))?.[1] ??
+          "decisionErrorOther",
+        { code: status.error },
+      )
+    : null;
+
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const fields = event.currentTarget.elements;
+    const field = (name: string) => fields.namedItem(name) as HTMLInputElement;
+    const apiKey = field("decisionApiKey").value.trim();
+    const model = field("decisionModel").value.trim();
+    const endpoint = field("decisionEndpoint").value.trim();
+    setBusy(true);
+    setError(null);
+    setSaved(null);
+    try {
+      const next = await connection.kernel<DecisionProvider>(
+        "save-decision-provider",
+        {
+          enabled,
+          ...(apiKey ? { apiKey } : {}),
+          // Only a changed value is saved, so untouched defaults keep following the device's environment.
+          ...(model === (form?.model ?? "") ? {} : { model }),
+          ...(endpoint === (form?.endpoint ?? "") ? {} : { endpoint }),
+        },
+      );
+      const kernel = await connection.kernel<KernelState>("kernel-state");
+      // The page's status, its guide and the report to the owner's web page follow the new state.
+      await connection.refresh({ clearError: false });
+      setForm(kernel.decisionForm);
+      setSaved(decisionState(next));
+      setRound((value) => value + 1);
+    } catch (reason) {
+      setError(message(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const settings = (
+    <form
+      className="dc-form"
+      // After a save the fields start again from what the device now holds, and the typed key leaves the page.
+      key={`${form?.hasKey}\n${form?.model}\n${form?.endpoint}\n${round}`}
+      onSubmit={(event) => void submit(event)}
+    >
+      <div className="dc-field">
+        <label className="dc-field">
+          {t("decisionApiKey")}
+          <Input
+            name="decisionApiKey"
+            type="password"
+            autoComplete="new-password"
+            required={enabled && form?.hasKey === false}
+            disabled={busy}
+            spellCheck={false}
+            autoCapitalize="none"
+          />
+        </label>
+        <span className="dc-hint">
+          {t(form?.hasKey ? "decisionKeyHelp" : "decisionKeyNeeded")}
+        </span>
       </div>
-    </details>
+      <div className="dc-field">
+        <label className="dc-field">
+          {t("decisionModelName")}
+          <Input
+            name="decisionModel"
+            defaultValue={form?.model ?? ""}
+            disabled={busy}
+            spellCheck={false}
+            autoCapitalize="none"
+          />
+        </label>
+        <span className="dc-hint">{t("decisionModelHelp")}</span>
+      </div>
+      <div className="dc-field">
+        <label className="dc-field">
+          {t("decisionEndpoint")}
+          <Input
+            name="decisionEndpoint"
+            defaultValue={form?.endpoint ?? ""}
+            disabled={busy}
+            spellCheck={false}
+            autoCapitalize="none"
+          />
+        </label>
+        <span className="dc-hint">{t("decisionEndpointHelp")}</span>
+      </div>
+      <label className="dc-check">
+        <input
+          name="enabled"
+          type="checkbox"
+          checked={enabled}
+          onChange={(event) => setEnabled(event.target.checked)}
+          disabled={busy}
+        />
+        {t("enableDecision")}
+      </label>
+      <div className="dc-actions">
+        <Button
+          type="submit"
+          variant={working ? "outline" : "primary"}
+          disabled={busy}
+        >
+          {t(busy ? "decisionSaving" : "saveDecision")}
+        </Button>
+      </div>
+    </form>
+  );
+  return (
+    <section
+      className="dc-panel dc-decision"
+      aria-label={t("decisionTitle")}
+      data-state={state}
+    >
+      <div className="dc-heading">
+        <h2>{t("decisionTitle")}</h2>
+        <p className="dc-status" data-status={STATE_TONE[state]}>
+          {[t(STATE_TEXT[state]), working && status?.model]
+            .filter(Boolean)
+            .join(" · ")}
+        </p>
+      </div>
+      <p className="dc-meta">{t("decisionHelp")}</p>
+      {!working && (
+        <>
+          <ul className="dc-points">
+            <li>{t("decisionDoesJoin")}</li>
+            <li>{t("decisionDoesTurns")}</li>
+          </ul>
+          <p className="dc-notice" data-tone="warning">
+            {t("decisionWithout")}
+          </p>
+        </>
+      )}
+      {error && (
+        <p role="alert" className="dc-error dc-small">
+          {error}
+        </p>
+      )}
+      {saved && (
+        <p
+          role="status"
+          className={
+            saved === "ready" || saved === "unchecked"
+              ? "dc-meta"
+              : "dc-error dc-small"
+          }
+        >
+          {t(SAVED_TEXT[saved])}
+        </p>
+      )}
+      {state === "failed" && reason && (
+        <p role="alert" className="dc-error dc-small">
+          {reason}
+        </p>
+      )}
+      {working ? (
+        <details className="dc-disclosure">
+          <summary>{t("decisionEdit")}</summary>
+          <div className="dc-body">{settings}</div>
+        </details>
+      ) : (
+        <>
+          {state === "missing" && (
+            <ol className="dc-how">
+              <li>{t("decisionSetup1")}</li>
+              <li>{t("decisionSetup2")}</li>
+              <li>{t("decisionSetup3")}</li>
+            </ol>
+          )}
+          {settings}
+        </>
+      )}
+    </section>
   );
 }
 

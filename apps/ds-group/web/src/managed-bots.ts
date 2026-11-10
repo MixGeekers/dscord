@@ -67,6 +67,15 @@ export function useManagedBots(
   return { available, issuer, token, bots, devices, loaded, error, reload };
 }
 
+/** Whether a device's Bots are without their decision model: no key, switched off, or its last check failed. */
+export const lacksDecision = (device: Device | undefined) =>
+  Boolean(
+    device?.decision &&
+    (!device.decision.configured ||
+      !device.decision.enabled ||
+      device.decision.available === false),
+  );
+
 export const sameServer = (left: string, right: string) => {
   try {
     return new URL(left).origin === new URL(right).origin;
