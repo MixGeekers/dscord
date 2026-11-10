@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from "react";
-import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { Connection, Snapshot } from "../connection";
 import type { MessageKey, Translate } from "../locale";
 import { styles } from "../styles";
 import type { ConnectionState } from "../types";
 import { BotsPanel } from "./bots";
+import { Button } from "./controls";
 import { LoginForm } from "./forms";
 import {
   ConfigDirectory,
@@ -128,7 +128,7 @@ export function ConnectionPage({
   const busy = state.loading || Boolean(state.busy);
   return (
     <section
-      className="dscord-connect"
+      className="dscord-ui dscord-connect"
       aria-label={t("pageLabel")}
       aria-busy={busy}
     >
@@ -149,7 +149,7 @@ export function ConnectionPage({
             )}
             {user && (
               <Button
-                variant="outline"
+                variant="secondary"
                 type="button"
                 disabled={Boolean(state.busy)}
                 onClick={() => void connection.logout()}
@@ -158,7 +158,7 @@ export function ConnectionPage({
               </Button>
             )}
             <Button
-              variant="outline"
+              variant="secondary"
               type="button"
               disabled={busy}
               onClick={() =>

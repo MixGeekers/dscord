@@ -1,4 +1,4 @@
-import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Button, Textarea } from "./controls";
 import type { Connection, Snapshot } from "../connection";
 import type { Translate } from "../locale";
 import type { ConnectionState } from "../types";
@@ -56,7 +56,7 @@ export function LoginForm({ connection, state, t }: PageProps) {
       <div className="dc-field">
         <label className="dc-field">
           {t("connectionKey")}
-          <textarea
+          <Textarea
             name="connectionKey"
             className="dc-key"
             required
@@ -78,7 +78,7 @@ export function LoginForm({ connection, state, t }: PageProps) {
         <span className="dc-hint">{t("keyHint")}</span>
       </div>
       <div className="dc-actions">
-        <Button variant="primary" type="submit" disabled={busy}>
+        <Button type="submit" disabled={busy}>
           {t(state.busy?.action === "login" ? "loggingIn" : "login")}
         </Button>
       </div>

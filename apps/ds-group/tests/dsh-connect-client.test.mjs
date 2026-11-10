@@ -74,7 +74,6 @@ function harness(oracle = () => loggedOut, language = 'zh') {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return jsxRuntime;
     if (name === 'react-dom') return { createPortal: element => element };
-    if (name === '@deepseek-ai/dsh-client-ui-primitives') return { Button: 'button', Input: 'input', IconPluginPinwheelOutlineRegular: () => null };
     throw new Error(`Unexpected dependency ${name}`);
   });
   plugin.apply({
@@ -102,7 +101,11 @@ function harness(oracle = () => loggedOut, language = 'zh') {
 
 function render(element) {
   if (!element || typeof element !== 'object') return element;
-  if (typeof element.type === 'function') return render(element.type(element.props));
+  if (typeof element.type === 'function') {
+    // A component receives its children as a prop, as React passes them.
+    const children = element.children.length > 1 ? element.children : element.children[0];
+    return render(element.type(children === undefined ? element.props : { ...element.props, children }));
+  }
   return { ...element, children: element.children.map(render) };
 }
 
@@ -141,8 +144,12 @@ test('the DSH locale namespace covers both languages and switches page labels wi
       const tree = render(entry.component(entry.options.inject()));
       assert.equal(tree.props['aria-label'], labels.page);
       assert.ok(find(tree, element => element.type === 'form' && element.props['aria-label'] === labels.login));
-      assert.ok(find(tree, element => element.type === 'button' && element.props.type === 'submit' && element.children.includes(labels.submit)));
+      const submit = find(tree, element => element.type === 'button' && element.props.type === 'submit' && element.children.includes(labels.submit));
       assert.ok(find(tree, element => element.type === 'label' && element.children.includes(labels.key)));
+      // Plain elements drawn by the design system's own rules, inside its scope.
+      assert.ok(tree.props.className.split(' ').includes('dscord-ui'));
+      assert.equal(submit.props.className, 'ds-button ds-button-default ds-button-size-default');
+      assert.equal(find(tree, element => element.type === 'textarea').props.className, 'ds-input ds-textarea dc-key');
     }
     assert.equal(fixture.entries[1].options.label(), 'DSCord');
     assert.equal(fixture.main.options.inject().connection, connection);
