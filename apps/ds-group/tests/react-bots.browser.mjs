@@ -125,7 +125,10 @@ try {
   assert.equal(await page.locator('#create-bot-submit').isDisabled(), true, 'a Bot needs a name');
   assert.deepEqual(await page.locator('#create-bot-model option').allTextContents(), ['Device default']);
   await dialog.getByText('Models can be chosen here once a device is connected.', { exact: true }).waitFor();
-  assert.equal(await page.locator('#create-bot-device').count(), 0);
+  // Where the Bot will run is always shown: with no device yet, it says the first one to connect takes it.
+  assert.deepEqual(await page.locator('#create-bot-device option').allTextContents(), ['The first device that connects']);
+  assert.equal(await page.locator('#create-bot-device').isDisabled(), true);
+  await dialog.getByText('No device is connected yet. After creating the Bot you get a connection key', { exact: false }).waitFor();
   await page.locator('#create-bot-name').fill('Shiyu');
   await page.locator('#create-bot-role').fill('A friend and project partner');
   await shots('create-form');
@@ -160,15 +163,18 @@ try {
   await dialog.waitFor();
   await page.locator('#create-bot-model option[value="fixture/large"]').waitFor({ state: 'attached' });
   assert.deepEqual(await page.locator('#create-bot-model option').allTextContents(), ['Device default (fixture/default)', 'Default', 'Large', 'Locked (no key on the device yet)']);
+  assert.deepEqual(await page.locator('#create-bot-device option').allTextContents(), ['DSH laptop · Online']);
+  assert.equal(await page.locator('#create-bot-device').inputValue(), f.controller.state.hostId);
   assert.equal(await page.locator('#create-bot-name').inputValue(), '', 'the form starts empty each time');
   await page.locator('#create-bot-name').fill('数据员');
   await page.locator('#create-bot-model').selectOption('fixture/large');
+  await shots('create-form-device');
   await page.locator('#create-bot-submit').click();
   await page.locator('#create-bot-progress[data-stage="online"]').waitFor();
   assert.deepEqual(f.locals.map(bot => [bot.name, bot.model]), [['Shiyu', undefined], ['数据员', 'fixture/large']]);
   await page.keyboard.press('Escape');
   await page.locator('#create-bot-dialog').waitFor({ state: 'hidden' });
-  checks.push('aSecondBotPicksOneOfTheDevicesModelsAndGoesOnlineOnItsOwn');
+  checks.push('aSecondBotShowsTheDeviceItWillRunOnPicksOneOfItsModelsAndGoesOnlineOnItsOwn');
 
   // Managing: each Bot's setup is changed here and the device follows.
   await page.locator('#open-my-bots').click();
@@ -183,6 +189,7 @@ try {
   await row.locator('[data-bot-setup-button]').click();
   await row.getByLabel('Name', { exact: true }).fill('诗雨');
   await row.getByLabel('Role', { exact: true }).fill('Keeps the garden plan');
+  assert.deepEqual(await row.getByLabel('Runs on', { exact: true }).locator('option').allTextContents(), ['DSH laptop · Online']);
   await row.getByLabel('Model', { exact: true }).selectOption('fixture/large');
   await row.locator('[data-save-bot]').click();
   await row.getByRole('status').filter({ hasText: 'Saved.' }).waitFor();

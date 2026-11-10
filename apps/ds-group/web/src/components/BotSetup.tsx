@@ -36,8 +36,8 @@ export function StageLabel({ stage }: { stage: BotStage }) {
 }
 
 /**
- * The name, role, model and device of a Bot. The models are the ones the chosen device reported, so a model
- * the device cannot run is never offered.
+ * The name, role, device and model of a Bot. The device is always shown, so it is plain where the Bot will
+ * run; the models are the ones that device reported, so a model it cannot run is never offered.
  */
 export function BotSetupFields({
   idPrefix,
@@ -88,6 +88,24 @@ export function BotSetupFields({
         disabled={disabled}
         onChange={(event) => onChange({ ...value, role: event.target.value })}
       />
+      <label htmlFor={id("device")}>{t("device")}</label>
+      <NativeSelect
+        id={id("device")}
+        value={value.deviceId}
+        disabled={disabled || !devices.length}
+        onChange={(event) =>
+          // Models belong to a device, so a choice made for another device does not carry over.
+          onChange({ ...value, deviceId: event.target.value, model: "" })
+        }
+      >
+        {!value.deviceId && <option value="">{t("deviceAuto")}</option>}
+        {devices.map((item) => (
+          <option key={item.id} value={item.id}>
+            {item.label} · {t(item.online ? "deviceOnline" : "deviceOffline")}
+          </option>
+        ))}
+      </NativeSelect>
+      {!devices.length && <p className="small muted">{t("deviceNone")}</p>}
       <label htmlFor={id("model")}>{t("model")}</label>
       <NativeSelect
         id={id("model")}
@@ -120,28 +138,6 @@ export function BotSetupFields({
         <p className="small muted">
           {t("modelsUnavailable", { error: catalog.error })}
         </p>
-      )}
-      {devices.length > 1 && (
-        <>
-          <label htmlFor={id("device")}>{t("device")}</label>
-          <NativeSelect
-            id={id("device")}
-            value={value.deviceId}
-            disabled={disabled}
-            onChange={(event) =>
-              // Models belong to a device, so a choice made for another device does not carry over.
-              onChange({ ...value, deviceId: event.target.value, model: "" })
-            }
-          >
-            {!value.deviceId && <option value="">{t("deviceAuto")}</option>}
-            {devices.map((item) => (
-              <option key={item.id} value={item.id}>
-                {item.label} ·{" "}
-                {t(item.online ? "deviceOnline" : "deviceOffline")}
-              </option>
-            ))}
-          </NativeSelect>
-        </>
       )}
     </div>
   );

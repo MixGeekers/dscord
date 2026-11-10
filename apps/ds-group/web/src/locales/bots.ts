@@ -20,6 +20,8 @@ const en = {
   modelsUnavailable: "The device could not list its models. {error}",
   device: "Runs on",
   deviceAuto: "The first device that connects",
+  deviceNone:
+    "No device is connected yet. After creating the Bot you get a connection key for your DSH, and the first device that connects runs it.",
   create: "Create Bot",
   creating: "Creating…",
   created: "{name} is created",
@@ -82,6 +84,8 @@ export const botMessages: Catalog<keyof typeof en> = {
     modelsUnavailable: "设备没能列出它的模型。{error}",
     device: "运行设备",
     deviceAuto: "第一台连接的设备",
+    deviceNone:
+      "还没有连接设备。创建后会给你一把连接密钥，粘贴到 DSH 里，第一台连上的设备就运行这个 Bot。",
     create: "创建 Bot",
     creating: "正在创建…",
     created: "{name} 已创建",
