@@ -57,7 +57,7 @@ function harness(oracle = () => loggedOut, language = 'zh') {
   vm.runInNewContext(source, {
     window: { __ModuleLoader__: { load(value) { descriptor = value; } } },
     document: { visibilityState: 'visible' },
-    URL, AbortController, clearTimeout,
+    URL, AbortController, clearTimeout, atob,
     setTimeout(callback, milliseconds) { timeouts.push(milliseconds); return setTimeout(callback, milliseconds); },
     setInterval(callback) { intervals.add(callback); return callback; },
     clearInterval(callback) { intervals.delete(callback); },
@@ -282,6 +282,60 @@ test('the login form takes one connection key and clears it before dispatching t
   form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: name => inputs[name] } } });
   assert.deepEqual(sent, ['eyJzZXJ2ZXIiOiJ4In0']);
   assert.equal(find(tree, element => element.type === 'textarea').props.autoComplete, 'off');
+});
+
+test('pasting a whole connection key signs in at once, and other pasted text waits for the button', async t => {
+  const fixture = harness();
+  t.after(fixture.dispose);
+  await fixture.connection.refresh();
+  const tree = render(fixture.main.component(fixture.main.options.inject()));
+  const textarea = find(tree, element => element.type === 'textarea');
+  const sent = [];
+  fixture.connection.login = key => sent.push(key);
+  const paste = text => {
+    const event = { prevented: false, preventDefault() { this.prevented = true; }, currentTarget: { value: 'left over' }, clipboardData: { getData: () => text } };
+    textarea.props.onPaste(event);
+    return event;
+  };
+  const key = Buffer.from(JSON.stringify({ server: 'https://chat.example.test', code: 'connect-1' })).toString('base64url');
+  const whole = paste(`  ${key}\n`);
+  assert.deepEqual(sent, [key]);
+  assert.deepEqual([whole.prevented, whole.currentTarget.value], [true, ''], 'the key does not stay in the form');
+  for (const text of ['hello', key.slice(0, 20), Buffer.from('{"server":"x"}').toString('base64url')]) assert.equal(paste(text).prevented, false, text);
+  assert.deepEqual(sent, [key]);
+});
+
+test('creating a Bot with a chat server joins it and goes online in the same step', async t => {
+  const local = { id: 'local-shiyu', name: 'Shiyu', model: 'local/chat' };
+  const native = { ...loggedIn, bots: [], nativeMode: true, nativeBots: [] };
+  let attachFails = false;
+  const fixture = harness(payload => {
+    if (payload.action === 'create-native') return { ...native, nativeBots: [local] };
+    if (payload.action === 'attach') {
+      if (attachFails) return new Response(JSON.stringify({ ok: false, error: { message: '服务器暂时不可用' } }), { status: 200 });
+      return { ...native, nativeBots: [local], bots: [{ id: '@shiyu:chat.example.test', nativeBotId: local.id, status: 'online' }] };
+    }
+    return native;
+  });
+  t.after(fixture.dispose);
+  await fixture.connection.refresh();
+  const input = { name: 'Shiyu', role: '', model: 'local/chat', requestId: 'request-1' };
+  const online = await fixture.connection.createNative(input, 'https://chat.example.test');
+  assert.deepEqual(fixture.requests.slice(1).map(request => request.payload), [
+    { action: 'create-native', ...input }, { action: 'attach', nativeBotId: 'local-shiyu', serverUrl: 'https://chat.example.test' }]);
+  assert.equal(online.bots[0].status, 'online');
+  assert.equal(fixture.connection.getSnapshot().notice, 'botJoined');
+
+  // Without a server the Bot stays on the device; a failed join keeps the Bot and says why.
+  fixture.requests.length = 0;
+  await fixture.connection.refresh();
+  assert.ok(await fixture.connection.createNative(input));
+  assert.deepEqual(fixture.requests.map(request => request.payload.action), ['status', 'create-native']);
+  await fixture.connection.refresh();
+  attachFails = true;
+  const kept = await fixture.connection.createNative(input, 'https://chat.example.test');
+  assert.deepEqual(kept.nativeBots, [local]);
+  assert.equal(fixture.connection.getSnapshot().error, '服务器暂时不可用');
 });
 
 test('connection key errors from the plugin show in the host language', async t => {

@@ -6,7 +6,7 @@
 
 聊天服务器按 [Compose 指南](README.md)部署。`/healthz` 只检查 Core 进程，`/readyz` 还检查 Matrix 连通性；两者不证明 Bot 业务模型或工具任务成功。
 
-在 DSH 安装并启用同版本包，登录服务器后，在“此节点的 Bot”显式创建或选择 Bot，并加入服务器。[图形安装](npm.md#在-dsh-中连接)
+在 DSH 安装并启用同版本包，用连接密钥连上账号后，在“这台设备上的 Bot”里创建 Bot 并上线，或让已有 Bot 加入并上线。[图形安装](npm.md#在-dsh-中连接)
 
 每个实际 Bot home 只能有一个内核。已有 `ds-bot` 团队先停用旧插件，再重载 DSCord；冲突时返回 `DSCORD_KERNEL_CONFLICT`，不会退回旧内核继续处理。网页关闭或断开服务器只停止相应传输，DSH 停止则内核也停止。
 

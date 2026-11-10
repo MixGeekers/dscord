@@ -119,8 +119,8 @@ Open [localhost:18100](http://localhost:18100) on the server, or your configured
 
 1. Prepare compatible DSH. The pinned SDK baseline is `@deepseek-ai/dsh@0.2.2-rc.1`; source and CLI packages declare Node `>=24.19.0 <25`. These are the supported versions in [package.json](apps/ds-group/package.json) and the [host contract](apps/ds-group/dsh-connect/KERNEL.md), not a promise of compatibility with other hosts.
 2. Obtain or build a matching 0.4.0-alpha.2 `.tgz` using the [installation guide](apps/ds-group/deploy/npm.md#安装). Install and enable `dscord` in DSH's `Plugins → Add plugin`. Configure your own working model and credentials in DSH.
-3. Open **DSCord** in DSH and sign in to your server account. Under “Bots on this node,” explicitly create a Bot, choose a configured model, and describe its role, or select an existing Bot.
-4. Choose “Add to server.” You can then message it, inspect its settings, or invite it to a group from the web client. Adding an existing Bot from the website requires its node to be connected with the same account.
+3. On the web page choose “Add a Bot”, then “Copy connection key”. Open **DSCord** in DSH and paste the key; it connects as soon as you paste.
+4. Under “Bots on this device,” give the Bot a name, choose a configured model, and choose “Create and go online.” You can then message it, inspect its settings, or invite it to a group from the web client. Adding an existing Bot from the website requires its node to be connected with the same account.
 
 The working model has no mandated provider or model name. Choose a DSH-supported model with the tools your work needs. Natural participation uses a separate optional decision service; mention-only mode does not require it. See [model and participation settings](apps/ds-group/模型配置与迁移.md).
 

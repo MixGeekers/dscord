@@ -23,13 +23,20 @@ const html = `<!doctype html>
       import React from 'react';
       import { createRoot } from 'react-dom/client';
       import { CreateBotDialog } from '/src/components/CreateBotDialog.tsx';
+      import { setLocalePreference } from '/i18n.js';
 
-      const fixture = window.fixture = { closed: 0 };
+      const fixture = window.fixture = { closed: 0, codes: 0, locale: setLocalePreference };
+      // The signed-in account's central session, which makes the connection key the dialog hands over.
+      const session = { user_id: '@alice:home.test', access_token: 'synthetic-token', binding: { centralIssuer: 'https://central.test' }, central: { token: 'central-session' } };
+      window.fetch = async (url, init) => {
+        if (String(url) !== 'https://central.test/api/connect-codes' || init.headers.Authorization !== 'Bearer central-session') throw new Error('Unexpected fixture request ' + url);
+        return Response.json({ code: 'connect-' + ++fixture.codes, expiresIn: 600 });
+      };
       function Fixture() {
         const [open, setOpen] = React.useState(true);
         return React.createElement(React.Fragment, null,
           React.createElement('button', { id: 'open-create-bot', onClick: () => setOpen(true) }, 'Open'),
-          React.createElement(CreateBotDialog, { open, onClose: () => { fixture.closed++; setOpen(false); } }),
+          React.createElement(CreateBotDialog, { open, session, server: 'https://chat.test', onClose: () => { fixture.closed++; setOpen(false); } }),
         );
       }
       createRoot(document.getElementById('root')).render(React.createElement(Fixture));
@@ -64,7 +71,7 @@ let page;
 try {
   await server.listen();
   browser = await chromium.launch();
-  const context = await browser.newContext({ viewport: { width: 985, height: 822 }, locale: 'en-US' });
+  const context = await browser.newContext({ viewport: { width: 985, height: 822 }, locale: 'en-US', reducedMotion: 'reduce', permissions: ['clipboard-read', 'clipboard-write'] });
   context.setDefaultTimeout(10000);
   await context.addInitScript(() => {
     localStorage.setItem('ds-group.language', 'en');
@@ -77,6 +84,19 @@ try {
   assert.equal(await page.locator('#create-bot-title').textContent(), 'Add a Bot');
   assert.equal(await page.locator('#create-bot-dialog input, #create-bot-dialog select, #create-bot-dialog [role="radio"]').count(), 0);
   checks.push('addBotExplainsDshWithoutAWebCreationForm');
+  // One click makes the key and copies it; the dialog says where it goes next.
+  assert.equal(await page.locator('.bot-add-steps > li').count(), 3);
+  await page.getByRole('button', { name: 'Copy connection key', exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Copied. Paste it into the DSCord panel in DSH' }).waitFor();
+  const key = await page.locator('#bot-connection-key').inputValue();
+  assert.deepEqual(JSON.parse(Buffer.from(key, 'base64url').toString('utf8')), { server: 'https://chat.test', code: 'connect-1' });
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), key);
+  await page.screenshot({ path: path.join(packageRoot, '.local/react-bots-add-dark-en.png') });
+  await page.evaluate(() => { window.fixture.locale('zh-CN'); window.DSGroupTheme.setPreference('light'); });
+  await page.getByRole('status').filter({ hasText: '已复制。到 DSH 的 DSCord 面板里粘贴' }).waitFor();
+  await page.screenshot({ path: path.join(packageRoot, '.local/react-bots-add-light-zh.png') });
+  await page.evaluate(() => { window.fixture.locale('en'); window.DSGroupTheme.setPreference('dark'); });
+  checks.push('oneClickMakesTheConnectionKeyCopiesItAndSaysWhereToPasteIt');
   await page.keyboard.press('Escape');
   await page.locator('#create-bot-dialog').waitFor({ state: 'hidden' });
   await page.locator('#open-create-bot').click();
@@ -84,6 +104,7 @@ try {
   await page.locator('#create-bot-dialog').waitFor({ state: 'hidden' });
   assert.equal(await page.evaluate(() => window.fixture.closed), 2);
   await page.locator('#open-create-bot').click();
+  assert.equal(await page.locator('#bot-connection-key').count(), 0, 'a key made earlier is not shown again');
   checks.push('escapeAndCloseButtonBothDismiss');
   await page.setViewportSize({width:390,height:844});
   const bounds=await page.locator('#create-bot-dialog').evaluate(element=>({width:element.getBoundingClientRect().width,scroll:element.scrollWidth,client:element.clientWidth}));

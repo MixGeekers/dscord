@@ -4,6 +4,7 @@ import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'vite';
+import { panelTokens, tokenOutput } from './panel-tokens.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 export const clientSource = path.join(root, 'dsh-connect/client');
@@ -33,6 +34,8 @@ export async function bundleDshClient() {
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  const tokens = await panelTokens();
+  if (await readFile(tokenOutput, 'utf8').catch(() => '') !== tokens) await writeFile(tokenOutput, tokens);
   const text = await bundleDshClient();
   const previous = await readFile(clientOutput, 'utf8').catch(() => '');
   if (previous !== text) await writeFile(clientOutput, text);
