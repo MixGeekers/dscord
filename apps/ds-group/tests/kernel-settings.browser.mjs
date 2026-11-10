@@ -6,7 +6,7 @@ import { createServer } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { chromium } from 'playwright';
 import { packageRoot } from '../src/paths.mjs';
-import { ConnectController } from '../dsh-connect/controller.mjs';
+import { CHAT, connectFixture } from './fixtures/connect.mjs';
 import { DecisionSettings } from '../dsh-connect/decision-settings.mjs';
 import { KernelUpdates } from '../dsh-connect/kernel-updates.mjs';
 
@@ -15,7 +15,7 @@ const output = path.join(packageRoot, '.local/kernel-settings-browser');
 await mkdir(output, { recursive: true });
 const checks = [];
 const errors = [];
-const report = { status: 'failed', level: 'real-chromium-web-fixture-and-actual-dsh-controller-with-synthetic-native-runtime', modelCalls: 0, checks, errors, screenshots: [] };
+const report = { status: 'failed', level: 'real-chromium-web-fixture-and-actual-dsh-controller-with-real-central-and-synthetic-kernel', modelCalls: 0, checks, errors, screenshots: [] };
 const style = `<meta name="viewport" content="width=device-width, initial-scale=1"><script src="/theme.js"></script><link rel="stylesheet" href="/tokens.css"><link rel="stylesheet" href="/@fs/${packageRoot}/ui/tailwind.css"><link rel="stylesheet" href="/styles.css"><link rel="stylesheet" href="/@fs/${packageRoot}/ui/styles.css">`;
 const webHtml = `<!doctype html><html><head>${style}</head><body><div id="root"></div><script type="module">
   import React from 'react'; import { createRoot } from 'react-dom/client';
@@ -71,7 +71,7 @@ const webHtml = `<!doctype html><html><head>${style}</head><body><div id="root">
     return React.createElement(React.Fragment,null,
       React.createElement('button',{id:'open-profile',onClick:()=>setMember(bot)},'Profile'),
       React.createElement('button',{id:'open-bots',onClick:()=>setOpen(true)},'Bots'),
-      React.createElement(MyBotsDialog,{open,bots:[bot],status,session,onClose:()=>setOpen(false),onCreate:()=>{},onHome:id=>{setOpen(false);setHome(id);},onDirect:id=>fixture.direct.push(id)}),
+      React.createElement(MyBotsDialog,{open,bots:[bot],status,session,server:'https://home.test',onClose:()=>setOpen(false),onCreate:()=>{},onHome:id=>{setOpen(false);setHome(id);},onDirect:id=>fixture.direct.push(id)}),
       home && React.createElement('section',{id:'bots-panel',className:'home-panel bots-panel'},React.createElement(BotHome,{key:home,bot,session,api,status,rooms:[room],participants:[owner,person,bot,planner],opening:false,onDirect:id=>fixture.direct.push(id)})),
       React.createElement(MemberDialog,{member,session,room,roles:[],botStatus:'waiting',owner,onClose:()=>setMember(null),onDirect:()=>{},onMention:()=>{},onManageBot:id=>{setMember(null);setHome(id);}}));
   }createRoot(document.getElementById('root')).render(React.createElement(Fixture));
@@ -106,7 +106,8 @@ const server = await createServer({
 });
 let browser;
 let page;
-let controller;
+let f;
+let reporting;
 let updates;
 async function screenshot(name) { const filename = path.join(output, name); await page.screenshot({ path: filename }); report.screenshots.push(filename); }
 try {
@@ -218,30 +219,11 @@ try {
   assert.equal(await page.locator('[data-memory-record]').count(), 0);
   checks.push('lateMemoryReadCannotPublishIntoAnotherOwnersAccount');
 
-  const nativeState = { serverUrl: 'https://chat.example.test', user: { id: '@alice:home.test', name: 'Alice' }, bots: [], nativeBots: [], nativeMode: true, hostId: 'node-a', runtime: { available: true }, models: { available: true, defaultSelection: { model: 'local/chat' }, providers: [{ id: 'local', name: 'Local', models: [{ model: 'local/chat', name: 'Local chat', needsKey: false }] }] } };
+  // The DSH panel links this DSH and shows what it runs. The Bots are set up on the web page, at the central
+  // server; here the real controller follows a real central server, with a synthetic kernel underneath.
   const nativeRequests = [];
-  let creationReceiptLost = false;
-  const creations = new Map();
   await mkdir(path.join(temporary, 'decision'), { recursive: true });
   const decisionSettings = await new DecisionSettings({ directory: path.join(temporary, 'decision'), environment: {}, providerFactory: () => ({ model: 'participation-model', health: () => ({ health: 'ok' }) }) }).initialize();
-  const native = {
-    list: async () => nativeState.nativeBots,
-    bot: async id => { const bot = nativeState.nativeBots.find(bot => bot.id === id); if (!bot) throw new Error('Unknown local Bot'); return bot; },
-    models: async () => nativeState.models,
-    async call(endpoint, body) {
-      if (endpoint === 'create-bot') {
-        if (!creations.has(body.requestId)) {
-          const created = { id: 'local-shiyu', name: body.name, role: body.role, model: body.model, owner: body.owner };
-          nativeState.nativeBots.push(created); creations.set(body.requestId, created);
-        }
-        if (!creationReceiptLost) { creationReceiptLost = true; throw new Error('Synthetic creation receipt lost'); }
-        return creations.get(body.requestId);
-      }
-      if (endpoint === 'memory-profile') return { kind: body.kind, id: body.id, identity: { id: body.id, name: 'Bob' }, view: { currentClaims: [{ id: 'native-claim', text: 'Bob prefers herbs.', claimState: 'statement', kind: 'stated', sources: [{ id: 's', authorId: '@bob:home.test', roomId: '!project:home.test', eventId: '$source' }] }] } };
-      if (endpoint === 'memory-profiles') return { kind: body.kind, items: [{ id: '@bob:home.test', name: 'Bob' }], more: false };
-      throw new Error('Unexpected native fixture endpoint ' + endpoint);
-    },
-  };
   // A synthetic registry: the plugin runs 0.4.0 and a newer release speaks the same protocol.
   const pluginManager = { listBundles: () => [{ name: 'dscord', source: '^0.4.0' }], registries: () => ({ registry: 'https://registry.test/' }),
     installBundle: async () => ({ application: 'restart-required' }) };
@@ -250,60 +232,58 @@ try {
     currentRange: { min: '1.0', max: '1.0' }, startTimers: false, fetchImpl: async () => new Response(JSON.stringify(releases)) }).initialize();
   updates.observeProtocol('1.0');
   await updates.check({ fresh: true });
-  controller = await new ConnectController({ directory: path.join(temporary, 'controller'), native, models: {}, updates, processes: {
-    available: async () => nativeState.runtime,
-    async kernelState(nativeBotId) { return { runtime: { id: 'dscord-kernel', available: true }, decisionProvider: decisionSettings.publicStatus(), ...(nativeBotId ? { attention: { mode: 'mention', activity: 'unknown', online: false, provider: decisionSettings.publicStatus() }, work: { activeTasks: 0, waiting: 0 } } : {}) }; },
+  f = await connectFixture({ updates, processes: {
+    kernelState: async () => ({ runtime: { id: 'dscord-kernel', available: true }, decisionProvider: decisionSettings.publicStatus() }),
     saveDecisionProvider: settings => decisionSettings.save(settings),
-    stop: async () => {},
-  } }).initialize();
-  await controller.restoring;
-  controller.state.user = nativeState.user;
-  controller.state.servers = { [nativeState.serverUrl]: { url: nativeState.serverUrl, serverName: 'chat.example.test' } };
+  } });
   await page.route('**/api/dscord', async route => {
     const body = route.request().postDataJSON(); nativeRequests.push({ ...body, ...(body.apiKey ? { apiKey: '[redacted synthetic test key]' } : {}) });
     try {
-      const value = await controller.handle(body);
+      const value = await f.controller.handle(body);
       await route.fulfill({ json: { ok: true, value } });
     } catch (error) {
       await route.fulfill({ json: { ok: false, error: { code: error.code, message: error.message } } });
     }
   });
+  // DSH reports every few seconds; the test does not wait that long.
+  reporting = setInterval(() => void f.controller.synchronize().catch(() => {}), 300);
+  const step = () => page.locator('.dc-step[aria-current="step"]').innerText().then(text => text.split('\n')[1]);
   await page.setViewportSize({ width: 1000, height: 900 });
   await page.goto(`${origin}/__native`);
   await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
-  // A signed-in owner with no Bots lands on the open creation form, the second of the three setup steps.
-  await page.getByText('There are no Bots on this device yet.', { exact: true }).waitFor();
-  assert.equal(await page.locator('.dc-step[aria-current="step"]').innerText().then(text => text.split('\n')[1]), 'Create a Bot');
-  await page.getByLabel('Name', { exact: true }).fill('Shiyu');
-  await page.getByLabel('Role or introduction').fill('A friend and project partner');
-  await page.getByRole('button', { name: 'Create and go online' }).click();
-  await page.getByRole('alert').filter({ hasText: 'Synthetic creation receipt lost' }).waitFor();
-  await page.getByRole('button', { name: 'Confirm same creation' }).click();
-  // Creation goes straight on to joining the chat server. This fixture has no central session, so the join
-  // fails: the Bot stays on the device, the page says why, and its row offers to join again.
-  await page.getByRole('alert').filter({ hasText: '请先登录并启用原生 DS-Bot' }).waitFor();
-  await page.getByRole('button', { name: 'Add Shiyu and go online', exact: true }).waitFor();
-  assert.deepEqual(nativeRequests.filter(item => item.action === 'attach'), [{ action: 'attach', nativeBotId: 'local-shiyu', serverUrl: nativeState.serverUrl }]);
-  assert.equal(await page.locator('.dc-step[aria-current="step"]').innerText().then(text => text.split('\n')[1]), 'Go online');
-  const creationRequests = nativeRequests.filter(item => item.action === 'create-native');
-  assert.equal(creationRequests.length, 2); assert.deepEqual(creationRequests[0], creationRequests[1]);
-  assert.ok(typeof creationRequests[0].requestId === 'string' && creationRequests[0].requestId.length > 10);
-  assert.deepEqual({ ...creationRequests[0], requestId: '[stable request]' }, { action: 'create-native', name: 'Shiyu', role: 'A friend and project partner', model: 'local/chat', requestId: '[stable request]' });
-  assert.equal(nativeState.nativeBots.length, 1);
-  checks.push('dshCreatesLocalBotWithChosenModelAndConfirmsSameRequestAfterLostReceipt');
-  checks.push('creatingABotGoesOnToJoinTheServerAndAFailedJoinKeepsTheBotWithARetry');
-  await page.getByRole('button', { name: 'Settings for Shiyu', exact: true }).click();
-  await page.getByRole('radio', { name: /Join naturally/ }).check();
-  await page.getByRole('button', { name: 'Save participation', exact: true }).click();
-  await page.getByRole('status').filter({ hasText: 'The Bot applies this' }).first().waitFor();
-  await page.getByRole('button', { name: 'Save participation', exact: true }).waitFor({ state: 'visible' });
-  await page.waitForFunction(() => !document.querySelector('.dc-options').disabled);
-  assert.equal(await page.getByRole('radio', { name: /Join naturally/ }).isChecked(), true);
-  assert.equal(await page.getByRole('button', { name: 'Save participation', exact: true }).isDisabled(), true);
-  assert.equal(nativeRequests.find(item => item.action === 'attention-update').nativeBotId, 'local-shiyu');
-  await page.getByRole('button', { name: 'Bob', exact: true }).click();
-  await page.getByText('Bob prefers herbs.', { exact: true }).waitFor();
-  checks.push('actualDshControllerKeepsDesiredModePendingWithoutRevertingAndReadsMemoryForExactBot');
+  await page.getByLabel('Connection key', { exact: true }).waitFor();
+  assert.equal(await step(), 'Connect your account');
+  await screenshot('panel-link-dark-en.png');
+  // Pasting the key copied from the web page links at once.
+  const key = await f.key();
+  await page.getByLabel('Connection key', { exact: true }).evaluate((element, text) => {
+    const data = new DataTransfer(); data.setData('text', text);
+    element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
+  }, key);
+  await page.getByText('No Bots yet. Choose “Add a Bot” on the DSCord web page', { exact: false }).waitFor();
+  assert.equal(await step(), 'Add a Bot');
+  assert.deepEqual(nativeRequests.filter(item => item.action === 'login').map(item => Object.keys(item)), [['action', 'key']]);
+  assert.equal(await page.getByRole('link', { name: 'Open DSCord on the web' }).first().getAttribute('href'), `${CHAT}/`);
+  assert.equal(await page.getByRole('region', { name: 'Bots this device runs' }).locator('input, select, textarea, button').count(), 0, 'nothing about a Bot is set here');
+  checks.push('pastingTheConnectionKeyLinksDshAndThePanelPointsToTheWebPageForBots');
+  await screenshot('panel-linked-dark-en.png');
+  // A Bot the owner adds on the web page appears and goes online with no step here.
+  const bot = await f.createBot({ displayName: 'Shiyu', role: 'A friend and project partner', model: 'fixture/large', servers: [CHAT] });
+  const card = page.getByRole('listitem', { name: 'Shiyu', exact: true });
+  await card.locator('[data-status="online"]').waitFor();
+  assert.match(await card.innerText(), new RegExp(`${bot.globalId}[\\s\\S]*fixture/large[\\s\\S]*chat\\.example[\\s\\S]*Online`));
+  assert.equal(await page.locator('.dc-step[aria-current="step"]').count(), 0, 'the guide is done once a Bot is online');
+  assert.deepEqual(f.locals.map(local => [local.name, local.role, local.model]), [['Shiyu', 'A friend and project partner', 'fixture/large']]);
+  assert.deepEqual(nativeRequests.map(item => item.action).filter(action => !['status', 'kernel-state', 'kernel-update-status', 'sync', 'login'].includes(action)), []);
+  checks.push('aBotAddedOnTheWebPageAppearsOnTheDeviceAndGoesOnlineWithoutAnyPanelStep');
+  await screenshot('panel-bot-online-dark-en.png');
+  // Taken off the server on the web page, the card says where to put it back.
+  await f.api('PATCH', `/api/bots/${bot.id}`, { token: f.alice, body: { servers: [] } });
+  await card.getByText('Not on any chat server yet.', { exact: false }).waitFor();
+  await f.api('PATCH', `/api/bots/${bot.id}`, { token: f.alice, body: { servers: [CHAT], displayName: '诗雨' } });
+  const renamed = page.getByRole('listitem', { name: '诗雨', exact: true });
+  await renamed.locator('[data-status="online"]').waitFor();
+  checks.push('thePanelFollowsChangesMadeOnTheWebPage');
   await page.getByText('Participation service', { exact: true }).click();
   await page.getByLabel('Decision service API key', { exact: true }).fill('synthetic-decision-key');
   await page.getByRole('button', { name: 'Save participation service', exact: true }).click();
@@ -313,8 +293,6 @@ try {
   assert.equal((await page.locator('body').innerText()).includes('synthetic-decision-key'), false);
   checks.push('decisionCredentialIsSubmitOnlyAndNeverReadBackOrStoredInConnectionSnapshot');
   await screenshot('local-decision-private-dark-en.png');
-  await page.locator('.dscord-connect').evaluate(element => { element.scrollTop = 0; });
-  await screenshot('local-kernel-dark-en.png');
   const upgrades = page.getByRole('region', { name: 'Plugin version' });
   await upgrades.getByText('0.5.0 is available', { exact: true }).waitFor();
   await upgrades.locator('summary').click();
@@ -326,52 +304,22 @@ try {
   checks.push('ownerSeesCompatiblePluginReleaseSetsUpgradePolicyAndInstallsThroughDshPluginManager');
   await upgrades.scrollIntoViewIfNeeded();
   await screenshot('plugin-version-dark-en.png');
-  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator('.dscord-connect').evaluate(element => { element.scrollTop = 0; });
   await page.evaluate(() => { window.fixture.locale('zh'); document.body.removeAttribute('data-ds-dark-theme'); });
+  await page.getByRole('region', { name: '这台设备运行的 Bot' }).waitFor();
+  await screenshot('panel-bot-online-light-zh.png');
+  await page.setViewportSize({ width: 390, height: 844 });
   const nativeBounds = await page.locator('.dscord-connect').evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth }));
   assert.ok(nativeBounds.scroll <= nativeBounds.client + 1);
-  await screenshot('local-kernel-light-zh-mobile.png');
-  // Adding a chat server: search the central index by keyword or server number; invite-only servers take a code.
-  controller.state.centralUrl = 'https://central.test';
-  const fetchCentral = controller.request;
-  controller.request = async (url, init) => {
-    if (!String(url).startsWith('https://central.test/api/servers')) return fetchCentral(url, init);
-    return Response.json({ servers: [
-      { origin: 'https://robots.example.test', number: 48213907, join: 'open', name: '机器人社', description: '机械臂、小车，每周四晚上一起做', tags: ['robots', 'hardware'],
-        members: { people: 12, bots: 3 } },
-      { origin: 'https://lab.example.test', number: 61530284, join: 'invite', name: '机器人实验室', description: '只接受邀请', tags: ['robots'],
-        members: { people: 5, bots: 1 } }] });
-  };
+  await screenshot('panel-bot-online-light-zh-mobile.png');
   await page.setViewportSize({ width: 1000, height: 900 });
-  await page.locator('summary', { hasText: '添加服务器' }).click();
-  const serverSearch = page.getByRole('search', { name: '搜索服务器' });
-  await serverSearch.locator('input[name="query"]').fill('机器人');
-  await serverSearch.getByRole('button', { name: '搜索', exact: true }).click();
-  await page.getByText('号码 48213907 · https://robots.example.test', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: '添加 机器人实验室', exact: true }).isDisabled(), true);
-  assert.equal(await page.getByRole('button', { name: '添加 机器人社', exact: true }).isDisabled(), false);
-  assert.equal(nativeRequests.filter(item => item.action === 'search-servers').at(-1).query, '机器人');
-  await page.getByRole('region', { name: '聊天服务器' }).scrollIntoViewIfNeeded();
-  await screenshot('servers-search-light-zh.png');
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByRole('region', { name: '聊天服务器' }).scrollIntoViewIfNeeded();
-  const searchBounds = await page.locator('.dscord-connect').evaluate(element => ({ scroll: element.scrollWidth, client: element.clientWidth }));
-  assert.ok(searchBounds.scroll <= searchBounds.client + 1);
-  await screenshot('servers-search-light-zh-mobile.png');
-  controller.request = fetchCentral;
-  checks.push('dshAddServerSearchesCentralIndexShowsNumbersAndKeepsInviteOnlyServersForTheCodeForm');
-  await page.evaluate(() => {
-    const value = window.fixture.connection.getSnapshot().value;
-    sessionStorage.setItem(`dscord.pending-native.${value.hostId}.${value.user.id}`, JSON.stringify({
-      requestId: 'alice-pending-request', fingerprint: 'alice-only', input: { name: 'Alice private draft', role: 'Alice draft role', model: 'local/chat' },
-    }));
-  });
-  controller.state.user = { id: '@bob:home.test', name: 'Bob' };
-  await page.evaluate(() => window.fixture.connection.refresh());
-  await page.getByText('这台设备上还没有 Bot。', { exact: true }).waitFor();
-  assert.equal(await page.getByLabel('名称', { exact: true }).inputValue(), '');
-  assert.doesNotMatch(await page.locator('.dc-content').innerText(), /Alice private draft|Alice draft role|local-shiyu/);
-  checks.push('changingLocalAccountClearsSelectedBotAndKeepsOtherOwnersCreationDraftPrivate');
+  // Signing out stops the Bots here and takes this DSH off the owner's device list.
+  await page.getByRole('button', { name: '退出登录', exact: true }).click();
+  await page.getByLabel('连接密钥', { exact: true }).waitFor();
+  assert.equal(f.live.size, 0);
+  assert.deepEqual((await f.api('GET', '/api/devices', { token: f.alice })).devices, []);
+  await screenshot('panel-link-light-zh.png');
+  checks.push('signingOutStopsTheBotsAndRemovesTheDevice');
   assert.deepEqual(errors, []);
   checks.push('dshNativeSettingsRenderInChineseOnMobileWithoutOverflowOrBrowserErrors');
   report.status = 'passed';
@@ -381,7 +329,8 @@ try {
   throw error;
 } finally {
   await writeFile(path.join(output, 'report.json'), JSON.stringify(report, null, 2) + '\n');
-  await controller?.dispose(); updates?.dispose();
+  clearInterval(reporting);
+  await f?.close(); updates?.dispose();
   await browser?.close(); await server.close(); await rm(temporary, { recursive: true, force: true });
   console.log(JSON.stringify(report));
 }

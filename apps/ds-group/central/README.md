@@ -1,6 +1,6 @@
 # DSCord Central（中央服务器）
 
-中央服务器只管三件事：账号、签发身份、服务器索引。它不存消息和文件，不转发聊天，也不持有任何 Matrix token。聊天服务器（Core + Synapse）接入一台中央，人和 Bot 都用中央账号登录聊天服务器。整体方案见项目文档《DSCord 中央身份与聊天服务器方案》。
+中央服务器管四件事：账号、签发身份、服务器索引，以及每个人名下 Bot 的设置和运行它们的设备。它不存消息和文件，不转发聊天，也不持有任何 Matrix token。聊天服务器（Core + Synapse）接入一台中央，人和 Bot 都用中央账号登录聊天服务器。整体方案见项目文档《DSCord 中央身份与聊天服务器方案》。
 
 已经完成：账号、账号规则、身份令牌、Bot 节点授权（第一期），聊天服务器只认中央账号（第二期，见下文“聊天服务器怎样接入”），服务器索引和中央管理面板（第四期，见下文“服务器索引”和“管理面板”）。
 
@@ -62,7 +62,11 @@ npm run central
 | `GET /api/grants` / `DELETE /api/grants/:audience` | 人、Bot 节点 | 查看 / 撤销自己授权过的聊天服务器 |
 | `POST /api/connect-codes` | 人 | 生成 DSH 连接用的一次性代码（10 分钟有效）。聊天服务器网页把它和服务器地址一起编码成连接密钥 |
 | `POST /api/connect-codes/redeem` | DSH 插件（不用令牌） | `{code, label?}` 用代码换取这个人的中央会话；只能换一次，过期返回 `CONNECT_CODE_EXPIRED`，未知或已用返回 `CONNECT_CODE_UNKNOWN` |
-| `POST /api/bots` / `GET /api/bots` / `DELETE /api/bots/:id` | 人 | 创建 / 列出 / 注销自己名下的 Bot |
+| `POST /api/bots` / `GET /api/bots` / `DELETE /api/bots/:id` | 人 | 创建 / 列出 / 注销自己名下的 Bot。创建时给 `{displayName, username?, role?, model?, effort?, deviceId?, servers?}`，不给 `username` 时由名字生成；返回的每个 Bot 带 `settings`（`role`、`model`、`effort`、`deviceId`、`servers`、`revision`）和 `runtime`（运行它的设备是否在线，以及设备最近报告的 `revision`、`model`、`error`、各服务器的连接状态；还没有设备时是 `null`） |
+| `PATCH /api/bots/:id` | 人 | 修改名字和上面的设置，只改给出的字段，`revision` 加一。`model` 为空表示跟随设备默认，`servers` 是 Bot 要加入的聊天服务器（HTTPS origin，最多 32 个），`deviceId` 必须是自己的设备 |
+| `GET /api/devices` | 人 | 自己连接过的 DSH：`id`、`label`、是否在线（30 秒内报告过）、它能用的模型目录和插件版本 |
+| `POST /api/devices/:id/sync` | DSH 插件（用连接密钥换来的会话） | `{label, report}` 报告这台设备的模型目录、插件版本和各 Bot 的状态，返回分给它的 Bot 和设置。还没有设备的 Bot 归第一台报告的设备；同一台 DSH 换了人登录时，前一个人的 Bot 回到等待 |
+| `DELETE /api/devices/:id` | 人、DSH 插件 | 移除设备：它名下的 Bot 等下一台设备接手，设备报告用的会话同时结束 |
 | `GET /api/bots/:id/grants`、`DELETE /api/bots/:id/grants/:audience` | Bot 的所属人 | 查看 / 撤销 Bot 的服务器授权 |
 | `GET /api/bots/:id/nodes`、`DELETE /api/bots/:id/nodes/:nodeId` | Bot 的所属人 | 查看 / 撤销 Bot 的节点 |
 | `POST /api/device` | Bot 节点 | `{label?}` 开始设备码授权，返回 `deviceCode`、`userCode`（10 分钟有效） |

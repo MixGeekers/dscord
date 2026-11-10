@@ -1289,7 +1289,13 @@ export default function App({
         open={createBotOpen}
         session={session}
         server={config.homeCoreUrl}
+        ownedBots={ownedBots}
         onClose={() => setCreateBotOpen(false)}
+        onArrived={refresh}
+        onDirect={(id) => {
+          setCreateBotOpen(false);
+          void openDirect(id);
+        }}
       />
       <RoomDialog
         mode={roomDialog}
@@ -1388,6 +1394,7 @@ export default function App({
         bots={ownedBots}
         status={status}
         session={session}
+        server={config.homeCoreUrl}
         onHome={(id) => {
           setBotsOpen(false);
           openBotHome(id);

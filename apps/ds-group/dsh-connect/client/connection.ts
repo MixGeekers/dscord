@@ -1,9 +1,9 @@
 import type { MessageKey, Translate } from "./locale";
-import type { ConnectionState, ListedServer, ModelChoice } from "./types";
+import type { ConnectionState } from "./types";
 
 export interface Snapshot {
   value: ConnectionState | null;
-  busy: { action: string; botId?: string } | null;
+  busy: { action: string } | null;
   error: string | null;
   errorTranslation: {
     key: MessageKey;
@@ -18,23 +18,10 @@ type ClientError = Error & {
   httpStatus?: number;
 };
 
-const SHORT_ACTIONS = ["status", "login", "kernel-state", "memory-profile"];
-/** What the page says after an action that changes more than the row it was started from. */
-const NOTICES: Record<string, MessageKey> = {
-  "save-model": "savedModel",
-  "create-native": "localCreated",
-  attach: "botJoined",
-};
+const SHORT_ACTIONS = ["status", "login", "kernel-state"];
+/** What the page says after an action whose result is not otherwise in view. */
+const NOTICES: Record<string, MessageKey> = { login: "linked" };
 const ERROR_KEYS: Record<string, MessageKey> = {
-  MODEL_POLICY_DENIED: "serverPolicyDenied",
-  MODEL_OUTPUT_LIMIT: "serverOutputLimit",
-  MISSING_CREDENTIAL: "missingCredential",
-  INVALID_REASONING_EFFORT: "invalidEffort",
-  INVALID_OUTPUT_LIMIT: "invalidOutput",
-  INVALID_MODEL: "modelUnavailable",
-  MODEL_UNAVAILABLE: "modelUnavailable",
-  MODEL_PROVIDER_UNAVAILABLE: "modelUnavailable",
-  MODEL_PROFILE_INVALID: "providerInvalid",
   DSCORD_KERNEL_CONFLICT: "kernelConflict",
   CONNECT_KEY_INVALID: "connectKeyInvalid",
   CONNECT_CODE_UNKNOWN: "connectKeyUnknown",
@@ -192,16 +179,12 @@ export function createConnectionModel(t: Translate) {
     actionController = controller;
     errorSource = null;
     publish({
-      busy: { action, botId: payload.botId as string | undefined },
+      busy: { action },
       notice: null,
       error: null,
       errorTranslation: null,
     });
     try {
-      if (action === "reconnect") {
-        publish({ value: await request("disconnect", payload, controller) });
-        action = "connect";
-      }
       const value = await request(action, payload, controller);
       publish({
         value,
@@ -241,53 +224,19 @@ export function createConnectionModel(t: Translate) {
     };
   }
 
-  const invite = (inviteCode: string) => (inviteCode ? { inviteCode } : {});
   return {
     getSnapshot: () => snapshot,
     subscribe,
     refresh,
     login: (key: string) => mutate("login", { key }),
-    addServer: (serverUrl: string, inviteCode = "") =>
-      mutate("add-server", { serverUrl, ...invite(inviteCode) }),
-    searchServers: (query: string) =>
-      request<{ servers: ListedServer[] }>(
-        "search-servers",
-        { query },
-        new AbortController(),
-        false,
-      ),
-    removeServer: (serverUrl: string) => mutate("remove-server", { serverUrl }),
     logout: () => mutate("logout"),
-    saveModel: (botId: string, selection: ModelChoice) =>
-      mutate("save-model", { botId, selection }),
-    /** Creates a Bot on this device; given a chat server, also adds the new Bot to it and brings it online. */
-    createNative: async (
-      payload: Record<string, unknown>,
-      serverUrl?: string,
-    ) => {
-      const known = new Set(snapshot.value?.nativeBots?.map((bot) => bot.id));
-      const created = await mutate("create-native", payload);
-      const bot = created?.nativeBots?.find((item) => !known.has(item.id));
-      if (!bot || !serverUrl) return created;
-      // A Bot that could not join stays on the device, where its own row offers to join again.
-      return (
-        (await mutate("attach", { nativeBotId: bot.id, serverUrl })) || created
-      );
-    },
+    /** Report to the central server now, instead of waiting for the next round. */
+    sync: () => mutate("sync"),
     kernel: <T>(
       action: string,
       payload: Record<string, unknown> = {},
       controller = new AbortController(),
     ) => request<T>(action, payload, controller, false),
-    attach: (nativeBotId: string, botId?: string, serverUrl?: string) =>
-      mutate("attach", {
-        nativeBotId,
-        ...(botId ? { botId } : {}),
-        ...(serverUrl ? { serverUrl } : {}),
-      }),
-    connect: (botId: string) => mutate("connect", { botId }),
-    disconnect: (botId: string) => mutate("disconnect", { botId }),
-    reconnect: (botId: string) => mutate("reconnect", { botId }),
     dispose() {
       disposed = true;
       revision += 1;

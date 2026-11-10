@@ -4,13 +4,12 @@ import { readFile } from 'node:fs/promises';
 import vm from 'node:vm';
 
 const source = await readFile(new URL('../dsh-connect/client.js', import.meta.url), 'utf8');
-const loggedOut = {
-  servers: [], user: null, bots: [], runtime: { available: true, message: null },
-};
+const loggedOut = { user: null, bots: [], runtime: { available: true, message: null } };
 const loggedIn = {
-  servers: [{ url: 'https://chat.example.test', serverName: 'chat.example.test' }], user: { id: 'alice@id.test', name: 'Alice', globalId: 'alice@id.test' },
-  bots: [{ id: '@finance:chat.example.test', name: '财务', localpart: 'finance', serverUrl: 'https://chat.example.test', serverName: 'chat.example.test', status: 'offline', lastError: null }],
-  runtime: { available: true, message: null }, dataDirectory: '/synthetic/profile/dscord',
+  user: { id: 'alice@id.test', name: 'Alice', globalId: 'alice@id.test' }, label: 'DSH laptop', webUrl: 'https://chat.example.test',
+  bots: [{ id: 'central-bot-1', name: '财务', username: 'finance', globalId: 'finance@id.test', model: 'deepseek/v4',
+    servers: [{ url: 'https://chat.example.test', serverName: 'chat.example.test', status: 'offline' }] }],
+  runtime: { available: true, message: null }, lastError: null, dataDirectory: '/synthetic/profile/dscord',
 };
 
 function harness(oracle = () => loggedOut, language = 'zh') {
@@ -149,23 +148,46 @@ test('the DSH locale namespace covers both languages and switches page labels wi
   assert.equal(fixture.requests.length, 1);
 });
 
-test('Bot actions, status and account controls follow the host locale', async t => {
-  const fixture = harness(() => ({ ...loggedIn, bots: [{ ...loggedIn.bots[0], name: 'Finance', status: 'online' }] }), 'en');
+test('the linked page shows the account, this device and the Bots it runs, in the host language, with nothing to edit', async t => {
+  const online = { ...loggedIn, bots: [{ ...loggedIn.bots[0], name: 'Finance', servers: [{ ...loggedIn.bots[0].servers[0], status: 'online' }] }] };
+  const fixture = harness(() => online, 'en');
   t.after(fixture.dispose);
   await fixture.connection.refresh();
   for (const [language, labels] of [
-    ['en', { bots: 'My Bots', status: 'Online', disconnect: 'Disconnect Finance', reconnect: 'Reconnect Finance', logout: 'Sign out', web: 'Open website' }],
-    ['zh', { bots: '我的 Bot', status: '已上线', disconnect: '断开 Finance', reconnect: '重新连接 Finance', logout: '退出登录', web: '打开网页' }],
+    ['en', { bots: 'Bots this device runs', status: 'Online', logout: 'Sign out', web: 'Open DSCord on the web', chat: 'Open chat', model: 'Model · deepseek/v4' }],
+    ['zh', { bots: '这台设备运行的 Bot', status: '已上线', logout: '退出登录', web: '打开 DSCord 网页', chat: '去聊天', model: '模型 · deepseek/v4' }],
   ]) {
     fixture.locale.setLocale(language);
     const tree = render(fixture.main.component(fixture.main.options.inject()));
-    assert.ok(find(tree, element => element.props['aria-label'] === labels.bots));
-    assert.ok(find(tree, element => element.props['data-status'] === 'online' && element.children.includes(labels.status)));
-    assert.ok(find(tree, element => element.props['aria-label'] === labels.disconnect));
-    assert.ok(find(tree, element => element.props['aria-label'] === labels.reconnect));
+    const panel = find(tree, element => element.props['aria-label'] === labels.bots);
+    assert.ok(find(panel, element => element.props['data-status'] === 'online' && element.children.includes(labels.status)));
+    assert.ok(find(panel, element => element.type === 'a' && element.props.href === 'https://chat.example.test/' && element.children.includes(labels.web)));
+    assert.ok(find(panel, element => element.type === 'a' && element.children.includes(labels.chat)));
+    assert.ok(find(panel, element => element.children.includes(labels.model)));
+    assert.equal(find(panel, element => ['button', 'input', 'select', 'textarea', 'form'].includes(element.type)), undefined, 'Bots are set up on the web');
     assert.ok(find(tree, element => element.type === 'button' && element.children.includes(labels.logout)));
-    assert.ok(find(tree, element => element.type === 'a' && element.children.includes(labels.web)));
+    assert.ok(find(tree, element => element.children.includes('alice@id.test · DSH laptop')));
+    assert.equal(find(tree, element => element.type === 'ol'), undefined, 'the guide leaves once a Bot is online');
   }
+});
+
+test('the guide names the next step: link, add a Bot on the web, then the Bot goes online', async t => {
+  let value = loggedOut;
+  const fixture = harness(() => value);
+  t.after(fixture.dispose);
+  const current = async () => {
+    await fixture.connection.refresh();
+    const tree = render(fixture.main.component(fixture.main.options.inject()));
+    const step = find(tree, element => element.props['aria-current'] === 'step');
+    return [find(step, element => element.type === 'strong').children[0], find(step, element => element.type === 'small').children[0]];
+  };
+  assert.deepEqual(await current(), ['连接账号', '粘贴网页上复制的连接密钥']);
+  value = { ...loggedIn, bots: [] };
+  assert.deepEqual(await current(), ['添加 Bot', '在 DSCord 网页点「添加 Bot」']);
+  const tree = render(fixture.main.component(fixture.main.options.inject()));
+  assert.ok(find(tree, element => element.children.includes('还没有 Bot。在 DSCord 网页点「添加 Bot」，它会自动出现在这里并上线。')));
+  value = loggedIn;
+  assert.deepEqual(await current(), ['上线', 'Bot 自动上线，去聊天里 @ 它']);
 });
 
 test('a displayed client error changes language with DSH without repeating the failed request', async t => {
@@ -202,23 +224,24 @@ test('only the first status read retries a not-yet-registered route, with three 
   assert.match(unavailable.connection.getSnapshot().error, /HTTP 404/);
 });
 
-test('client sends explicit authenticated actions and reconnects in order', async t => {
+test('the page has three actions of its own: link, report now, unlink', async t => {
   const fixture = harness(payload => payload.action === 'logout' ? loggedOut : loggedIn);
   t.after(fixture.dispose);
   await fixture.connection.login('synthetic-connection-key');
   assert.equal(fixture.requests[0].url, 'api/dscord');
   assert.equal(fixture.requests[0].credentials, 'same-origin');
-  assert.deepEqual(fixture.requests[0].payload, {
-    action: 'login', key: 'synthetic-connection-key',
-  });
+  assert.deepEqual(fixture.requests[0].payload, { action: 'login', key: 'synthetic-connection-key' });
   assert.equal(JSON.stringify(fixture.connection.getSnapshot()).includes('synthetic-connection-key'), false);
-  await fixture.connection.connect('finance');
-  await fixture.connection.disconnect('finance');
-  await fixture.connection.reconnect('finance');
+  assert.equal(fixture.connection.getSnapshot().notice, 'linked');
+  // Refresh on a linked page asks the device to report to the central server at once.
+  const tree = render(fixture.main.component(fixture.main.options.inject()));
+  find(tree, element => element.type === 'button' && element.children.includes('刷新')).props.onClick();
+  await new Promise(resolve => setImmediate(resolve));
   await fixture.connection.logout();
-  assert.deepEqual(fixture.requests.map(request => request.payload.action), ['login', 'connect', 'disconnect', 'disconnect', 'connect', 'logout']);
-  assert.deepEqual(fixture.timeouts, [30_000, 300_000, 300_000, 300_000, 300_000, 300_000]);
+  assert.deepEqual(fixture.requests.map(request => request.payload.action), ['login', 'sync', 'logout']);
+  assert.deepEqual(fixture.timeouts, [30_000, 300_000, 300_000]);
   assert.equal(fixture.connection.getSnapshot().value.user, null);
+  assert.deepEqual(Object.keys(fixture.connection).sort(), ['dispose', 'getSnapshot', 'kernel', 'login', 'logout', 'refresh', 'subscribe', 'sync']);
 });
 
 test('an older status response cannot replace a completed login', async t => {
@@ -232,19 +255,6 @@ test('an older status response cannot replace a completed login', async t => {
   await staleRead;
   assert.equal(fixture.connection.getSnapshot().value.user.id, 'alice@id.test');
   assert.equal(fixture.connection.getSnapshot().error, null);
-});
-
-test('a failed reconnect preserves the successful disconnect result', async t => {
-  const fixture = harness(payload => {
-    if (payload.action === 'connect') throw new Error('模拟连接失败');
-    return loggedIn;
-  });
-  t.after(fixture.dispose);
-  await fixture.connection.reconnect('finance');
-  assert.deepEqual(fixture.requests.map(request => request.payload.action), ['disconnect', 'connect']);
-  assert.equal(fixture.connection.getSnapshot().value.bots[0].status, 'offline');
-  assert.equal(fixture.connection.getSnapshot().error, '模拟连接失败');
-  assert.equal(fixture.connection.getSnapshot().busy, null);
 });
 
 test('background status refresh preserves an action error until an explicit refresh', async t => {
@@ -305,39 +315,6 @@ test('pasting a whole connection key signs in at once, and other pasted text wai
   assert.deepEqual(sent, [key]);
 });
 
-test('creating a Bot with a chat server joins it and goes online in the same step', async t => {
-  const local = { id: 'local-shiyu', name: 'Shiyu', model: 'local/chat' };
-  const native = { ...loggedIn, bots: [], nativeMode: true, nativeBots: [] };
-  let attachFails = false;
-  const fixture = harness(payload => {
-    if (payload.action === 'create-native') return { ...native, nativeBots: [local] };
-    if (payload.action === 'attach') {
-      if (attachFails) return new Response(JSON.stringify({ ok: false, error: { message: '服务器暂时不可用' } }), { status: 200 });
-      return { ...native, nativeBots: [local], bots: [{ id: '@shiyu:chat.example.test', nativeBotId: local.id, status: 'online' }] };
-    }
-    return native;
-  });
-  t.after(fixture.dispose);
-  await fixture.connection.refresh();
-  const input = { name: 'Shiyu', role: '', model: 'local/chat', requestId: 'request-1' };
-  const online = await fixture.connection.createNative(input, 'https://chat.example.test');
-  assert.deepEqual(fixture.requests.slice(1).map(request => request.payload), [
-    { action: 'create-native', ...input }, { action: 'attach', nativeBotId: 'local-shiyu', serverUrl: 'https://chat.example.test' }]);
-  assert.equal(online.bots[0].status, 'online');
-  assert.equal(fixture.connection.getSnapshot().notice, 'botJoined');
-
-  // Without a server the Bot stays on the device; a failed join keeps the Bot and says why.
-  fixture.requests.length = 0;
-  await fixture.connection.refresh();
-  assert.ok(await fixture.connection.createNative(input));
-  assert.deepEqual(fixture.requests.map(request => request.payload.action), ['status', 'create-native']);
-  await fixture.connection.refresh();
-  attachFails = true;
-  const kept = await fixture.connection.createNative(input, 'https://chat.example.test');
-  assert.deepEqual(kept.nativeBots, [local]);
-  assert.equal(fixture.connection.getSnapshot().error, '服务器暂时不可用');
-});
-
 test('connection key errors from the plugin show in the host language', async t => {
   const fixture = harness(payload => {
     if (payload.action === 'login') return new Response(JSON.stringify({ ok: false, error: { code: 'CONNECT_CODE_EXPIRED', message: '连接密钥已过期' } }), { status: 200 });
@@ -348,15 +325,19 @@ test('connection key errors from the plugin show in the host language', async t 
   assert.equal(fixture.connection.getSnapshot().error, 'This connection key has expired. Make a new one on the web page.');
 });
 
-test('page exposes only safe server links and disables unavailable bot execution', async t => {
-  const fixture = harness(() => ({ ...loggedIn, servers: [{ url: 'javascript:alert(1)', serverName: 'chat.example.test' }],
-    bots: loggedIn.bots.map(bot => ({ ...bot, serverUrl: 'javascript:alert(1)' })), lastError: '登录已失效', runtime: { available: false, message: 'DS-Bot 未就绪' } }));
+test('the page links only to addresses a browser can open, and says what is wrong with the device or the central server', async t => {
+  const fixture = harness(() => ({ ...loggedIn, webUrl: 'javascript:alert(1)', lastError: 'fetch failed', runtime: { available: false, message: 'DS-Bot 未就绪' },
+    bots: [{ ...loggedIn.bots[0], error: '这台设备上没有模型 x/y，请在网页上另选一个',
+      servers: [{ url: 'javascript:alert(1)', serverName: 'chat.example.test', status: 'online' }, { url: 'https://two.example.test', serverName: 'two.example.test', status: 'error', error: 'Core is still starting' }] }] }));
   t.after(fixture.dispose);
   await fixture.connection.refresh();
   const tree = render(fixture.main.component(fixture.main.options.inject()));
   assert.equal(find(tree, element => element.type === 'a'), undefined);
-  assert.equal(find(tree, element => element.props['aria-label'] === '上线 财务').props.disabled, true);
-  assert.ok(find(tree, element => element.props.role === 'alert' && element.children.includes('登录已失效')));
+  assert.ok(find(tree, element => element.props.role === 'alert' && element.children.includes('暂时连不上中央服务器，Bot 按上次的设置继续运行：fetch failed')));
+  assert.ok(find(tree, element => element.props.role === 'status' && element.children.includes('DS-Bot 未就绪')));
+  assert.ok(find(tree, element => element.props.role === 'alert' && element.children.includes('这台设备上没有模型 x/y，请在网页上另选一个')));
+  assert.ok(find(tree, element => element.props['data-status'] === 'error' && element.children.includes('连接失败')));
+  assert.ok(find(tree, element => element.children.includes('Core is still starting')));
   assert.ok(find(tree, element => element.type === 'code' && element.children.includes('/synthetic/profile/dscord')));
 });
 
@@ -378,59 +359,4 @@ test('shared page subscriptions own one polling timer and plugin disposal stops 
   assert.equal(abortSignal.aborted, true);
   await fixture.connection.refresh();
   assert.equal(fixture.requests.length, 1);
-});
-
-test('the page lists each chat server with its own Bots and adds or removes servers', async t => {
-  const two = { url: 'https://two.example.test', serverName: 'two.example.test' };
-  const fixture = harness(() => ({ ...loggedIn, servers: [...loggedIn.servers, two],
-    bots: [...loggedIn.bots, { ...loggedIn.bots[0], id: '@finance:two.example.test', serverUrl: two.url, serverName: two.serverName, status: 'online' }] }));
-  t.after(fixture.dispose);
-  await fixture.connection.refresh();
-  const tree = render(fixture.main.component(fixture.main.options.inject()));
-  for (const server of ['chat.example.test', 'two.example.test']) {
-    const section = find(tree, element => element.type === 'section' && element.props['aria-label'] === server);
-    assert.ok(section, server);
-    assert.equal(find(section, element => element.props['data-status'])?.props['data-status'], server === 'chat.example.test' ? 'offline' : 'online');
-  }
-  assert.ok(find(tree, element => element.props['aria-label'] === '移除 two.example.test'));
-  const sent = [];
-  fixture.connection.addServer = (url, code) => sent.push(['add', url, code]);
-  fixture.connection.removeServer = url => sent.push(['remove', url]);
-  const form = find(tree, element => element.type === 'form' && element.props['aria-label'] === '添加服务器');
-  const input = { value: ' https://three.example.test ' };
-  const invite = { value: ' wxyz-2345 ' };
-  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: name => name === 'inviteCode' ? invite : input } } });
-  find(tree, element => element.props['aria-label'] === '移除 two.example.test').props.onClick();
-  assert.deepEqual(sent, [['add', 'https://three.example.test', 'wxyz-2345'], ['remove', two.url]]);
-  assert.deepEqual([input.value, invite.value], ['', '']);
-});
-
-test('the add-server area searches the central index and adds a listed server', async t => {
-  const listed = [{ origin: 'https://robots.example.test', number: 48213907, join: 'open', name: 'Robotics club', description: 'Arms and wheels',
-    tags: ['robots'], members: { people: 12, bots: 2 }, added: false }, { origin: loggedIn.servers[0].url, number: 10000001, join: 'open', name: 'Home',
-    description: '', tags: [], members: { people: 3, bots: 1 }, added: true }, { origin: 'https://closed.example.test', number: 55555555, join: 'invite',
-    name: 'Closed club', description: '', tags: [], members: { people: 4, bots: 0 }, added: false }];
-  const fixture = harness(payload => payload.action === 'search-servers' ? { servers: listed } : loggedIn);
-  t.after(fixture.dispose);
-  await fixture.connection.refresh();
-  let tree = render(fixture.main.component(fixture.main.options.inject()));
-  const form = find(tree, element => element.type === 'form' && element.props['aria-label'] === '搜索服务器');
-  form.props.onSubmit({ preventDefault() {}, currentTarget: { elements: { namedItem: () => ({ value: 'robot' }) } } });
-  await new Promise(resolve => setImmediate(resolve));
-  const search = fixture.requests.find(request => request.payload.action === 'search-servers');
-  assert.deepEqual(search.payload, { action: 'search-servers', query: 'robot' });
-
-  // Render with the results the search returned.
-  fixture.react.useState = value => [value === null ? listed : value, () => {}];
-  tree = render(fixture.main.component(fixture.main.options.inject()));
-  const sent = [];
-  fixture.connection.addServer = url => sent.push(url);
-  const add = find(tree, element => element.props['aria-label'] === '添加 Robotics club');
-  assert.ok(find(tree, element => element.type === 'p' && element.children.includes('12 人 · 2 个 Bot · #robots')));
-  add.props.onClick();
-  assert.deepEqual(sent, ['https://robots.example.test']);
-  assert.equal(find(tree, element => element.props['aria-label'] === '添加 Home').props.disabled, true, 'an added server cannot be added again');
-  assert.ok(find(tree, element => element.type === 'p' && element.children.includes('号码 48213907 · https://robots.example.test')));
-  const closed = find(tree, element => element.props['aria-label'] === '添加 Closed club');
-  assert.deepEqual([closed.props.disabled, closed.children], [true, ['只凭邀请加入']], 'an invite-only server is added with a code in the form below');
 });

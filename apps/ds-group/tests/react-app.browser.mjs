@@ -116,6 +116,7 @@ const registrationRequests = [];
 const loginRequests = [];
 const centralLogouts = [];
 const connectCodeTokens = [];
+const centralBots = [];
 const loginLimits = [];
 const revokedTokens = new Set();
 const ownedBots = new Map();
@@ -232,6 +233,17 @@ try {
       connectCodeTokens.push(token);
       status = 201;
       body = { code: `connect-${connectCodeTokens.length}`, expiresIn: 600 };
+    } else if (url.pathname === '/api/bots' && request.method() === 'POST') {
+      // The central server keeps the Bot and its setup; a DSH linked later runs it.
+      const input = request.postDataJSON();
+      centralBots.push({ id: 'central-finance', username: 'finance', globalId: 'finance@id.example', displayName: input.displayName, status: 'active',
+        settings: { role: input.role, model: input.model, effort: '', deviceId: null, servers: input.servers, revision: 1 }, runtime: null });
+      status = 201;
+      body = { bot: centralBots.at(-1) };
+    } else if (url.pathname === '/api/bots') {
+      body = { bots: centralBots };
+    } else if (url.pathname === '/api/devices') {
+      body = { devices: [] };
     } else if (url.pathname === '/api/logout') {
       centralLogouts.push(token);
       body = { loggedOut: true };
@@ -510,15 +522,19 @@ try {
   await page.locator('#global-bots-button').click();
   await page.locator('#create-bot-button').click();
   await page.locator('#create-bot-dialog[open]').waitFor();
-  assert.equal(await page.locator('#create-bot-dialog input').count(), 0);
-  // Adding a Bot hands over the key DSH asks for, in the same dialog.
+  await page.locator('#create-bot-name').fill('Finance');
+  await page.locator('#create-bot-submit').click();
+  // The Bot is made at the central server for this chat server. No DSH is linked yet, so the dialog hands over
+  // the key DSH asks for.
+  await page.locator('#create-bot-progress[data-stage="noDevice"]').waitFor();
+  assert.deepEqual(centralBots.map(bot => [bot.displayName, bot.settings.servers]), [['Finance', [origin]]]);
   await page.locator('#bot-make-connection-key').click();
   assert.deepEqual(JSON.parse(Buffer.from(await page.locator('#bot-connection-key').inputValue(), 'base64url').toString('utf8')), { server: origin, code: 'connect-2' });
   await page.locator('#bot-copy-connection-key').waitFor();
-  checks.push('addBotDialogMakesTheDshConnectionKeyInPlace');
+  checks.push('addBotDialogCreatesTheBotAtCentralAndMakesTheDshConnectionKeyInPlace');
   await page.locator('#create-bot-done').click();
   await page.locator('#create-bot-dialog').waitFor({ state: 'hidden' });
-  // DSH adds the Bot at central and links it; the web client only lists what Core reports.
+  // Once a DSH runs the Bot it signs in here, and the web client lists what Core reports.
   ownedBots.set(registeredUser.id, [{ id: '@finance:test', localpart: 'finance', name: 'Finance', kind: 'bot', ownerId: registeredUser.id,
     nativeBinding: { hostId: 'dsh-test', nativeBotId: 'native-finance', botId: '@finance:test' } }]);
   await page.evaluate(() => window.dispatchEvent(new Event('online')));

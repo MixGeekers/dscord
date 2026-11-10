@@ -189,21 +189,8 @@ export class NativeConnections {
     return state;
   }
 
-  async configureAttention(nativeBotId, setting) {
-    await this.native.bot(nativeBotId);
-    const entries = [...this.connections.values()].filter(entry => entry.node.nativeBotId === nativeBotId);
-    const states = [];
-    for (const entry of entries) states.push(await this.applyAttention(entry, setting));
-    return states[0] || { mode: setting.mode, activity: 'unknown', online: false, provider: this.decisionStatus() };
-  }
-
-  async kernelState(nativeBotId) {
-    if (!nativeBotId) return { ...await this.native.info(), decisionProvider: this.decisionStatus() };
-    const entry = [...this.connections.values()].find(entry => entry.node.nativeBotId === nativeBotId);
-    const bridge = entry?.bridge || new NativeBridge({ ctx: this.ctx, native: this.native,
-      node: { id: null, nativeBotId, directory: this.directory } });
-    return { ...await bridge.kernelState(),
-      attention: entry?.botNode.attentionStatus() || { mode: 'mention', activity: 'unknown', provider: this.decisionStatus(), online: false },
-      decisionProvider: this.decisionStatus() };
+  /** The kernel this DSH runs and the service that decides when Bots join in. */
+  async kernelState() {
+    return { ...await this.native.info(), decisionProvider: this.decisionStatus() };
   }
 }
