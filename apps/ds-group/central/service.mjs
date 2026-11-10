@@ -155,11 +155,16 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     send(200, { revoked: true });
   });
 
+  // A Bot is set up here, from any chat server's page, and the device that runs it follows.
   router.post('/api/bots', async ({ request, body, send }) => {
     const { account } = person(request);
-    send(201, { bot: store.view(store.createBot(account, await body())) });
+    send(201, { bot: store.managedBot(store.createBot(account, await body(), { serverOrigin })) });
   });
-  router.get('/api/bots', ({ request, send }) => send(200, { bots: store.botsOf(person(request).account).map(bot => store.view(bot)) }));
+  router.get('/api/bots', ({ request, send }) => send(200, { bots: store.botsOf(person(request).account).map(bot => store.managedBot(bot)) }));
+  router.on('PATCH', /^\/api\/bots\/([^/]+)$/, async ({ request, body, send }, botId) => {
+    const { account } = person(request);
+    send(200, { bot: store.managedBot(store.updateBot(account, store.ownedBot(account, botId), await body(), { serverOrigin })) });
+  });
   router.delete(/^\/api\/bots\/([^/]+)$/, ({ request, send }, botId) => {
     store.closeAccount(store.ownedBot(person(request).account, botId));
     send(200, { closed: true });
@@ -175,6 +180,17 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   router.delete(/^\/api\/bots\/([^/]+)\/nodes\/([^/]+)$/, ({ request, send }, botId, nodeId) => {
     store.revokeNode(store.ownedBot(person(request).account, botId), nodeId);
     send(200, { revoked: true });
+  });
+
+  // The person's DSH devices. Each reports every few seconds and is told which Bots to run and how.
+  router.get('/api/devices', ({ request, send }) => send(200, { devices: store.devicesOf(person(request).account) }));
+  router.post(/^\/api\/devices\/([^/]+)\/sync$/, async ({ request, body, send }, deviceId) => {
+    const { account, session } = person(request);
+    send(200, store.syncDevice(account, session, deviceId, await body()));
+  });
+  router.delete(/^\/api\/devices\/([^/]+)$/, ({ request, send }, deviceId) => {
+    store.removeDevice(person(request).account, deviceId);
+    send(200, { removed: true });
   });
 
   // A Bot has no password: its owner approves a node by the code the node shows.
@@ -269,7 +285,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     response.setHeader('Access-Control-Allow-Origin', from);
     response.setHeader('Vary', 'Origin');
     response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE');
   }
 
   async function dispatch(request, response) {

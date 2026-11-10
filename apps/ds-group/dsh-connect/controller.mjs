@@ -5,19 +5,12 @@ import path from 'node:path';
 import { httpUrl } from '../scripts/runtime-config.mjs';
 import { importNodeBundle } from '../scripts/server-admin.mjs';
 import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
-import { availablePort, NodeProcesses } from './processes.mjs';
-import { LEGACY_MODEL, checkModelPolicy } from '../src/model-config.mjs';
 
 const STATE_VERSION = 3;
+const MODEL_CATALOG_MS = 60 * 1000;
+const RETRY_FIRST_MS = 10 * 1000;
+const RETRY_LAST_MS = 5 * 60 * 1000;
 
-function publicBot(bot) {
-  return { id: bot.id, centralId: bot.centralId, name: bot.name || bot.localpart, localpart: bot.localpart,
-    serverUrl: bot.serverUrl, serverName: bot.serverName,
-    ...(bot.ownerId ? { ownerId: bot.ownerId } : {}), ...(bot.globalId ? { globalId: bot.globalId } : {}),
-    ...(bot.nativeBinding ? { nativeBinding: bot.nativeBinding } : {}) };
-}
-
-/** A central username for a new Bot: its name in Latin letters where possible, made unique. */
 /** The chat server and one-time central code inside a connection key from a chat server's page. */
 export function connectKey(value) {
   let decoded;
@@ -32,60 +25,47 @@ export function connectKey(value) {
   return { server: decoded.server, code: decoded.code };
 }
 
-function botUsername(name) {
-  const slug = name.normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20);
-  return `${/^[a-z]/.test(slug) ? slug : `bot${slug ? `-${slug}` : ''}`}-${randomUUID().slice(0, 6)}`;
-}
-
 /**
- * Connects this DSH host to the owner's chat servers. The owner signs in to their central server once
- * and adds the chat servers that trust it; each Bot gets its own central session through the device-code
- * flow, which the owner's session approves, and joins any of those servers by signing in there with its
- * own identity token like anyone else. A Bot on several servers is one account with one node per server.
+ * Links this DSH to its owner's central account and runs the Bots that account assigns to this device.
+ * Nothing about a Bot is decided here: the owner sets Bots up on a chat server's page, the central server keeps
+ * that setup, and this device asks for it every few seconds, reports what it has (its models, its plugin, how
+ * each Bot is doing) and makes the local Bots and their chat-server connections match. Each Bot signs in to its
+ * chat servers with its own identity token, like anyone else; one Bot on several servers is one local Bot with
+ * one connection per server.
  */
 export class ConnectController {
-  constructor({ directory, sourceHome, sourceProfile, processes, models, native, updates, request = fetch, selectPort = availablePort }) {
+  constructor({ directory, processes, native, updates, request = fetch, label = `DSH ${hostname()}`, now = Date.now }) {
     this.directory = path.resolve(directory);
     this.filename = path.join(this.directory, 'connection.json');
-    this.processes = processes || new NodeProcesses({ sourceHome, sourceProfile });
-    this.request = request;
-    this.selectPort = selectPort;
-    this.models = models;
-    this.native = native;
-    this.updates = updates;
-    this.state = { schemaVersion: STATE_VERSION, centralUrl: '', centralToken: null, user: null, servers: {}, bots: [], nodes: {} };
+    Object.assign(this, { processes, native, updates, request, label, now });
+    this.state = { schemaVersion: STATE_VERSION, centralUrl: '', centralToken: null, user: null, webUrl: '', servers: {}, bots: [], nodes: {} };
+    // Connections by node id (`@name:server`), what each Bot's last setup attempt came to, and failed connections waiting to be retried.
     this.running = new Map();
+    this.outcomes = new Map();
+    this.failures = new Map();
     this.queue = Promise.resolve();
     this.closed = false;
+    this.lastError = null;
+    this.syncedAt = null;
   }
 
   async initialize() {
     const saved = await readOptionalJson(this.filename);
-    // A connection saved by an earlier version (one chat server per host) is not carried over.
     if (saved?.schemaVersion === STATE_VERSION) this.state = saved;
     this.state.servers ||= {};
-    this.state.modelSelections ||= {};
+    this.state.nodes ||= {};
     this.state.botSessions ||= {};
     this.state.nativeLinks ||= {};
-    this.state.attentionModes ||= {};
-    this.state.nativeCreationRequests ||= {};
-    if (this.native && !this.state.hostId) { this.state.hostId = randomUUID(); await this.save(); }
+    this.state.creations ||= {};
+    this.state.bots = (this.state.bots || []).filter(bot => bot.settings);
+    if (!this.state.hostId) { this.state.hostId = randomUUID(); await this.save(); }
     await this.processes.configure?.({ directory: this.directory });
-    for (const node of Object.values(this.state.nodes)) {
-      if (Object.hasOwn(this.state.modelSelections, node.id)) continue;
-      const prepared = await readOptionalJson(path.join(node.directory, `dsh-${node.localpart}`, 'node-config.json'));
-      if (prepared?.model) {
-        const legacyEffort = prepared.modelConfigVersion === undefined && prepared.model === LEGACY_MODEL ? 'low' : undefined;
-        const reasoningEffort = prepared.reasoningEffort ?? legacyEffort;
-        this.state.modelSelections[node.id] = { model: prepared.model, maxTokens: prepared.maxTokens || 4096,
-          ...(reasoningEffort ? { reasoningEffort } : {}) };
-      }
-    }
     this.runtime = await this.processes.available();
+    // Bots that were online come back before the central server is asked anything, so a restart needs no network round trip.
     this.restoring = this.serial(async () => {
       for (const node of Object.values(this.state.nodes)) {
-        if (!node.desired || this.closed) continue;
-        try { await this.start(node); } catch { /* The status page retains each startup error. */ }
+        if (this.closed) break;
+        try { await this.start(node); } catch { /* The page shows each startup error, and the next report retries it. */ }
       }
     });
     return this;
@@ -118,123 +98,193 @@ export class ConnectController {
     return data;
   }
 
-  async status({ refresh = true } = {}) {
-    let lastError = null;
-    if (refresh) this.runtime = await this.processes.available();
-    if (refresh && this.state.centralToken && !this.closed) {
-      const { centralToken } = this.state;
-      try {
-        const bots = await this.ownedBots();
-        if (centralToken === this.state.centralToken) this.state.bots = bots;
-      } catch (error) { lastError = error.message; }
-    }
+  /** The connection of one Bot to one chat server, as this device knows it. */
+  nodeOf(bot, serverUrl) {
+    return Object.values(this.state.nodes).find(node => node.centralId === bot.id && node.serverUrl === serverUrl);
+  }
+
+  async connection(bot, serverUrl) {
+    const node = this.nodeOf(bot, serverUrl);
+    const failed = this.failures.get(`${bot.id}\n${serverUrl}`);
+    let current = (node && this.running.get(node.id)) || { status: failed ? 'error' : 'offline', lastError: failed?.message ?? null };
+    if (node && current.status === 'online') current = await this.processes.probe(node);
+    return { status: current.status, ...(current.lastError ? { error: current.lastError } : {}) };
+  }
+
+  /** What the connect page shows: who this DSH is linked to and how the Bots it runs are doing. */
+  async status() {
+    this.runtime = await this.processes.available();
     const bots = await Promise.all(this.state.bots.map(async bot => {
-      const node = this.state.nodes[bot.id];
-      const active = this.running.get(bot.id);
-      let current = active || { status: 'offline', lastError: null };
-      if (node && active?.status === 'online') current = await this.processes.probe(node);
-      return { ...bot, ...current, connected: Boolean(node?.desired),
-        modelSelection: this.state.modelSelections?.[bot.id] ?? null,
-        activeModel: current.status === 'online' ? current.modelConfig ?? active?.modelConfig ?? null : null };
+      const outcome = this.outcomes.get(bot.id);
+      return { id: bot.id, name: bot.displayName, username: bot.username, globalId: bot.globalId,
+        model: outcome?.model || bot.settings.model || null, ...(outcome?.error ? { error: outcome.error } : {}),
+        servers: await Promise.all(bot.settings.servers.map(async url => ({ url,
+          serverName: this.state.servers[url]?.serverName || new URL(url).host, ...await this.connection(bot, url) }))) };
     }));
-    let nativeBots = [];
-    if (this.native) {
-      try { nativeBots = await this.ownedNativeBots(); } catch (error) { lastError ||= error.message; }
-      for (const bot of bots) {
-        const local = nativeBots.find(local => local.id === bot.nativeBinding?.nativeBotId && bot.nativeBinding.hostId === this.state.hostId);
-        if (local) { bot.modelSelection = local.model ? { model: local.model } : null; bot.nativeBotId = local.id; }
+    return { centralUrl: this.state.centralUrl, webUrl: this.state.webUrl || '', user: this.state.user, hostId: this.state.hostId,
+      label: this.label, bots, runtime: this.runtime, lastError: this.lastError, syncedAt: this.syncedAt,
+      nativeBundled: this.native.bundled === true, dataDirectory: this.directory,
+      ...(this.updates ? { kernelUpdates: this.updates.view() } : {}) };
+  }
+
+  /** The models this DSH can run, which the owner chooses from on the web; read again once a minute. */
+  async modelCatalog() {
+    if (this.catalog && this.now() - this.catalog.at < MODEL_CATALOG_MS) return this.catalog.value;
+    let value;
+    try {
+      const { providers, defaultSelection } = await this.native.models();
+      value = { providers, defaultModel: defaultSelection?.model || '' };
+    } catch (error) { value = { providers: [], defaultModel: '', error: error.message }; }
+    this.catalog = { at: this.now(), value };
+    return value;
+  }
+
+  async report() {
+    const bots = {};
+    for (const bot of this.state.bots) {
+      const outcome = this.outcomes.get(bot.id);
+      const servers = {};
+      for (const url of bot.settings.servers) servers[url] = await this.connection(bot, url);
+      bots[bot.id] = { revision: outcome?.revision ?? 0, ...(outcome?.model ? { model: outcome.model } : {}),
+        ...(outcome?.error ? { error: outcome.error } : {}), servers };
+    }
+    const updates = this.updates?.view();
+    return { models: await this.modelCatalog(), runtime: this.runtime?.available ? null : this.runtime?.message || null,
+      plugin: updates ? { version: updates.current, available: updates.available, compatible: updates.compatible } : null, bots };
+  }
+
+  /**
+   * Report to the central server, learn which Bots this device runs, and make it so. A change made here is
+   * reported at once, so the owner's page does not wait for the next round to see a Bot come online.
+   */
+  synchronize({ force = false } = {}) {
+    return this.serial(async () => {
+      if (force) { this.failures.clear(); this.catalog = undefined; }
+      for (let round = 0; round < 2; round++) {
+        if (!this.state.centralToken || this.closed) return;
+        const { centralUrl, centralToken, hostId } = this.state;
+        let assigned;
+        try {
+          assigned = await this.remote(centralUrl, `/api/devices/${hostId}/sync`, { method: 'POST', token: centralToken,
+            body: { label: this.label, report: await this.report() } });
+          if (!Array.isArray(assigned.bots)) throw new Error('中央服务器没有返回 Bot 列表');
+        } catch (error) {
+          // The owner ended this device's session from elsewhere: it stops running their Bots.
+          if (error.status === 401) await this.signedOut();
+          else this.lastError = error.message;
+          return;
+        }
+        this.lastError = null;
+        this.syncedAt = new Date(this.now()).toISOString();
+        if (JSON.stringify(assigned.bots) !== JSON.stringify(this.state.bots)) {
+          this.state = { ...this.state, bots: assigned.bots };
+          await this.save();
+        }
+        if (!await this.reconcile()) return;
+      }
+    });
+  }
+
+  /** Make the local Bots and their connections match what the central server assigned. Answers whether anything changed. */
+  async reconcile() {
+    let changed = false;
+    const wanted = new Set();
+    for (const bot of this.state.bots) for (const url of bot.settings.servers) wanted.add(`${bot.id}\n${url}`);
+    for (const node of Object.values(this.state.nodes)) {
+      if (wanted.has(`${node.centralId}\n${node.serverUrl}`)) continue;
+      await this.stop(node);
+      const { [node.id]: _left, ...nodes } = this.state.nodes;
+      this.state = { ...this.state, nodes };
+      await this.save();
+      changed = true;
+    }
+    for (const bot of this.state.bots) {
+      if (this.closed) break;
+      const before = JSON.stringify(this.outcomes.get(bot.id));
+      let local;
+      try {
+        local = await this.localBot(bot);
+        this.outcomes.set(bot.id, { revision: bot.settings.revision, model: local.model || '' });
+      } catch (error) {
+        this.outcomes.set(bot.id, { revision: bot.settings.revision, error: error.message });
+      }
+      if (JSON.stringify(this.outcomes.get(bot.id)) !== before) changed = true;
+      if (!local) continue;
+      for (const url of bot.settings.servers) {
+        if (this.closed) break;
+        const key = `${bot.id}\n${url}`;
+        const node = this.nodeOf(bot, url);
+        if (node && ['online', 'connecting'].includes(this.running.get(node.id)?.status)) continue;
+        const failed = this.failures.get(key);
+        if (failed && failed.until > this.now()) continue;
+        try {
+          await this.connect(bot, url, local);
+          this.failures.delete(key);
+        } catch (error) {
+          const delay = Math.min(failed ? failed.delay * 2 : RETRY_FIRST_MS, RETRY_LAST_MS);
+          this.failures.set(key, { message: error.message, delay, until: this.now() + delay });
+        }
+        changed = true;
       }
     }
-    return { centralUrl: this.state.centralUrl, user: this.state.user, servers: this.servers().map(({ url, serverName }) => ({ url, serverName })),
-      bots, runtime: this.runtime,
-      ...(this.native ? { nativeBots, hostId: this.state.hostId, nativeMode: true, nativeBundled: this.native.bundled === true } : {}),
-      dataDirectory: this.directory, lastError, modelPolicy: this.modelPolicy,
-      ...(this.updates ? { kernelUpdates: this.updates.view() } : {}),
-      models: this.native ? await this.native.models().catch(() => ({ available: false })) : this.models ? await this.models.view() : { available: false } };
+    for (const id of this.outcomes.keys()) if (!this.state.bots.some(bot => bot.id === id)) this.outcomes.delete(id);
+    return changed;
   }
 
-  async ownedNativeBots() {
-    const bots = await this.native.list();
-    return bots.filter(bot => !this.state.user || !bot.owner?.id || bot.owner.id === this.state.user.id);
-  }
-
-  async ownedNativeBot(id, { claim = false } = {}) {
-    if (!this.native) throw new Error('DSCORD_KERNEL_UNAVAILABLE');
-    const bot = await this.native.bot(id);
-    if (this.state.user && bot.owner?.id && bot.owner.id !== this.state.user.id) {
-      throw Object.assign(new Error('请选择属于当前账号的 Bot'), { code: 'BOT_OWNER_CONFLICT' });
+  /** The local Bot behind a central Bot account, created on first sight and kept in step with the owner's setup. */
+  async localBot(bot) {
+    const { settings } = bot;
+    if (settings.model) {
+      const catalog = await this.modelCatalog();
+      const model = catalog.providers.flatMap(provider => provider.models).find(model => model.model === settings.model);
+      if (!model) throw Object.assign(new Error(`这台设备上没有模型 ${settings.model}，请在网页上另选一个`), { code: 'MODEL_UNAVAILABLE' });
+      if (model.needsKey) throw Object.assign(new Error(`模型 ${settings.model} 还没有凭据，请在 DSH 的模型设置里填写`), { code: 'MISSING_CREDENTIAL' });
     }
-    if (claim && this.state.user && !bot.owner?.id) {
-      await this.native.call('claim-bot', { id, owner: { ...this.state.user, kind: 'human' },
-        source: { sender: { ...this.state.user, kind: 'human' }, transport: 'matrix' } });
-    }
-    return bot;
-  }
-
-  async createNative(body) {
-    if (!this.native) throw new Error('DSCORD_KERNEL_UNAVAILABLE');
-    const name = typeof body.name === 'string' ? body.name.trim() : '';
-    const role = typeof body.role === 'string' ? body.role.trim() : '';
-    if (!name || name.length > 120 || role.length > 4000) throw new Error('请输入有效的 Bot 名称和职责');
-    if (typeof body.requestId !== 'string' || !/^[a-zA-Z0-9_.:-]{1,160}$/.test(body.requestId)) throw new Error('创建请求缺少有效的标识');
-    await this.modelSource({ model: body.model });
-    const hash = createHash('sha256').update(JSON.stringify({ name, role, model: body.model,
-      ownerId: this.state.user?.id || null })).digest('hex');
-    const prior = this.state.nativeCreationRequests[body.requestId];
-    if (prior && prior.hash !== hash) throw new Error('同一创建请求的内容已经变化');
-    if (prior?.nativeBotId) {
-      await this.ownedNativeBot(prior.nativeBotId);
-      return this.status({ refresh: false });
-    }
-    this.state.nativeCreationRequests[body.requestId] = { hash, status: 'creating' };
-    await this.save();
-    const sender = this.state.user ? { ...this.state.user, kind: 'human' }
-      : { id: `local-user:${this.state.hostId}`, name: 'Local user', kind: 'human' };
-    try {
-      const created = await this.native.call('create-bot', { name, role, model: body.model, greet: false,
-        requestId: body.requestId, ...(this.state.user ? { owner: sender } : {}),
-        source: { sender, requestId: body.requestId, transport: this.state.user ? 'matrix' : 'native' } });
+    const locals = await this.native.list();
+    let local = locals.find(item => item.id === this.state.nativeLinks[bot.id]);
+    if (!local) {
+      // The request is saved before it is sent, so a lost answer is asked for again under the same name and no second Bot appears.
+      let creation = this.state.creations[bot.id];
+      if (!creation) {
+        creation = { requestId: `dscord:${bot.id}:${randomUUID()}`, name: bot.displayName, role: settings.role,
+          ...(settings.model ? { model: settings.model } : {}), ...(settings.effort ? { effort: settings.effort } : {}) };
+        this.state = { ...this.state, creations: { ...this.state.creations, [bot.id]: creation } };
+        await this.save();
+      }
+      const owner = { ...this.state.user, kind: 'human' };
+      const { requestId, ...payload } = creation;
+      const created = await this.native.call('create-bot', { ...payload, greet: false, requestId, owner,
+        source: { sender: owner, requestId, transport: 'matrix' } });
       const id = created?.id || created?.bot?.id;
       if (!id) throw new Error('内核没有返回新建 Bot 的身份');
-      this.state.nativeCreationRequests[body.requestId] = { hash, status: 'completed', nativeBotId: id };
+      const { [bot.id]: _done, ...creations } = this.state.creations;
+      this.state = { ...this.state, creations, nativeLinks: { ...this.state.nativeLinks, [bot.id]: id } };
       await this.save();
-    } catch (error) {
-      this.state.nativeCreationRequests[body.requestId] = { hash, status: 'unknown' };
-      await this.save();
-      throw error;
+      local = (await this.native.list()).find(item => item.id === id);
+      if (!local) throw new Error('内核没有列出新建的 Bot');
     }
-    return this.status({ refresh: false });
+    const patch = {
+      ...(local.name !== bot.displayName ? { name: bot.displayName } : {}),
+      ...((local.role || '') !== settings.role ? { role: settings.role } : {}),
+      ...(settings.model && local.model !== settings.model ? { model: settings.model } : {}),
+      ...(settings.effort && local.effort !== settings.effort ? { effort: settings.effort } : {}),
+    };
+    if (!Object.keys(patch).length) return local;
+    await this.native.call('update-bot', { id: local.id, ...patch });
+    return { ...local, ...patch };
   }
 
-  /** The chat servers the owner has added, in the order they were added. */
-  servers(state = this.state) { return Object.values(state.servers || {}); }
-
-  /** The added chat server a Bot account (`@name:server`) is on. */
-  serverOf(botId, state = this.state) {
-    const serverName = String(botId || '').slice(String(botId || '').indexOf(':') + 1);
-    return this.servers(state).find(server => server.serverName === serverName);
+  /** A chat server's discovery, which must name the central server this device is linked to. It is read once and kept. */
+  async server(input) {
+    const url = httpUrl(String(input || '').trim(), '服务器地址');
+    if (this.state.servers[url]) return this.state.servers[url];
+    const server = await this.discover(url);
+    if (server.centralUrl !== this.state.centralUrl) throw new Error('这台聊天服务器接入的是另一个中央服务器');
+    this.state = { ...this.state, servers: { ...this.state.servers, [url]: server } };
+    await this.save();
+    return server;
   }
 
-  /** The owner's Bots on the central server, each named as its account on every added chat server. */
-  async ownedBots(state = this.state) {
-    const { bots } = await this.remote(state.centralUrl, '/api/bots', { token: state.centralToken });
-    if (!Array.isArray(bots)) throw new Error('中央服务器没有返回 Bot 列表');
-    return this.servers(state).flatMap(server => bots.filter(bot => bot.status === 'active').map(bot => {
-      const id = `@${bot.username}:${server.serverName}`;
-      return publicBot({ id, centralId: bot.id, name: bot.displayName, localpart: bot.username, ownerId: server.userId, globalId: bot.globalId,
-        serverUrl: server.url, serverName: server.serverName,
-        ...(state.nativeLinks?.[bot.id] && state.hostId ? { nativeBinding: { hostId: state.hostId, nativeBotId: state.nativeLinks[bot.id], botId: id } } : {}) });
-    }));
-  }
-
-  /** A five-minute identity token from the central server that names one chat server. */
-  async identityToken(centralToken, audience, centralUrl = this.state.centralUrl) {
-    const { token } = await this.remote(centralUrl, '/api/identity-tokens', { method: 'POST', token: centralToken,
-      body: { audience, allowNew: true } });
-    return token;
-  }
-
-  /** A chat server's discovery, which must name the central server it trusts. */
   async discover(input) {
     const url = httpUrl(String(input || '').trim(), '服务器地址');
     const discovery = await this.remote(url, '/.well-known/dscord/client');
@@ -243,24 +293,11 @@ export class ConnectController {
       serverName: discovery.home.serverName, sessionPath: discovery.auth.sessionPath || '/api/session' };
   }
 
-  /** The owner's session on one chat server, signed in with an identity token for it. */
-  async ownerSession(server, centralToken, centralUrl, inviteCode = '') {
-    let login;
-    try {
-      login = await this.remote(server.url, server.sessionPath, { method: 'POST',
-        body: { identityToken: await this.identityToken(centralToken, server.audience, centralUrl),
-          ...(typeof inviteCode === 'string' && inviteCode.trim() ? { inviteCode: inviteCode.trim() } : {}) } });
-    } catch (error) {
-      if (error.remoteCode === 'INVITE_REQUIRED') throw Object.assign(new Error('这台服务器只接受邀请加入，请填写邀请码'), { remoteCode: error.remoteCode });
-      if (error.remoteCode === 'INVITE_INVALID') throw Object.assign(new Error('邀请码不对、已过期或已撤销'), { remoteCode: error.remoteCode });
-      throw error;
-    }
-    if (!login.access_token || !login.user_id) {
-      if (login?.access_token) await this.signOut(server.url, login.access_token);
-      throw new Error('服务器登录响应不完整');
-    }
-    return { url: server.url, audience: server.audience, serverName: server.serverName, sessionPath: server.sessionPath,
-      userId: login.user_id, accessToken: login.access_token };
+  /** A five-minute identity token from the central server that names one chat server. */
+  async identityToken(centralToken, audience) {
+    const { token } = await this.remote(this.state.centralUrl, '/api/identity-tokens', { method: 'POST', token: centralToken,
+      body: { audience, allowNew: true } });
+    return token;
   }
 
   signOut(base, token) {
@@ -268,8 +305,8 @@ export class ConnectController {
   }
 
   /**
-   * Sign in with a connection key made on a chat server's page: base64url JSON `{server, code}`. The code is redeemed,
-   * once, at the central server that chat server trusts, and that server is added.
+   * Link this DSH with a connection key made on a chat server's page: base64url JSON `{server, code}`. The code is
+   * redeemed, once, at the central server that chat server trusts. The Bots to run arrive with the first report.
    */
   async login({ key }) {
     const { server: input, code } = connectKey(key);
@@ -277,7 +314,7 @@ export class ConnectController {
     const { centralUrl } = discovered;
     let central;
     try {
-      central = await this.remote(centralUrl, '/api/connect-codes/redeem', { method: 'POST', body: { code, label: `DSH ${hostname()}` } });
+      central = await this.remote(centralUrl, '/api/connect-codes/redeem', { method: 'POST', body: { code, label: this.label } });
     } catch (error) {
       if (['CONNECT_CODE_UNKNOWN', 'CONNECT_CODE_EXPIRED'].includes(error.remoteCode)) {
         throw Object.assign(new Error(error.remoteCode === 'CONNECT_CODE_EXPIRED' ? '连接密钥已过期，请在网页上重新生成' : '连接密钥已用过或不存在，请在网页上重新生成'),
@@ -287,110 +324,29 @@ export class ConnectController {
     }
     if (!central.token || central.account?.kind !== 'human' || !central.account.globalId) throw new Error('中央服务器登录响应不完整');
     const previous = this.state;
-    const sameIdentity = centralUrl === previous.centralUrl && central.account.globalId === previous.user?.globalId;
-    const kept = sameIdentity ? previous : {};
-    let server;
-    let bots;
-    try {
-      server = await this.ownerSession(discovered, central.token, centralUrl);
-      bots = await this.ownedBots({ centralUrl, centralToken: central.token, servers: { ...(kept.servers || {}), [server.url]: server },
-        nativeLinks: kept.nativeLinks, hostId: previous.hostId });
-    } catch (error) {
-      if (server) await this.signOut(server.url, server.accessToken);
-      await this.signOut(centralUrl, central.token);
-      throw error;
-    }
+    const identity = `${centralUrl}\n${central.account.globalId}`;
+    // The same person linking again keeps their local Bots; anyone else starts with none of them.
+    const kept = identity === previous.identity ? previous : {};
     const next = {
-      schemaVersion: STATE_VERSION, centralUrl, centralToken: central.token,
+      schemaVersion: STATE_VERSION, hostId: previous.hostId, identity, centralUrl, centralToken: central.token, webUrl: discovered.url,
       user: { id: central.account.globalId, name: central.account.displayName || central.account.globalId, globalId: central.account.globalId },
-      servers: { ...(kept.servers || {}), [server.url]: server }, bots, nodes: kept.nodes || {},
-      botSessions: kept.botSessions || {}, nativeLinks: kept.nativeLinks || {}, modelSelections: kept.modelSelections || {},
-      attentionModes: kept.attentionModes || {}, nativeCreationRequests: previous.nativeCreationRequests || {},
-      ...(previous.hostId ? { hostId: previous.hostId } : {}),
+      servers: { ...(kept.servers || {}), [discovered.url]: discovered }, bots: kept.bots || [], nodes: kept.nodes || {},
+      botSessions: kept.botSessions || {}, nativeLinks: kept.nativeLinks || {}, creations: kept.creations || {},
     };
     try {
-      if (!sameIdentity) await this.stopAll(false);
+      if (kept !== previous) await this.stopAll();
       await this.save(next);
     } catch (error) {
-      await this.signOut(server.url, server.accessToken);
       await this.signOut(centralUrl, central.token);
       throw error;
     }
     this.state = next;
-    if (!sameIdentity) this.modelPolicy = undefined;
-    await this.closeSessions(previous);
-    return this.status({ refresh: false });
-  }
-
-  /** Add another chat server that trusts the owner's central server. */
-  async addServer({ serverUrl: input, inviteCode }) {
-    if (!this.state.centralToken) throw new Error('请先登录');
-    const discovered = await this.discover(input);
-    if (discovered.centralUrl !== this.state.centralUrl) throw new Error('这台聊天服务器接入的是另一个中央服务器');
-    const server = await this.ownerSession(discovered, this.state.centralToken, undefined, inviteCode);
-    const previous = this.state;
-    const servers = { ...previous.servers, [server.url]: server };
-    let bots;
-    try { bots = await this.ownedBots({ ...previous, servers }); }
-    catch (error) { await this.signOut(server.url, server.accessToken); throw error; }
-    const next = { ...previous, servers, bots };
-    await this.save(next);
-    this.state = next;
-    await this.closeSessions(previous);
-    return this.status({ refresh: false });
-  }
-
-  /** Search the central server's index for chat servers to add. */
-  async searchServers({ query }) {
-    if (!this.state.centralUrl) throw new Error('请先登录');
-    const q = typeof query === 'string' ? query.trim().slice(0, 200) : '';
-    const { servers } = await this.remote(this.state.centralUrl, `/api/servers?${new URLSearchParams({ q })}`);
-    if (!Array.isArray(servers)) throw new Error('中央服务器没有返回服务器列表');
-    const added = new Set(this.servers().map(server => new URL(server.url).origin));
-    return { servers: servers.map(server => ({ origin: server.origin, number: server.number, join: server.join, name: server.name,
-      description: server.description, tags: server.tags, members: server.members, added: added.has(server.origin) })) };
-  }
-
-  /** Remove a chat server: its Bot connections stop and the owner's session there ends. */
-  async removeServer({ serverUrl }) {
-    const server = this.state.servers[serverUrl];
-    if (!server) throw new Error('没有添加这台聊天服务器');
-    const nodes = Object.values(this.state.nodes).filter(node => node.serverUrl === serverUrl);
-    await Promise.all(nodes.map(node => this.stop(node, false)));
-    const { [serverUrl]: _removed, ...servers } = this.state.servers;
-    const next = { ...this.state, servers, bots: this.state.bots.filter(bot => bot.serverUrl !== serverUrl),
-      nodes: Object.fromEntries(Object.entries(this.state.nodes).filter(([, node]) => node.serverUrl !== serverUrl)) };
-    await this.save(next);
-    this.state = next;
-    await this.signOut(server.url, server.accessToken);
-    return this.status({ refresh: false });
-  }
-
-  /** Close the owner's chat-server and central sessions that the current state no longer holds. */
-  async closeSessions(previous) {
-    for (const server of this.servers(previous)) {
-      if (server.accessToken !== this.state.servers?.[server.url]?.accessToken) await this.signOut(server.url, server.accessToken);
-    }
-    if (previous.centralToken && previous.centralToken !== this.state.centralToken) await this.signOut(previous.centralUrl, previous.centralToken);
-  }
-
-  /** Bring this host's linked native Bots online whenever they should be and are not. */
-  synchronizeNative() {
-    return this.serial(async () => {
-      if (!this.native || !this.state.centralToken || this.closed) return;
-      this.state.bots = await this.ownedBots();
-      for (const bot of this.state.bots) {
-        if (bot.nativeBinding?.hostId !== this.state.hostId || this.closed) continue;
-        // A Bot joins a server only when the owner connects it there; this restores the connections that should be up.
-        const node = this.state.nodes[bot.id];
-        const active = this.running.get(bot.id);
-        if (!node?.desired || ['online', 'connecting'].includes(active?.status)) continue;
-        try { await this.connect(bot.id); }
-        catch (error) {
-          if (!this.closed) this.running.set(bot.id, { status: 'error', lastError: error.message });
-        }
-      }
-    });
+    this.lastError = null;
+    if (kept !== previous) { this.outcomes.clear(); this.failures.clear(); }
+    if (previous.centralToken) await this.signOut(previous.centralUrl, previous.centralToken);
+    // The page answers at once; the Bots appear as this first report brings them.
+    void this.synchronize().catch(() => {});
+    return this.status();
   }
 
   /** The Bot's own central session, from the device-code flow that the owner's session approves. */
@@ -398,18 +354,16 @@ export class ConnectController {
     const saved = this.state.botSessions[bot.centralId];
     if (saved) return saved;
     const { centralUrl, centralToken } = this.state;
-    const { deviceCode, userCode } = await this.remote(centralUrl, '/api/device', { method: 'POST', body: { label: `DSH ${hostname()}` } });
+    const { deviceCode, userCode } = await this.remote(centralUrl, '/api/device', { method: 'POST', body: { label: this.label } });
     await this.remote(centralUrl, '/api/device/approve', { method: 'POST', token: centralToken, body: { userCode, botId: bot.centralId } });
     const { token } = await this.remote(centralUrl, '/api/device/token', { method: 'POST', body: { deviceCode } });
-    const next = { ...this.state, botSessions: { ...this.state.botSessions, [bot.centralId]: token } };
-    await this.save(next);
-    this.state = next;
+    this.state = { ...this.state, botSessions: { ...this.state.botSessions, [bot.centralId]: token } };
+    await this.save();
     return token;
   }
 
   /** The Bot's node configuration, fetched by the Bot itself after it signs in to the chat server. */
-  async botBundle(bot, native) {
-    const server = this.state.servers[bot.serverUrl];
+  async botBundle(bot, server, native) {
     let token = await this.botSession(bot);
     let identityToken;
     try { identityToken = await this.identityToken(token, server.audience); }
@@ -426,7 +380,7 @@ export class ConnectController {
     if (session.user_id !== bot.id) throw new Error('服务器返回的 Bot 身份不匹配');
     try {
       const { bundle } = await this.remote(server.url, `/api/bots/${encodeURIComponent(bot.id)}/connect`, {
-        method: 'POST', token: session.access_token, body: native ? { native } : {},
+        method: 'POST', token: session.access_token, body: { native },
       });
       return bundle;
     } finally {
@@ -451,74 +405,32 @@ export class ConnectController {
   }
 
   /** Bring a Bot online on one chat server, as its account there (`@name:server`). */
-  async connect(botId) {
-    if (!this.state.centralToken) throw new Error('请先登录');
-    const bots = await this.ownedBots();
-    const bot = bots.find(item => item.id === botId);
-    if (!bot) throw new Error('请选择自己的 Bot');
-    this.state.bots = bots;
-    const existing = this.state.nodes[botId];
-    if (existing && this.running.get(botId)?.status === 'online' && (await this.processes.probe(existing)).status === 'online') {
-      return this.status({ refresh: false });
-    }
+  async connect(bot, serverUrl, local) {
+    const server = await this.server(serverUrl);
     this.runtime = await this.processes.available();
     if (!this.runtime.available) throw new Error(this.runtime.message);
-    const local = this.native ? await this.ownedNativeBot(bot.nativeBinding?.hostId === this.state.hostId ? bot.nativeBinding.nativeBotId : '', { claim: true }) : undefined;
-    const source = this.models ? await this.modelSource(local ? { model: local.model, reasoningEffort: local.effort } : this.state.modelSelections?.[botId], bot.serverUrl) : undefined;
+    const account = { id: `@${bot.username}:${server.serverName}`, centralId: bot.id, name: bot.displayName, localpart: bot.username,
+      serverUrl: server.url, serverName: server.serverName, globalId: bot.globalId };
+    const existing = this.state.nodes[account.id];
+    if (existing && this.running.has(account.id)) await this.stop(existing);
+    const bundle = await this.botBundle(account, server, { hostId: this.state.hostId, nativeBotId: local.id });
     if (this.closed) throw new Error('连接插件正在关闭');
-    if (existing && this.running.has(botId)) await this.stop(existing, false);
-    const bundle = await this.botBundle(bot, local ? { hostId: this.state.hostId, nativeBotId: local.id } : undefined);
-    if (this.closed) throw new Error('连接插件正在关闭');
-    const key = createHash('sha256').update(`${bot.serverUrl}\n${botId}`).digest('hex').slice(0, 24);
+    const key = createHash('sha256').update(`${server.url}\n${account.id}`).digest('hex').slice(0, 24);
     const directory = path.join(this.directory, 'nodes', key);
-    await this.writeBundle(bot, bundle, directory);
-    const node = { ...publicBot(bot), directory,
-      ...(local ? { nativeBotId: local.id } : {}),
-      ...(local && this.state.attentionModes[local.id] ? { attention: { mode: this.state.attentionModes[local.id] } } : {}),
-      ...(!local ? { port: existing?.port || await this.selectPort() } : {}), desired: true };
-    if (this.closed) throw new Error('连接插件正在关闭');
-    const next = { ...this.state, nodes: { ...this.state.nodes, [botId]: node } };
-    await this.save(next);
-    this.state = next;
-    await this.start(node, source);
-    return this.status({ refresh: false });
+    await this.writeBundle(account, bundle, directory);
+    const node = { ...account, directory, nativeBotId: local.id };
+    this.state = { ...this.state, nodes: { ...this.state.nodes, [account.id]: node } };
+    await this.save();
+    await this.start(node);
   }
 
-  async modelSource(selection, serverUrl) {
-    const source = this.native ? { selection: { ...selection } } : await this.models.export(selection);
-    if (this.native) {
-      const catalog = await this.native.models();
-      const model = catalog.providers.flatMap(provider => provider.models).find(model => model.model === selection?.model);
-      if (!model) throw Object.assign(new Error('请在 DSH 中选择可用模型'), { code: 'MODEL_UNAVAILABLE' });
-      if (model.needsKey) throw Object.assign(new Error('请在 DSH 中配置模型凭据'), { code: 'MISSING_CREDENTIAL' });
-      return source;
-    }
-    const server = this.state.servers[serverUrl];
-    if (!server) throw new Error('没有添加这台聊天服务器');
-    const { budget } = await this.remote(server.url, '/api/status', { token: server.accessToken });
-    this.modelPolicy = { maxTokens: budget?.maxTokens, allowedModels: budget?.allowedModels ?? null };
-    checkModelPolicy(source.selection, this.modelPolicy);
-    return source;
-  }
-
-  async start(node, preparedSource) {
+  async start(node) {
     if (this.closed) throw new Error('连接插件正在关闭');
     this.running.set(node.id, { status: 'connecting', lastError: null });
     try {
-      let modelConfig;
-      if (this.models && !node.nativeBotId) {
-        const source = preparedSource ?? await this.modelSource(this.state.modelSelections?.[node.id], node.serverUrl);
-        modelConfig = source.selection;
-        await savePrivateJson(path.join(node.directory, 'model-source.json'), source);
-        if (!this.state.modelSelections[node.id]) {
-          const next = { ...this.state, modelSelections: { ...this.state.modelSelections, [node.id]: source.selection } };
-          await this.save(next);
-          this.state = next;
-        }
-      }
       await this.processes.start(node);
       if (this.closed) await this.processes.stop(node);
-      else this.running.set(node.id, { status: 'online', lastError: null, modelConfig });
+      else this.running.set(node.id, { status: 'online', lastError: null });
     } catch (error) {
       let message = error.message;
       if (!this.closed) {
@@ -529,74 +441,44 @@ export class ConnectController {
     }
   }
 
-  async stop(node, clearDesired) {
-    if (clearDesired) {
-      const next = { ...this.state, nodes: { ...this.state.nodes, [node.id]: { ...node, desired: false } } };
-      await this.save(next);
-      this.state = next;
-    }
+  async stop(node) {
     if (this.running.has(node.id)) await this.processes.stop(node);
     this.running.delete(node.id);
   }
 
-  async stopAll(clearDesired) {
-    if (clearDesired) {
-      const nodes = Object.fromEntries(Object.entries(this.state.nodes).map(([id, node]) => [id, { ...node, desired: false }]));
-      const next = { ...this.state, nodes };
-      await this.save(next);
-      this.state = next;
-    }
+  async stopAll() {
     // Start every cleanup before awaiting any one Bot's drain or the host shutdown deadline.
-    const results = await Promise.allSettled(Object.values(this.state.nodes).map(node => this.stop(node, false)));
+    const results = await Promise.allSettled(Object.values(this.state.nodes).map(node => this.stop(node)));
     const errors = results.filter(result => result.status === 'rejected').map(result => result.reason);
     if (errors.length) throw new AggregateError(errors, errors.map(error => error.message).join('\n'));
   }
 
-  async logout() {
-    await this.stopAll(true);
-    const previous = this.state;
-    const next = { ...previous, user: null, centralToken: null, servers: {}, bots: [] };
-    await this.save(next);
-    this.state = next;
-    await this.closeSessions(previous);
-    return this.status({ refresh: false });
+  /** This device is no longer linked: its Bots stop, and the same person linking again finds them as they were. */
+  async signedOut() {
+    await this.stopAll();
+    this.state = { ...this.state, user: null, centralToken: null, bots: [], nodes: {} };
+    await this.save();
+    this.outcomes.clear();
+    this.failures.clear();
+    this.syncedAt = null;
   }
 
-  /**
-   * Link a native DSH Bot to a central Bot account (a new one unless botId names one) and bring it online:
-   * on botId's server, or on serverUrl (needed only when several servers are added) for a new account.
-   */
-  async attach({ nativeBotId, botId, serverUrl }) {
-    if (!this.native || !this.state.centralToken) throw new Error('请先登录并启用原生 DS-Bot');
-    const local = await this.ownedNativeBot(nativeBotId, { claim: true });
-    if (Object.values(this.state.nativeLinks).includes(local.id)) throw new Error('这个本机 Bot 已经关联了账号');
-    let bot = botId ? (await this.ownedBots()).find(item => item.id === botId) : undefined;
-    if (botId && !bot) throw new Error('请选择自己的 Bot');
-    if (bot && this.state.nativeLinks[bot.centralId]) throw new Error('这个 Bot 账号已经关联了本机 Bot');
-    if (!bot) {
-      const servers = this.servers();
-      const server = serverUrl ? this.state.servers[serverUrl] : servers.length === 1 ? servers[0] : undefined;
-      if (!server) throw new Error(servers.length ? '请选择要加入的聊天服务器' : '请先添加聊天服务器');
-      const { bot: created } = await this.remote(this.state.centralUrl, '/api/bots', { method: 'POST', token: this.state.centralToken,
-        body: { username: botUsername(local.name || 'bot'), displayName: String(local.name || 'Bot').slice(0, 80) } });
-      bot = { centralId: created.id, id: `@${created.username}:${server.serverName}` };
+  async logout() {
+    const { centralUrl, centralToken, hostId } = this.state;
+    await this.signedOut();
+    if (centralToken) {
+      // The owner's Bots wait for another device instead of showing this one as merely offline. Removing the
+      // device ends its session too; a DSH that never reported has no device to remove and signs out itself.
+      await this.remote(centralUrl, `/api/devices/${hostId}`, { method: 'DELETE', token: centralToken }).catch(() => {});
+      await this.signOut(centralUrl, centralToken);
     }
-    const next = { ...this.state, nativeLinks: { ...this.state.nativeLinks, [bot.centralId]: local.id } };
-    await this.save(next);
-    this.state = next;
-    return this.connect(bot.id);
+    return this.status();
   }
 
   async handle(body) {
     if (this.closed) throw new Error('连接插件正在关闭');
     if (body.action === 'status') return this.status();
-    if (body.action === 'kernel-state') {
-      if (body.nativeBotId) await this.ownedNativeBot(body.nativeBotId);
-      const value = await this.processes.kernelState(body.nativeBotId);
-      const desired = this.state.attentionModes[body.nativeBotId];
-      return { ...value, ...(desired ? { desiredAttention: { mode: desired,
-        status: value.attention?.mode === desired ? 'applied' : 'pending' } } : {}) };
-    }
+    if (body.action === 'kernel-state') return this.processes.kernelState();
     if (body.action?.startsWith?.('kernel-update-')) {
       if (!this.updates) throw new Error('当前运行方式不支持插件升级');
       switch (body.action) {
@@ -607,61 +489,17 @@ export class ConnectController {
         default: throw new Error('未知连接操作');
       }
     }
-    if (body.action === 'memory-profile') {
-      await this.ownedNativeBot(body.nativeBotId);
-      return this.native.call(body.id ? 'memory-profile' : 'memory-profiles', {
-        botId: body.nativeBotId, kind: body.kind, ...(body.id ? { id: body.id } : {}),
-        ...(body.roomId ? { roomId: body.roomId } : {}), ...(body.query ? { query: body.query } : {}) });
+    if (body.action === 'sync') {
+      await this.synchronize({ force: true });
+      return this.status();
     }
-    if (body.action === 'search-servers') return this.searchServers(body);
     return this.serial(async () => {
       if (this.closed) throw new Error('连接插件正在关闭');
       switch (body.action) {
-        case 'create-native': return this.createNative(body);
         case 'save-decision-provider': return this.processes.saveDecisionProvider({ apiKey: body.apiKey, enabled: body.enabled,
           model: body.model, endpoint: body.endpoint });
-        case 'attention-update': {
-          await this.ownedNativeBot(body.nativeBotId);
-          if (!['mention', 'shadow', 'natural'].includes(body.mode)) throw new Error('请选择有效的参与方式');
-          this.state.attentionModes[body.nativeBotId] = body.mode;
-          await this.save();
-          let result = { mode: body.mode, status: 'pending', online: false };
-          for (const node of Object.values(this.state.nodes).filter(node => node.nativeBotId === body.nativeBotId)) {
-            const server = this.state.servers[node.serverUrl];
-            if (!server) continue;
-            result = await this.remote(server.url, `/api/bots/${encodeURIComponent(node.id)}/attention`, {
-              method: 'PATCH', token: server.accessToken, body: { mode: body.mode, ...(body.rooms ? { rooms: body.rooms } : {}) } });
-          }
-          return result;
-        }
-        case 'save-model': {
-          const owned = this.state.bots.find(bot => bot.id === body.botId);
-          if (!this.models || !owned) throw new Error('请选择自己的 Bot');
-          const prior = this.state.modelSelections?.[body.botId];
-          const selection = body.selection && { ...body.selection, maxTokens: body.selection.maxTokens ?? prior?.maxTokens ?? 4096 };
-          const source = await this.modelSource(selection, owned.serverUrl);
-          if (this.native) {
-            const bot = this.state.bots.find(bot => bot.id === body.botId);
-            if (bot.nativeBinding?.hostId !== this.state.hostId) throw new Error('请选择本机已经绑定的 Bot');
-            await this.native.selectModel(bot.nativeBinding.nativeBotId, source.selection);
-            return this.status({ refresh: false });
-          }
-          const next = { ...this.state, modelSelections: { ...this.state.modelSelections, [body.botId]: source.selection } };
-          await this.save(next);
-          this.state = next;
-          return this.status({ refresh: false });
-        }
         case 'login': return this.login(body);
-        case 'add-server': return this.addServer(body);
-        case 'remove-server': return this.removeServer(body);
-        case 'attach': return this.attach(body);
         case 'logout': return this.logout();
-        case 'connect': return this.connect(body.botId);
-        case 'disconnect': {
-          const node = this.state.nodes[body.botId];
-          if (node) await this.stop(node, true);
-          return this.status({ refresh: false });
-        }
         default: throw new Error('未知连接操作');
       }
     });
@@ -669,7 +507,7 @@ export class ConnectController {
 
   async dispose() {
     this.closed = true;
-    const cleanup = this.stopAll(false).then(() => null, error => error);
+    const cleanup = this.stopAll().then(() => null, error => error);
     await this.queue;
     const error = await cleanup;
     if (error) throw error;

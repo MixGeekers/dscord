@@ -7,6 +7,9 @@ const digest = value => createHash('sha256').update(value).digest('hex');
 const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
 const DEVICE_MS = 10 * 60 * 1000;
 const CONNECT_MS = 10 * 60 * 1000;
+// A device that has not reported for this long is shown as offline; devices report every few seconds.
+const DEVICE_ONLINE_MS = 30 * 1000;
+const REPORT_LIMIT = 200000;
 // Unambiguous letters for a code a person reads off one screen and types into another.
 const USER_CODE_LETTERS = 'BCDFGHJKLMNPQRSTVWXZ';
 
@@ -25,6 +28,18 @@ function displayName(value, fallback) {
   return value.trim() || fallback;
 }
 
+function text(value, limit, code) {
+  if (value === undefined || value === null) return '';
+  if (typeof value !== 'string' || value.length > limit || /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(value)) throw failure(400, code);
+  return value.trim();
+}
+
+/** A username for a Bot whose owner gave only a name: the name in Latin letters where possible, made unique. */
+function derivedUsername(name) {
+  const slug = String(name || '').normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 20);
+  return `${/^[a-z]/.test(slug) ? slug : `bot${slug ? `-${slug}` : ''}`}-${randomUUID().slice(0, 6)}`;
+}
+
 /** An account that may sign in: closed and disabled accounts are refused. */
 function usable(account) {
   if (account.status === 'closed') throw failure(403, 'ACCOUNT_CLOSED');
@@ -32,7 +47,10 @@ function usable(account) {
   return account;
 }
 
-/** Accounts, sessions, server grants and device codes. No chat data lives here. */
+/**
+ * Accounts, sessions, server grants and device codes, and for each Bot what its owner set it up to be:
+ * its role, model, the chat servers it is on and the device that runs it. No chat data lives here.
+ */
 export class CentralStore {
   constructor({ filename, rule, domain, now = Date.now }) {
     Object.assign(this, { rule, domain, now });
@@ -49,6 +67,10 @@ export class CentralStore {
         created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, account_id TEXT REFERENCES accounts(id), approved_by TEXT, consumed INTEGER NOT NULL DEFAULT 0);
       CREATE TABLE IF NOT EXISTS connect_codes (code_hash TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id),
         created_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, consumed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE IF NOT EXISTS devices (id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES accounts(id), label TEXT NOT NULL,
+        report_json TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL, session_id TEXT NOT NULL);
+      CREATE TABLE IF NOT EXISTS bot_settings (bot_id TEXT PRIMARY KEY REFERENCES accounts(id), role TEXT NOT NULL, model TEXT NOT NULL,
+        effort TEXT NOT NULL, device_id TEXT, servers_json TEXT NOT NULL, revision INTEGER NOT NULL, updated_at INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);`);
   }
 
@@ -116,9 +138,60 @@ export class CentralStore {
     return this.insertAccount({ username, kind: 'human', name, salt, hash: await passwordHash(password, salt) });
   }
 
-  createBot(owner, { username, displayName: name }) {
+  /** A person's new Bot. With no username given, one is made from its name. */
+  createBot(owner, { username, displayName: name, ...settings }, { serverOrigin } = {}) {
     if (owner.kind !== 'human') throw failure(403, 'HUMAN_REQUIRED', 'Only a person can own a Bot');
-    return this.insertAccount({ username, kind: 'bot', name, ownerId: owner.id });
+    const checked = this.checkedSettings(owner, settings, serverOrigin);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const bot = this.insertAccount({ username: username || derivedUsername(name), kind: 'bot', name, ownerId: owner.id });
+      this.writeSettings(bot, { ...this.settingsOf(bot), ...checked });
+      this.db.exec('COMMIT');
+      return bot;
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
+  /** What the owner set a Bot up to be. A Bot nobody has configured runs on its device's default model and is on no server. */
+  settingsOf(bot) {
+    const row = this.db.prepare('SELECT * FROM bot_settings WHERE bot_id=?').get(bot.id);
+    return { role: row?.role ?? '', model: row?.model ?? '', effort: row?.effort ?? '', deviceId: row?.device_id ?? null,
+      servers: row ? JSON.parse(row.servers_json) : [], revision: row?.revision ?? 0 };
+  }
+
+  checkedSettings(owner, input, serverOrigin = value => value) {
+    const checked = {};
+    if (input.role !== undefined) checked.role = text(input.role, 4000, 'BOT_ROLE_INVALID');
+    if (input.model !== undefined) checked.model = text(input.model, 200, 'BOT_MODEL_INVALID');
+    if (input.effort !== undefined) checked.effort = text(input.effort, 40, 'BOT_EFFORT_INVALID');
+    if (input.deviceId !== undefined) checked.deviceId = input.deviceId === null || input.deviceId === '' ? null : this.ownedDevice(owner, input.deviceId).id;
+    if (input.servers !== undefined) {
+      if (!Array.isArray(input.servers) || input.servers.length > 32) throw failure(400, 'BOT_SERVERS_INVALID');
+      checked.servers = [...new Set(input.servers.map(serverOrigin))];
+    }
+    return checked;
+  }
+
+  writeSettings(bot, settings) {
+    this.db.prepare(`INSERT INTO bot_settings VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(bot_id) DO UPDATE SET role=excluded.role, model=excluded.model,
+      effort=excluded.effort, device_id=excluded.device_id, servers_json=excluded.servers_json, revision=excluded.revision, updated_at=excluded.updated_at`)
+      .run(bot.id, settings.role, settings.model, settings.effort, settings.deviceId, JSON.stringify(settings.servers), settings.revision + 1, this.now());
+  }
+
+  /** The owner changes a Bot's name or setup; the device that runs it picks the change up the next time it reports. */
+  updateBot(owner, bot, { displayName: name, ...input }, { serverOrigin } = {}) {
+    const checked = this.checkedSettings(owner, input, serverOrigin);
+    if (name !== undefined) this.db.prepare('UPDATE accounts SET display_name=? WHERE id=?').run(displayName(name, bot.username), bot.id);
+    this.writeSettings(bot, { ...this.settingsOf(bot), ...checked });
+    return this.account(bot.id);
+  }
+
+  /** A Bot as its owner manages it: the account, its setup, and what its device last reported about it. */
+  managedBot(bot) {
+    const settings = this.settingsOf(bot);
+    const device = settings.deviceId ? this.db.prepare('SELECT * FROM devices WHERE id=?').get(settings.deviceId) : undefined;
+    const reported = device ? JSON.parse(device.report_json).bots?.[bot.id] : undefined;
+    return { ...this.view(bot), settings,
+      runtime: device ? { online: this.deviceOnline(device), ...(reported && typeof reported === 'object' ? reported : {}) } : null };
   }
 
   botsOf(owner) {
@@ -172,6 +245,69 @@ export class CentralStore {
 
   revokeNode(bot, nodeId) {
     if (!this.db.prepare("DELETE FROM sessions WHERE id=? AND account_id=? AND kind='node'").run(nodeId, bot.id).changes) throw failure(404, 'NODE_NOT_FOUND');
+  }
+
+  deviceOnline(row) { return this.now() - row.last_seen < DEVICE_ONLINE_MS; }
+
+  deviceView(row) {
+    const { models = null, plugin = null } = JSON.parse(row.report_json);
+    return { id: row.id, label: row.label, online: this.deviceOnline(row), models, plugin,
+      createdAt: new Date(row.created_at).toISOString(), lastSeen: new Date(row.last_seen).toISOString() };
+  }
+
+  /** The person's devices: each DSH they signed in with a connection key. */
+  devicesOf(owner) {
+    return this.db.prepare('SELECT * FROM devices WHERE account_id=? ORDER BY created_at').all(owner.id).map(row => this.deviceView(row));
+  }
+
+  ownedDevice(owner, deviceId) {
+    const row = typeof deviceId === 'string' && this.db.prepare('SELECT * FROM devices WHERE id=? AND account_id=?').get(deviceId, owner.id);
+    if (!row) throw failure(404, 'DEVICE_NOT_FOUND');
+    return row;
+  }
+
+  /**
+   * A device reports what it has (its models, its plugin, how each of its Bots is doing) and learns which Bots it should run.
+   * A Bot that has no device yet goes to the first of its owner's devices that reports.
+   */
+  syncDevice(owner, session, deviceId, { label, report }) {
+    if (typeof deviceId !== 'string' || !/^[A-Za-z0-9_-]{8,80}$/.test(deviceId)) throw failure(400, 'DEVICE_ID_INVALID');
+    if (report === null || typeof report !== 'object' || Array.isArray(report)) throw failure(400, 'DEVICE_REPORT_INVALID');
+    const json = JSON.stringify(report);
+    if (json.length > REPORT_LIMIT) throw failure(413, 'DEVICE_REPORT_TOO_LARGE');
+    const name = text(label, 80, 'DEVICE_LABEL_INVALID') || 'DSH';
+    const at = this.now();
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      // A device signed in as someone else now: the Bots it ran for the previous person wait for another device.
+      this.db.prepare(`UPDATE bot_settings SET device_id=NULL, revision=revision+1 WHERE device_id=? AND bot_id NOT IN
+        (SELECT id FROM accounts WHERE owner_id=?)`).run(deviceId, owner.id);
+      this.db.prepare(`INSERT INTO devices VALUES (?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET account_id=excluded.account_id, label=excluded.label,
+        report_json=excluded.report_json, last_seen=excluded.last_seen, session_id=excluded.session_id`).run(deviceId, owner.id, name, json, at, at, session.id);
+      const bots = this.botsOf(owner).filter(bot => bot.status === 'active');
+      for (const bot of bots) {
+        const settings = this.settingsOf(bot);
+        if (!settings.deviceId) this.writeSettings(bot, { ...settings, deviceId });
+      }
+      this.db.exec('COMMIT');
+      return { device: this.deviceView(this.ownedDevice(owner, deviceId)),
+        bots: bots.map(bot => ({ ...this.view(bot), settings: this.settingsOf(bot) })).filter(bot => bot.settings.deviceId === deviceId) };
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+  }
+
+  /**
+   * Removing a device leaves its Bots waiting for another one and ends the session the device reports with, so
+   * a device removed from somewhere else finds itself signed out and stops.
+   */
+  removeDevice(owner, deviceId) {
+    const device = this.ownedDevice(owner, deviceId);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('UPDATE bot_settings SET device_id=NULL, revision=revision+1 WHERE device_id=?').run(device.id);
+      this.db.prepare('DELETE FROM devices WHERE id=?').run(device.id);
+      this.db.prepare('DELETE FROM sessions WHERE id=?').run(device.session_id);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }
 
   grant(account, audience, { allowNew }) {
@@ -255,6 +391,8 @@ export class CentralStore {
       this.db.prepare('DELETE FROM sessions WHERE account_id=?').run(account.id);
       this.db.prepare('DELETE FROM grants WHERE account_id=?').run(account.id);
       this.db.prepare('DELETE FROM connect_codes WHERE account_id=?').run(account.id);
+      this.db.prepare('DELETE FROM bot_settings WHERE bot_id=?').run(account.id);
+      this.db.prepare('DELETE FROM devices WHERE account_id=?').run(account.id);
       this.db.exec('COMMIT');
     } catch (error) { this.db.exec('ROLLBACK'); throw error; }
   }

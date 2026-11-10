@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { modelReference, modelSelection, checkModel } from '../src/model-config.mjs';
 import { ModelBudget } from '../src/budget.mjs';
-import { DshModels } from '../dsh-connect/models.mjs';
 
 test('model references preserve native namespaced model IDs and reject malformed identities', () => {
   assert.deepEqual(modelReference('provider/team/model:latest'), { provider: 'provider', model: 'team/model:latest' });
@@ -44,49 +43,15 @@ test('core policy is optional and accounting preserves each exact model across p
   } finally { ledger.close(); }
 });
 
-function host() {
-  const profiles = {
-    local: { api: 'openai-completions', baseURL: 'http://localhost:9991/v1', models: [{ id: 'team/chat' }, { id: 'other' }],
-      apiKeyEnv: 'LOCAL_KEY', headers: { 'X-Route': 'synthetic' }, retryPolicy: { mode: 'normal', maxRetries: 3 } },
-    missing: { apiKeyEnv: 'MISSING', models: [{ id: 'chat' }] },
-  };
-  const refs = { LOCAL_KEY: 'synthetic-secret', UNRELATED: 'private-unrelated' };
-  const services = {
-    settings: { describe: () => [{ ns: 'llm-pi-ai', value: { providers: profiles } }] },
-    credentials: {
-      describe: async ref => ({ configured: Boolean(refs[ref]), writable: true }),
-      resolve: async ref => refs[ref] ? { value: refs[ref] } : undefined,
-      readRecord: async () => undefined,
-    },
-    agentDefaultModel: { currentSelection: () => ({ provider: 'local', model: 'team/chat', reasoningEffort: 'high' }) },
-  };
+test('a model the native catalog does not offer is refused before a ledger claim or stream', async () => {
+  const models = { local: [{ id: 'team/chat' }] };
   const llm = {
-    listProviders: () => Object.keys(profiles).map(id => ({ id })),
-    listModels: async id => profiles[id].models,
+    listProviders: () => Object.keys(models).map(id => ({ id })),
+    listModels: async id => models[id],
     resolveModelInfo: async () => ({ reasoning: { efforts: [{ id: 'high', name: 'High' }] } }),
-    listConfigurableProviders: () => Object.keys(profiles).map(provider => ({ provider, settingsNs: 'llm-pi-ai', settingsPath: ['providers', provider] })),
   };
-  return { profiles, refs, llm, models: new DshModels({ llm, get: key => services[key] }) };
-}
-
-test('DSH model selection uses native catalog, native thinking levels and reports safe credential status', async () => {
-  const { models, profiles } = host();
-  const view = await models.view();
-  assert.equal(view.providers[0].credential, 'configured');
-  assert.equal(view.providers[1].credential, 'missing');
-  assert.equal(JSON.stringify(view).includes('synthetic-secret'), false);
-  assert.equal(JSON.stringify(view).includes('LOCAL_KEY'), false);
-  const exported = await models.export();
-  assert.deepEqual(exported.selection, { model: 'local/team/chat', reasoningEffort: 'high', maxTokens: 4096 });
-  assert.deepEqual(exported.providers, { local: profiles.local });
-  assert.deepEqual(exported.credentials.refs, { LOCAL_KEY: 'synthetic-secret' });
-  await assert.rejects(models.export({ model: 'missing/chat' }), { code: 'MISSING_CREDENTIAL' });
-  await assert.rejects(models.export({ model: 'local/missing' }), { code: 'MODEL_UNAVAILABLE' });
-  await assert.rejects(models.export({ model: 'local/team/chat', reasoningEffort: 'low' }), { code: 'INVALID_REASONING_EFFORT' });
-});
-
-test('unavailable native catalogs fail closed before a ledger claim or stream', async () => {
-  const { llm } = host();
+  assert.deepEqual(await checkModel(llm, { model: 'local/team/chat', reasoningEffort: 'high' }), { provider: 'local', model: 'team/chat' });
   await assert.rejects(checkModel(llm, { model: 'unconfigured/chat' }), { code: 'MODEL_PROVIDER_UNAVAILABLE' });
   await assert.rejects(checkModel({ ...llm, listModels: async () => [] }, { model: 'local/team/chat' }), { code: 'MODEL_UNAVAILABLE' });
+  await assert.rejects(checkModel(llm, { model: 'local/team/chat', reasoningEffort: 'low' }), { code: 'INVALID_REASONING_EFFORT' });
 });

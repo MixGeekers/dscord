@@ -61,6 +61,7 @@ export class NativeBots {
     if (state.readOnly) throw new Error(state.readOnly);
     return state.bots.map(bot => ({ id: bot.id, name: bot.name, role: bot.role || '',
       model: bot.model || state.defaultModel || '', main: state.mainBotIds.includes(bot.id),
+      ...(bot.effort === undefined ? {} : { effort: bot.effort }),
       ...(bot.owner === undefined ? {} : { owner: bot.owner }),
       ...(bot.creationSource === undefined ? {} : { creationSource: bot.creationSource }) }));
   }
@@ -88,10 +89,5 @@ export class NativeBots {
     const result = await this.ctx.sessionController.resolveAgent(sessionId);
     if (result.error) throw new Error(result.error.message);
     return result.agent;
-  }
-
-  async selectModel(id, selection) {
-    await this.call('update-bot', { id, model: selection.model,
-      ...(selection.reasoningEffort === undefined ? {} : { effort: selection.reasoningEffort }) });
   }
 }

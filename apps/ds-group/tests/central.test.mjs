@@ -207,6 +207,85 @@ test('a person makes a one-time connection code for their DSH, which redeems it 
   assert.equal((await call('POST', '/api/connect-codes/redeem', { body: { code: late.code } })).body.code, 'CONNECT_CODE_EXPIRED');
 });
 
+test('the owner sets a Bot up at the central server: its role, model, chat servers and device', async t => {
+  const { call, register } = await fixture(t);
+  const alice = await register('alice');
+  const bob = await register('bob');
+  const created = await call('POST', '/api/bots', { token: alice.token, body: { displayName: '小助手', role: '整理会议纪要', servers: [CHAT_A, `${CHAT_A}/`, CHAT_B] } });
+  assert.equal(created.status, 201, JSON.stringify(created.body));
+  const bot = created.body.bot;
+  assert.match(bot.username, /^bot-[0-9a-f]{6}$/, 'a name with no Latin letters still gets a valid username');
+  assert.deepEqual(bot.settings, { role: '整理会议纪要', model: '', effort: '', deviceId: null, servers: [CHAT_A, CHAT_B], revision: 1 });
+  assert.equal(bot.runtime, null, 'no device runs it yet');
+  assert.match((await call('POST', '/api/bots', { token: alice.token, body: { displayName: 'Release Notes' } })).body.bot.username, /^release-notes-[0-9a-f]{6}$/);
+
+  const changed = await call('PATCH', `/api/bots/${bot.id}`, { token: alice.token, body: { displayName: '纪要助手', model: 'deepseek/v4', servers: [CHAT_B] } });
+  assert.equal(changed.status, 200, JSON.stringify(changed.body));
+  assert.equal(changed.body.bot.displayName, '纪要助手');
+  assert.deepEqual(changed.body.bot.settings, { role: '整理会议纪要', model: 'deepseek/v4', effort: '', deviceId: null, servers: [CHAT_B], revision: 2 });
+  assert.equal((await call('PATCH', `/api/bots/${bot.id}`, { token: bob.token, body: { role: 'mine now' } })).body.code, 'BOT_NOT_FOUND');
+  assert.equal((await call('PATCH', `/api/bots/${bot.id}`, { token: alice.token, body: { servers: ['chat-a.example.org'] } })).body.code, 'SERVER_ORIGIN_INVALID');
+  assert.equal((await call('PATCH', `/api/bots/${bot.id}`, { token: alice.token, body: { role: 'x'.repeat(4001) } })).body.code, 'BOT_ROLE_INVALID');
+  assert.equal((await call('PATCH', `/api/bots/${bot.id}`, { token: alice.token, body: { deviceId: 'someone-elses-device' } })).body.code, 'DEVICE_NOT_FOUND');
+  assert.equal((await call('GET', '/api/bots', { token: alice.token })).body.bots[0].settings.revision, 2, 'a refused change changes nothing');
+});
+
+test('a device reports what it has and is told which Bots to run; a Bot without a device goes to the first one that reports', async t => {
+  const { call, register, advance } = await fixture(t);
+  const alice = await register('alice');
+  const bob = await register('bob');
+  const bot = (await call('POST', '/api/bots', { token: alice.token, body: { displayName: 'Helper', servers: [CHAT_A] } })).body.bot;
+  // Each DSH reports with the session its connection key gave it.
+  const link = async person => (await call('POST', '/api/connect-codes/redeem', { body: { label: 'DSH',
+    code: (await call('POST', '/api/connect-codes', { token: person.token, body: {} })).body.code } })).body.token;
+  const laptop = await link(alice);
+  const desktop = await link(alice);
+  const models = { providers: [{ id: 'deepseek', name: 'deepseek', models: [{ model: 'deepseek/v4', name: 'V4' }] }], defaultModel: 'deepseek/v4' };
+  assert.deepEqual((await call('GET', '/api/devices', { token: alice.token })).body.devices, []);
+  assert.equal((await call('POST', '/api/devices/laptop-0001/sync', { body: { report: {} } })).status, 401);
+  assert.equal((await call('POST', '/api/devices/x/sync', { token: laptop, body: { report: {} } })).body.code, 'DEVICE_ID_INVALID');
+  assert.equal((await call('POST', '/api/devices/laptop-0001/sync', { token: laptop, body: { report: [] } })).body.code, 'DEVICE_REPORT_INVALID');
+
+  const first = await call('POST', '/api/devices/laptop-0001/sync', { token: laptop, body: { label: 'DSH laptop', report: { models, plugin: { version: '0.4.0' }, bots: {} } } });
+  assert.equal(first.status, 200, JSON.stringify(first.body));
+  assert.deepEqual(first.body.bots.map(item => [item.id, item.displayName, item.settings.servers, item.settings.deviceId]), [[bot.id, 'Helper', [CHAT_A], 'laptop-0001']]);
+  assert.deepEqual((await call('GET', '/api/devices', { token: alice.token })).body.devices.map(device => [device.id, device.label, device.online, device.models.defaultModel, device.plugin.version]),
+    [['laptop-0001', 'DSH laptop', true, 'deepseek/v4', '0.4.0']]);
+
+  // A second device gets nothing until the owner moves a Bot to it.
+  assert.deepEqual((await call('POST', '/api/devices/desktop-0002/sync', { token: desktop, body: { label: 'DSH desktop', report: {} } })).body.bots, []);
+  assert.equal((await call('PATCH', `/api/bots/${bot.id}`, { token: bob.token, body: { deviceId: 'desktop-0002' } })).body.code, 'BOT_NOT_FOUND');
+  await call('PATCH', `/api/bots/${bot.id}`, { token: alice.token, body: { deviceId: 'desktop-0002' } });
+  assert.deepEqual((await call('POST', '/api/devices/laptop-0001/sync', { token: laptop, body: { report: {} } })).body.bots, []);
+  const running = { bots: { [bot.id]: { revision: 3, model: 'deepseek/v4', servers: { [CHAT_A]: { status: 'online' } } } } };
+  assert.deepEqual((await call('POST', '/api/devices/desktop-0002/sync', { token: desktop, body: { report: running } })).body.bots.map(item => item.id), [bot.id]);
+
+  // The owner's page reads what the device said about the Bot, and sees a device go quiet.
+  const managed = (await call('GET', '/api/bots', { token: alice.token })).body.bots[0];
+  assert.deepEqual(managed.runtime, { online: true, revision: 3, model: 'deepseek/v4', servers: { [CHAT_A]: { status: 'online' } } });
+  advance(31_000);
+  assert.equal((await call('GET', '/api/bots', { token: alice.token })).body.bots[0].runtime.online, false);
+  assert.deepEqual((await call('GET', '/api/devices', { token: alice.token })).body.devices.map(device => device.online), [false, false]);
+
+  // Removing a device signs it out and leaves its Bots waiting; the next device to report takes them.
+  assert.equal((await call('DELETE', '/api/devices/desktop-0002', { token: bob.token })).body.code, 'DEVICE_NOT_FOUND');
+  assert.equal((await call('DELETE', '/api/devices/desktop-0002', { token: alice.token })).status, 200);
+  assert.equal((await call('GET', '/api/bots', { token: alice.token })).body.bots[0].runtime, null);
+  assert.equal((await call('POST', '/api/devices/desktop-0002/sync', { token: desktop, body: { report: {} } })).status, 401, 'a removed device cannot report itself back');
+  assert.deepEqual((await call('GET', '/api/devices', { token: alice.token })).body.devices.map(device => device.id), ['laptop-0001']);
+  assert.deepEqual((await call('POST', '/api/devices/laptop-0001/sync', { token: laptop, body: { report: {} } })).body.bots.map(item => item.id), [bot.id]);
+
+  // The same DSH signed in as someone else stops running the first person's Bots.
+  assert.deepEqual((await call('POST', '/api/devices/laptop-0001/sync', { token: await link(bob), body: { report: {} } })).body.bots, []);
+  assert.deepEqual((await call('GET', '/api/devices', { token: alice.token })).body.devices, []);
+  assert.equal((await call('GET', '/api/bots', { token: alice.token })).body.bots[0].settings.deviceId, null);
+
+  // A closed Bot is no longer handed to a device.
+  await call('POST', '/api/devices/laptop-0001/sync', { token: laptop, body: { report: {} } });
+  assert.equal((await call('DELETE', `/api/bots/${bot.id}`, { token: alice.token })).status, 200);
+  assert.deepEqual((await call('POST', '/api/devices/laptop-0001/sync', { token: laptop, body: { report: {} } })).body.bots, []);
+});
+
 test('first start seeds the saved configuration from the environment and the file wins afterwards', async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-central-config-'));
   t.after(() => rm(root, { recursive: true, force: true }));

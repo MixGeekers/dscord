@@ -147,3 +147,116 @@ export async function searchServers(
   );
   return servers;
 }
+
+/** What the owner set a Bot up to be. An empty model means the device's default. */
+export interface BotSettings {
+  role: string;
+  model: string;
+  effort: string;
+  deviceId: string | null;
+  /** Origins of the chat servers the Bot is on. */
+  servers: string[];
+  revision: number;
+}
+
+export type BotConnection = "offline" | "connecting" | "online" | "error";
+
+/** A Bot the person owns, as the central server keeps it and as the device that runs it last reported. */
+export interface ManagedBot {
+  id: string;
+  username: string;
+  globalId: string;
+  displayName: string;
+  status: "active" | "disabled" | "closed";
+  settings: BotSettings;
+  /** Missing while no device runs the Bot. */
+  runtime: {
+    online: boolean;
+    revision?: number;
+    model?: string;
+    error?: string;
+    servers?: Record<string, { status: BotConnection; error?: string }>;
+  } | null;
+}
+
+/** A DSH the person linked with a connection key, and the models it can run. */
+export interface Device {
+  id: string;
+  label: string;
+  online: boolean;
+  lastSeen: string;
+  models: {
+    providers: {
+      id: string;
+      name: string;
+      models: { model: string; name?: string; needsKey?: boolean }[];
+    }[];
+    defaultModel: string;
+    error?: string;
+  } | null;
+  plugin: { version: string; available?: string | null } | null;
+}
+
+export type BotInput = Partial<
+  Pick<BotSettings, "role" | "model" | "deviceId" | "servers">
+> & { displayName?: string };
+
+export async function listBots(
+  issuer: string,
+  token: string,
+): Promise<ManagedBot[]> {
+  const { bots } = await call<{ bots: ManagedBot[] }>(issuer, "/api/bots", {
+    token,
+  });
+  return bots.filter((bot) => bot.status === "active");
+}
+
+export async function createBot(
+  issuer: string,
+  token: string,
+  input: BotInput,
+): Promise<ManagedBot> {
+  const { bot } = await call<{ bot: ManagedBot }>(issuer, "/api/bots", {
+    method: "POST",
+    token,
+    body: input,
+  });
+  return bot;
+}
+
+export async function updateBot(
+  issuer: string,
+  token: string,
+  id: string,
+  input: BotInput,
+): Promise<ManagedBot> {
+  const { bot } = await call<{ bot: ManagedBot }>(
+    issuer,
+    `/api/bots/${encodeURIComponent(id)}`,
+    { method: "PATCH", token, body: input },
+  );
+  return bot;
+}
+
+export async function listDevices(
+  issuer: string,
+  token: string,
+): Promise<Device[]> {
+  const { devices } = await call<{ devices: Device[] }>(
+    issuer,
+    "/api/devices",
+    { token },
+  );
+  return devices;
+}
+
+export async function removeDevice(
+  issuer: string,
+  token: string,
+  id: string,
+): Promise<void> {
+  await call(issuer, `/api/devices/${encodeURIComponent(id)}`, {
+    method: "DELETE",
+    token,
+  });
+}

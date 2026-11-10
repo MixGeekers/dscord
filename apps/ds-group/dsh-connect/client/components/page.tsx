@@ -11,7 +11,6 @@ import {
   DecisionProviderForm,
   KernelUpdatePanel,
 } from "./kernel";
-import { ServersPanel } from "./servers";
 
 const STEPS: [MessageKey, MessageKey][] = [
   ["stepAccount", "stepAccountHint"],
@@ -23,8 +22,10 @@ const STEPS: [MessageKey, MessageKey][] = [
 function SetupGuide({ value, t }: { value: ConnectionState; t: Translate }) {
   const done = [
     Boolean(value.user),
-    Boolean(value.nativeBots?.length || value.bots.length),
-    value.bots.some((bot) => bot.connected || bot.status === "online"),
+    value.bots.length > 0,
+    value.bots.some((bot) =>
+      bot.servers.some((server) => server.status === "online"),
+    ),
   ];
   if (done[2]) return null;
   const current = done.indexOf(false);
@@ -57,7 +58,7 @@ function SetupGuide({ value, t }: { value: ConnectionState; t: Translate }) {
   );
 }
 
-/** What the last action said, and anything wrong with the connection; it stays in view while the page scrolls. */
+/** What the last action said, and anything wrong with the link; it stays in view while the page scrolls. */
 function Notices({
   state,
   value,
@@ -70,12 +71,10 @@ function Notices({
   const errorMessage = state.errorTranslation
     ? t(state.errorTranslation.key, state.errorTranslation.params)
     : state.error;
-  const lastError =
-    value?.lastError && value.lastError !== errorMessage
-      ? value.lastError
-      : null;
+  const unreachable = value?.user && value.lastError ? value.lastError : null;
   const runtimeDown = value?.runtime?.available === false;
-  if (!state.notice && !errorMessage && !lastError && !runtimeDown) return null;
+  if (!state.notice && !errorMessage && !unreachable && !runtimeDown)
+    return null;
   return (
     <div className="dc-notices">
       {state.notice && (
@@ -88,9 +87,9 @@ function Notices({
           {errorMessage}
         </p>
       )}
-      {lastError && (
+      {unreachable && (
         <p role="alert" className="dc-notice" data-tone="error">
-          {lastError}
+          {t("centralUnreachable", { error: unreachable })}
         </p>
       )}
       {runtimeDown && (
@@ -102,7 +101,10 @@ function Notices({
   );
 }
 
-/** DSCord's page in DSH: connect the account, run Bots, pick chat servers, then the settings few people need. */
+/**
+ * DSCord's page in DSH. It links this DSH to the owner's account and shows the Bots that account runs here;
+ * Bots themselves are set up on the DSCord web page.
+ */
 export function ConnectionPage({
   connection,
   t,
@@ -118,7 +120,6 @@ export function ConnectionPage({
   const value = state.value;
   const user = value?.user;
   const busy = state.loading || Boolean(state.busy);
-  const ready = value ? { connection, state, value, t } : null;
   return (
     <section
       className="dscord-connect"
@@ -133,7 +134,11 @@ export function ConnectionPage({
             {user && (
               <div className="dc-account" aria-label={t("account")}>
                 <p className="dc-account-name">{user.name || user.id}</p>
-                <p className="dc-meta">{user.globalId || user.id}</p>
+                <p className="dc-meta">
+                  {[user.globalId || user.id, value?.label]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
               </div>
             )}
             {user && (
@@ -150,9 +155,11 @@ export function ConnectionPage({
               variant="outline"
               type="button"
               disabled={busy}
-              onClick={() => void connection.refresh()}
+              onClick={() =>
+                void (user ? connection.sync() : connection.refresh())
+              }
             >
-              {t("refresh")}
+              {t(state.busy?.action === "sync" ? "refreshing" : "refresh")}
             </Button>
           </div>
         </header>
@@ -162,17 +169,11 @@ export function ConnectionPage({
             {t("readStatus")}
           </p>
         )}
-        {value?.nativeMode && <SetupGuide value={value} t={t} />}
+        {value && <SetupGuide value={value} t={t} />}
         {!state.loading && !user && (
           <LoginForm connection={connection} state={state} t={t} />
         )}
-        {ready && (ready.value.nativeMode || user) && (
-          <BotsPanel
-            key={`${ready.value.hostId || "local"}/${user?.id || "local-owner"}`}
-            {...ready}
-          />
-        )}
-        {ready && user && <ServersPanel {...ready} />}
+        {value && user && <BotsPanel value={value} t={t} />}
         {value?.kernelUpdates && (
           <KernelUpdatePanel
             connection={connection}
@@ -180,12 +181,10 @@ export function ConnectionPage({
             t={t}
           />
         )}
-        {(value?.nativeMode || value?.dataDirectory) && (
+        {value && (
           <section className="dc-panel" aria-label={t("advanced")}>
             <h2>{t("advanced")}</h2>
-            {value.nativeMode && (
-              <DecisionProviderForm connection={connection} t={t} />
-            )}
+            <DecisionProviderForm connection={connection} t={t} />
             {value.dataDirectory && (
               <ConfigDirectory directory={value.dataDirectory} t={t} />
             )}

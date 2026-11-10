@@ -22,6 +22,8 @@ export interface Participant {
   localpart?: string;
   kind: "human" | "bot";
   ownerId?: string;
+  /** The central account behind this participant, the same on every chat server. */
+  globalId?: string;
   status?: string;
   nativeBinding?: { hostId: string; nativeBotId: string; botId: string };
 }
