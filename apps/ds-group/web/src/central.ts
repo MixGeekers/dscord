@@ -195,6 +195,15 @@ export interface Device {
     error?: string;
   } | null;
   plugin: { version: string; available?: string | null } | null;
+  /** The model that decides when this device's Bots speak. It is set up in DSH on the device, never here. */
+  decision: {
+    configured: boolean;
+    enabled: boolean;
+    /** Whether the service answered the last time it was asked; null before the first question. */
+    available: boolean | null;
+    model: string | null;
+    error?: string;
+  } | null;
 }
 
 export type BotInput = Partial<

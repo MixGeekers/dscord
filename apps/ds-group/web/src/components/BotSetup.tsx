@@ -2,6 +2,7 @@ import { Input, NativeSelect, Textarea } from "../../../ui/controls";
 import type { Device } from "../central";
 import { useTranslation } from "../locale";
 import { botMessages } from "../locales/bots";
+import { lacksDecision } from "../managed-bots";
 import type { BotStage } from "../managed-bots";
 
 /** What the owner decides about a Bot. An empty model follows the device; an empty device waits for the first one. */
@@ -39,6 +40,17 @@ export function StageLabel({ stage }: { stage: BotStage }) {
  * The name, role, device and model of a Bot. The device is always shown, so it is plain where the Bot will
  * run; the models are the ones that device reported, so a model it cannot run is never offered.
  */
+/** Said wherever a device is named whose Bots would run without their decision model. */
+export function DecisionWarning({ device }: { device: Device | undefined }) {
+  const t = useTranslation(botMessages);
+  if (!lacksDecision(device)) return null;
+  return (
+    <p className="small bot-decision-warning" data-decision-warning>
+      {t("decisionMissing")}
+    </p>
+  );
+}
+
 export function BotSetupFields({
   idPrefix,
   value,
@@ -106,6 +118,7 @@ export function BotSetupFields({
         ))}
       </NativeSelect>
       {!devices.length && <p className="small muted">{t("deviceNone")}</p>}
+      <DecisionWarning device={device} />
       <label htmlFor={id("model")}>{t("model")}</label>
       <NativeSelect
         id={id("model")}

@@ -3,18 +3,51 @@ export const localeNamespace = "dscord.connection";
 
 export const zh = {
   unknown: "未知",
-  decisionTitle: "参与判断服务",
-  decisionApiKey: "判断服务 API key",
-  decisionKeyHelp:
-    "只保存在这台设备。已保存的 key 不会再显示，留空则保留现有的 key。",
-  enableDecision: "启用自然参与判断",
-  saveDecision: "保存判断服务",
-  configured: "已配置",
-  notConfigured: "未配置",
-  available: "可用",
-  availabilityUnknown: "可用状态未知",
-  decisionSaved: "判断服务已保存",
-  serviceUnavailable: "不可用",
+  decisionTitle: "决策模型",
+  decisionHelp:
+    "Bot 靠它判断什么时候该开口。它和 Bot 回答用的模型是两回事，只保存在这台设备上，这台设备运行的 Bot 共用。",
+  decisionDoesJoin:
+    "设为「自然参与」的 Bot 没被 @ 时，靠它判断该接话、等一等，还是继续听。",
+  decisionDoesTurns:
+    "对方连发几条消息时，靠它判断是等对方说完、并进正在写的回答，还是分开回答。",
+  decisionWithout:
+    "没有它，Bot 只在被 @ 或私聊时回答，「自然参与」不起作用；连发的消息只能按固定时间等一下再答，分不清你有没有说完。",
+  decisionMissing: "未配置",
+  decisionDisabled: "已停用",
+  decisionFailed: "验证失败",
+  decisionUnchecked: "已配置，尚未验证",
+  decisionReady: "运行正常",
+  decisionSetup1: "准备一把决策服务的 API key，默认是 OpenAI 的 key。",
+  decisionSetup2: "填在下面。模型和服务地址已填好默认值，用别的服务时再改。",
+  decisionSetup3: "点「保存并验证」，这里会立刻问服务一次，告诉你能不能用。",
+  decisionApiKey: "决策模型 API key",
+  decisionKeyNeeded: "必填。只保存在这台设备，保存后不会再显示。",
+  decisionKeyHelp: "已保存一把 key，不会再显示。留空则继续用它，填写则替换。",
+  decisionModelName: "决策模型名",
+  decisionModelHelp: "决策服务里的模型名。清空后恢复默认。",
+  decisionEndpoint: "服务地址",
+  decisionEndpointHelp: "Decisions 接口的完整地址。清空后恢复默认。",
+  enableDecision: "启用决策模型",
+  saveDecision: "保存并验证",
+  decisionSaving: "正在验证…",
+  decisionEdit: "修改设置",
+  decisionSaved: "已保存，决策模型可以用了。",
+  decisionSavedNoKey: "已保存，但还没有 API key，决策模型还不能用。",
+  decisionSavedDisabled: "已保存。决策模型现在是停用的。",
+  decisionSavedFailed: "已保存，但验证没有通过。",
+  decisionErrorKey:
+    "服务拒绝了这把 key（{code}）。检查 key 有没有填对、能不能用这个模型。",
+  decisionErrorAddress: "服务地址不对，或服务里没有这个模型（{code}）。",
+  decisionErrorLimit:
+    "服务说请求太多或额度用完了（{code}）。稍后再点一次「保存并验证」。",
+  decisionErrorProtocol:
+    "服务有回应，但不是决策模型该有的回答（{code}）。检查地址是不是 Decisions 接口、模型名是否一致。",
+  decisionErrorUnreachable:
+    "连不上服务或等待超时（{code}）。检查网络和服务地址。",
+  decisionErrorOther: "服务没有正常回答（{code}）。",
+  decisionEndpointInvalid:
+    "服务地址要以 http:// 或 https:// 开头，不能带账号密码或 # 片段。",
+  decisionModelInvalid: "模型名不能为空，也不能有空格。",
   kernelConflict:
     "这台设备正在运行旧的 Bot 内核。请先停用旧插件，按迁移说明启用 DSCord。",
   model: "模型",
@@ -67,7 +100,6 @@ export const zh = {
   updateNotRegistry: "插件不是从 npm 安装的，请手动安装新版本。",
   notJoined: "还没有加入聊天服务器。在网页的「我的 Bot」里让它加入。",
   openChat: "去聊天",
-  decisionHelp: "「自然参与」的 Bot 用这个服务判断什么时候该说话。",
   loginStep1:
     "在 DSCord 网页点「添加 Bot」，或打开「设置 → 账号 → 连接 DSH」。",
   loginStep2: "点「复制连接密钥」。",
@@ -78,6 +110,8 @@ export const zh = {
   guideLabel: "开始使用",
   stepAccount: "连接账号",
   stepAccountHint: "粘贴网页上复制的连接密钥",
+  stepDecision: "配置决策模型",
+  stepDecisionHint: "在下面填 API key 并验证",
   stepBot: "添加 Bot",
   stepBotHint: "在 DSCord 网页点「添加 Bot」",
   stepOnline: "上线",
@@ -96,18 +130,60 @@ export const zh = {
 
 export const en: Record<keyof typeof zh, string> = {
   unknown: "Unknown",
-  decisionTitle: "Participation service",
-  decisionApiKey: "Decision service API key",
+  decisionTitle: "Decision model",
+  decisionHelp:
+    "Bots use it to judge when to speak. It is separate from the model a Bot answers with, is kept only on this device, and is shared by the Bots this device runs.",
+  decisionDoesJoin:
+    "A Bot set to “Join naturally” uses it, when nobody mentions the Bot, to decide whether to join in, wait, or keep listening.",
+  decisionDoesTurns:
+    "When someone sends several messages in a row, it decides whether to wait for the rest, fold them into the answer being written, or answer each one.",
+  decisionWithout:
+    "Without it, Bots answer only when mentioned or messaged directly and “Join naturally” does nothing; messages sent in a row are answered after a fixed pause, with no sense of whether you have finished.",
+  decisionMissing: "Not set up",
+  decisionDisabled: "Turned off",
+  decisionFailed: "Check failed",
+  decisionUnchecked: "Set up, not checked yet",
+  decisionReady: "Working",
+  decisionSetup1:
+    "Get an API key for the decision service. By default that is an OpenAI key.",
+  decisionSetup2:
+    "Enter it below. The model and address are filled in with the defaults; change them only for another service.",
+  decisionSetup3:
+    "Choose “Save and check”. The service is asked once right away, and this panel says whether it works.",
+  decisionApiKey: "Decision model API key",
+  decisionKeyNeeded:
+    "Required. Stored only on this device and never shown again.",
   decisionKeyHelp:
-    "Stored only on this device. A saved key is never shown again; leave this blank to keep it.",
-  enableDecision: "Enable natural participation decisions",
-  saveDecision: "Save participation service",
-  configured: "Configured",
-  notConfigured: "Not configured",
-  available: "Available",
-  availabilityUnknown: "Availability unknown",
-  decisionSaved: "Participation service saved",
-  serviceUnavailable: "Unavailable",
+    "A key is saved and is never shown again. Leave this blank to keep it, or enter a new one to replace it.",
+  decisionModelName: "Decision model name",
+  decisionModelHelp:
+    "The model’s name at the decision service. Clear it to return to the default.",
+  decisionEndpoint: "Service address",
+  decisionEndpointHelp:
+    "The full address of the Decisions endpoint. Clear it to return to the default.",
+  enableDecision: "Use the decision model",
+  saveDecision: "Save and check",
+  decisionSaving: "Checking…",
+  decisionEdit: "Change settings",
+  decisionSaved: "Saved. The decision model is working.",
+  decisionSavedNoKey:
+    "Saved, but there is no API key yet, so the decision model cannot work.",
+  decisionSavedDisabled: "Saved. The decision model is turned off.",
+  decisionSavedFailed: "Saved, but the check did not pass.",
+  decisionErrorKey:
+    "The service refused this key ({code}). Check the key and that it may use this model.",
+  decisionErrorAddress:
+    "The address is wrong, or the service does not have this model ({code}).",
+  decisionErrorLimit:
+    "The service says there are too many requests or the quota is used up ({code}). Choose “Save and check” again later.",
+  decisionErrorProtocol:
+    "The service answered, but not the way a decision model does ({code}). Check that the address is a Decisions endpoint and the model name matches.",
+  decisionErrorUnreachable:
+    "The service could not be reached or took too long ({code}). Check the network and the address.",
+  decisionErrorOther: "The service did not answer properly ({code}).",
+  decisionEndpointInvalid:
+    "The address must start with http:// or https:// and carry no credentials or # fragment.",
+  decisionModelInvalid: "The model name cannot be empty or contain spaces.",
   kernelConflict:
     "An older Bot kernel is running on this device. Stop its plugin and follow the migration instructions to enable DSCord.",
   model: "Model",
@@ -167,8 +243,6 @@ export const en: Record<keyof typeof zh, string> = {
   notJoined:
     "Not on any chat server yet. Add it to one under “My Bots” on the web page.",
   openChat: "Open chat",
-  decisionHelp:
-    "Bots that join naturally use this service to decide when to speak.",
   loginStep1:
     "On the DSCord web page, choose “Add a Bot”, or open Settings → Account → Connect DSH.",
   loginStep2: "Choose “Copy connection key”.",
@@ -179,6 +253,8 @@ export const en: Record<keyof typeof zh, string> = {
   guideLabel: "Getting started",
   stepAccount: "Connect your account",
   stepAccountHint: "Paste the key copied from the web page",
+  stepDecision: "Set up the decision model",
+  stepDecisionHint: "Enter an API key below and check it",
   stepBot: "Add a Bot",
   stepBotHint: "Choose “Add a Bot” on the DSCord web page",
   stepOnline: "Go online",

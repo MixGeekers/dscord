@@ -12,6 +12,7 @@ export interface ConnectionState {
   lastError?: string | null;
   syncedAt?: string | null;
   dataDirectory?: string;
+  decision?: DecisionProvider | null;
   kernelUpdates?: KernelUpdates;
 }
 
@@ -46,12 +47,22 @@ export interface KernelUpdates {
 }
 
 export interface KernelState {
-  decisionProvider?: DecisionProvider | null;
+  /** What the settings form starts from. The key itself is never read back. */
+  decisionForm?: {
+    enabled: boolean;
+    hasKey: boolean;
+    model: string;
+    endpoint: string;
+  } | null;
 }
 
+/** The service that decides when Bots speak, as the device reports it. */
 export interface DecisionProvider {
   enabled?: boolean;
   configured?: boolean;
+  /** Whether the service answered the last time it was asked; null before the first question. */
   available?: boolean | null;
-  model?: string;
+  model?: string | null;
+  /** The code of the last failed question. */
+  error?: string;
 }

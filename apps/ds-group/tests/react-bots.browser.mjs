@@ -59,7 +59,9 @@ const reportPath = path.join(packageRoot, '.local/react-bots-browser.json');
 const checks = [];
 const pageErrors = [];
 const report = { status: 'failed', level: 'real-chromium-page-real-central-and-actual-dsh-controller-with-synthetic-kernel', checks, pageErrors, modelCalls: 0, screenshots: [] };
-const f = await connectFixture();
+// The device starts without its decision model, as a fresh DSH does.
+let decision = { configured: false, enabled: true, available: false, model: 'gpt-6-luna' };
+const f = await connectFixture({ processes: { decisionStatus: () => decision } });
 const output = path.join(packageRoot, '.local/react-bots-browser');
 const server = await createServer({
   configFile: false,
@@ -152,6 +154,8 @@ try {
   assert.equal(f.live.size, 1);
   await dialog.getByText('Shiyu is online and ready to chat.', { exact: true }).waitFor();
   await page.locator('#create-bot-chat:enabled').waitFor();
+  // The Bot is online, but its device has no decision model yet: the page says what that costs and where to fix it.
+  await dialog.locator('[data-decision-warning]').getByText('This device has no working decision model', { exact: false }).waitFor();
   await shots('create-online');
   await page.locator('#create-bot-chat').click();
   await page.locator('#create-bot-dialog').waitFor({ state: 'hidden' });
@@ -168,6 +172,7 @@ try {
   assert.equal(await page.locator('#create-bot-name').inputValue(), '', 'the form starts empty each time');
   await page.locator('#create-bot-name').fill('数据员');
   await page.locator('#create-bot-model').selectOption('fixture/large');
+  assert.equal(await dialog.locator('.bot-setup-fields [data-decision-warning]').count(), 1, 'the chosen device is named as lacking its decision model');
   await shots('create-form-device');
   await page.locator('#create-bot-submit').click();
   await page.locator('#create-bot-progress[data-stage="online"]').waitFor();
@@ -186,6 +191,15 @@ try {
   assert.equal(await manage.locator('[data-managed-bot]').count(), 2);
   const device = manage.locator('[data-device]');
   assert.match(await device.innerText(), /DSH laptop[\s\S]*Default model fixture\/default[\s\S]*Online/);
+  assert.match(await device.locator('[data-decision-warning]').innerText(), /Set it up in the DSCord panel of DSH on that computer/);
+  assert.equal(await manage.locator('input[type="password"]').count(), 0, 'the decision model is set up on the device, never here');
+  checks.push('aDeviceWithoutItsDecisionModelIsNamedOnThePageWithWhereToSetItUp');
+  await device.scrollIntoViewIfNeeded();
+  await shots('manage-device-decision');
+  await manage.locator('.dialog-scroll-region').evaluate(element => { element.scrollTop = 0; });
+  // Once the owner sets it up in DSH and it answers, the device reports that and the warning leaves.
+  decision = { configured: true, enabled: true, available: true, model: 'gpt-6-luna' };
+  await device.locator('[data-decision-warning]').waitFor({ state: 'detached' });
   await row.locator('[data-bot-setup-button]').click();
   await row.getByLabel('Name', { exact: true }).fill('诗雨');
   await row.getByLabel('Role', { exact: true }).fill('Keeps the garden plan');

@@ -28,7 +28,9 @@ export const styles = `${tokens}
 .dscord-connect .dc-notice[data-tone="success"] { border-color: color-mix(in srgb, var(--color-status-success) 45%, transparent); background: color-mix(in srgb, var(--color-status-success) 10%, var(--color-bg-primary)); }
 .dscord-connect .dc-notice[data-tone="error"] { border-color: color-mix(in srgb, var(--color-status-danger) 45%, transparent); background: color-mix(in srgb, var(--color-status-danger) 8%, var(--color-bg-primary)); color: var(--color-text-danger); }
 
-.dscord-connect .dc-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.dscord-connect .dc-notice[data-tone="warning"] { border-color: color-mix(in srgb, var(--color-status-warning) 45%, transparent); background: color-mix(in srgb, var(--color-status-warning) 10%, var(--color-bg-primary)); }
+
+.dscord-connect .dc-steps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--space-4); }
 .dscord-connect .dc-step { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-5) var(--space-6); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-xl); color: var(--color-text-muted); line-height: var(--line-height-compact); }
 .dscord-connect .dc-step-mark { display: grid; place-items: center; flex: 0 0 auto; width: var(--space-11); height: var(--space-11); border: 1px solid currentColor; border-radius: var(--radius-round); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
 .dscord-connect .dc-step-copy { display: grid; gap: var(--space-1); min-width: 0; }
@@ -40,6 +42,9 @@ export const styles = `${tokens}
 
 .dscord-connect .dc-panel { display: grid; gap: var(--space-8); padding: var(--space-10) var(--space-12); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-xl); background: var(--color-bg-secondary); }
 .dscord-connect .dc-heading { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--space-2) var(--space-8); }
+.dscord-connect .dc-decision:is([data-state="missing"], [data-state="disabled"]) { border-color: color-mix(in srgb, var(--color-status-warning) 55%, transparent); }
+.dscord-connect .dc-decision[data-state="failed"] { border-color: color-mix(in srgb, var(--color-status-danger) 55%, transparent); }
+.dscord-connect .dc-points { display: grid; gap: var(--space-3); padding-left: var(--space-9); list-style: disc; }
 .dscord-connect .dc-how { display: grid; gap: var(--space-3); counter-reset: dc-how; color: var(--color-text-muted); }
 .dscord-connect .dc-how li { display: flex; gap: var(--space-4); counter-increment: dc-how; }
 .dscord-connect .dc-how li::before { content: counter(dc-how) "."; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
@@ -81,6 +86,7 @@ export const styles = `${tokens}
 .dscord-connect .dc-status[data-status="online"] { color: var(--color-status-success); }
 .dscord-connect .dc-status[data-status="error"] { color: var(--color-status-danger); }
 .dscord-connect .dc-status[data-status="connecting"] { color: var(--color-accent); }
+.dscord-connect .dc-status[data-status="warning"] { color: var(--color-status-warning); }
 
 .dscord-connect .dc-disclosure > summary { display: flex; align-items: center; gap: var(--space-4); width: fit-content; cursor: pointer; font-weight: var(--font-weight-medium); list-style: none; }
 .dscord-connect .dc-disclosure > summary::-webkit-details-marker { display: none; }

@@ -8,7 +8,7 @@ import { useTranslation } from "../locale";
 import { botMessages } from "../locales/bots";
 import { botStage, useManagedBots } from "../managed-bots";
 import type { Participant, Session } from "../types";
-import { BotSetupFields, StageLabel } from "./BotSetup";
+import { BotSetupFields, DecisionWarning, StageLabel } from "./BotSetup";
 import type { BotSetup } from "./BotSetup";
 import { ConnectDsh } from "./ConnectDsh";
 import { Icon } from "./Icons";
@@ -156,6 +156,13 @@ export function CreateBotDialog({
               <p>{t("notHereHelp", { name: bot.displayName })}</p>
             )}
             {online && <p>{t("onlineHelp", { name: bot.displayName })}</p>}
+            {online && (
+              <DecisionWarning
+                device={managed.devices.find(
+                  (device) => device.id === bot.settings.deviceId,
+                )}
+              />
+            )}
             {stage.detail && (
               <p className="settings-feedback error-text" role="alert">
                 {stage.detail}

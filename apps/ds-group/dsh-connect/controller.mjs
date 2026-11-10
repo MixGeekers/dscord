@@ -123,7 +123,7 @@ export class ConnectController {
     }));
     return { centralUrl: this.state.centralUrl, webUrl: this.state.webUrl || '', user: this.state.user, hostId: this.state.hostId,
       label: this.label, bots, runtime: this.runtime, lastError: this.lastError, syncedAt: this.syncedAt,
-      nativeBundled: this.native.bundled === true, dataDirectory: this.directory,
+      nativeBundled: this.native.bundled === true, dataDirectory: this.directory, decision: this.decision(),
       ...(this.updates ? { kernelUpdates: this.updates.view() } : {}) };
   }
 
@@ -139,6 +139,13 @@ export class ConnectController {
     return value;
   }
 
+  /** Whether the service that decides when Bots speak is set up here. Without it Bots answer only when named. */
+  decision() {
+    const { configured, enabled, available, model, error } = this.processes.decisionStatus();
+    return { configured: configured === true, enabled: enabled !== false, available: available ?? null, model: model || null,
+      ...(error ? { error } : {}) };
+  }
+
   async report() {
     const bots = {};
     for (const bot of this.state.bots) {
@@ -150,7 +157,8 @@ export class ConnectController {
     }
     const updates = this.updates?.view();
     return { models: await this.modelCatalog(), runtime: this.runtime?.available ? null : this.runtime?.message || null,
-      plugin: updates ? { version: updates.current, available: updates.available, compatible: updates.compatible } : null, bots };
+      plugin: updates ? { version: updates.current, available: updates.available, compatible: updates.compatible } : null,
+      decision: this.decision(), bots };
   }
 
   /**

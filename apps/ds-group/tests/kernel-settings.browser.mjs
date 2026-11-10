@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 import { packageRoot } from '../src/paths.mjs';
 import { CHAT, connectFixture } from './fixtures/connect.mjs';
 import { DecisionSettings } from '../dsh-connect/decision-settings.mjs';
+import { createOpenAIDecisionProvider } from '../src/decision-provider.mjs';
 import { KernelUpdates } from '../dsh-connect/kernel-updates.mjs';
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'dscord-kernel-ui-'));
@@ -223,7 +224,16 @@ try {
   // server; here the real controller follows a real central server, with a synthetic kernel underneath.
   const nativeRequests = [];
   await mkdir(path.join(temporary, 'decision'), { recursive: true });
-  const decisionSettings = await new DecisionSettings({ directory: path.join(temporary, 'decision'), environment: {}, providerFactory: () => ({ model: 'participation-model', health: () => ({ health: 'ok' }) }) }).initialize();
+  // A synthetic decision service: it refuses every key but one, and answers as the model it was asked for.
+  const decisionCalls = [];
+  const decisionFetch = async (url, options) => {
+    const body = JSON.parse(options.body); decisionCalls.push({ url, model: body.model });
+    if (options.headers.Authorization !== 'Bearer synthetic-decision-key') return new Response('{}', { status: 401 });
+    return Response.json({ model: body.model, answers: [{ name: body.questions[0].name, type: 'choice', choice: 'REPLY', confidence: 0.9,
+      probabilities: [{ value: 'WAIT', probability: 0.05 }, { value: 'JOIN', probability: 0.05 }, { value: 'REPLY', probability: 0.9 }] }] });
+  };
+  const decisionSettings = await new DecisionSettings({ directory: path.join(temporary, 'decision'), environment: {},
+    providerFactory: options => createOpenAIDecisionProvider({ ...options, fetchImpl: decisionFetch }) }).initialize();
   // A synthetic registry: the plugin runs 0.4.0 and a newer release speaks the same protocol.
   const pluginManager = { listBundles: () => [{ name: 'dscord', source: '^0.4.0' }], registries: () => ({ registry: 'https://registry.test/' }),
     installBundle: async () => ({ application: 'restart-required' }) };
@@ -233,8 +243,9 @@ try {
   updates.observeProtocol('1.0');
   await updates.check({ fresh: true });
   f = await connectFixture({ updates, processes: {
-    kernelState: async () => ({ runtime: { id: 'dscord-kernel', available: true }, decisionProvider: decisionSettings.publicStatus() }),
-    saveDecisionProvider: settings => decisionSettings.save(settings),
+    kernelState: async () => ({ runtime: { id: 'dscord-kernel', available: true }, decisionProvider: decisionSettings.publicStatus(), decisionForm: decisionSettings.form() }),
+    saveDecisionProvider: async settings => { await decisionSettings.save(settings); return decisionSettings.verify(); },
+    decisionStatus: () => decisionSettings.publicStatus(),
   } });
   await page.route('**/api/dscord', async route => {
     const body = route.request().postDataJSON(); nativeRequests.push({ ...body, ...(body.apiKey ? { apiKey: '[redacted synthetic test key]' } : {}) });
@@ -248,6 +259,14 @@ try {
   // DSH reports every few seconds; the test does not wait that long.
   reporting = setInterval(() => void f.controller.synchronize().catch(() => {}), 300);
   const step = () => page.locator('.dc-step[aria-current="step"]').innerText().then(text => text.split('\n')[1]);
+  // The same view in the other language and theme, for the people who read the screenshots.
+  const alsoChinese = async name => {
+    await page.evaluate(() => { window.fixture.locale('zh'); document.body.removeAttribute('data-ds-dark-theme'); });
+    await page.getByRole('region', { name: '决策模型' }).waitFor();
+    await screenshot(name);
+    await page.evaluate(() => { window.fixture.locale('en'); document.body.setAttribute('data-ds-dark-theme', ''); });
+    await page.getByRole('region', { name: 'Decision model' }).waitFor();
+  };
   await page.setViewportSize({ width: 1000, height: 900 });
   await page.goto(`${origin}/__native`);
   await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
@@ -261,18 +280,27 @@ try {
     element.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true, cancelable: true }));
   }, key);
   await page.getByText('No Bots yet. Choose “Add a Bot” on the DSCord web page', { exact: false }).waitFor();
-  assert.equal(await step(), 'Add a Bot');
+  // The decision model is the next step, with its own panel ahead of the Bots: what it is for, what is lost without it, and the form.
+  assert.equal(await step(), 'Set up the decision model');
+  const decision = page.getByRole('region', { name: 'Decision model' });
+  assert.equal(await decision.getAttribute('data-state'), 'missing');
+  assert.match(await decision.innerText(), /Not set up[\s\S]*Without it, Bots answer only when mentioned[\s\S]*Get an API key/);
+  assert.deepEqual([await decision.getByLabel('Decision model name', { exact: true }).inputValue(), await decision.getByLabel('Service address', { exact: true }).inputValue()],
+    ['gpt-6-luna', 'https://api.openai.com/v1/decisions']);
+  assert.ok(await page.evaluate(() => { const [first, second] = [...document.querySelectorAll('.dc-decision, [aria-label="Bots this device runs"]')]; return first.matches('.dc-decision') && Boolean(second); }));
   assert.deepEqual(nativeRequests.filter(item => item.action === 'login').map(item => Object.keys(item)), [['action', 'key']]);
   assert.equal(await page.getByRole('link', { name: 'Open DSCord on the web' }).first().getAttribute('href'), `${CHAT}/`);
   assert.equal(await page.getByRole('region', { name: 'Bots this device runs' }).locator('input, select, textarea, button').count(), 0, 'nothing about a Bot is set here');
   checks.push('pastingTheConnectionKeyLinksDshAndThePanelPointsToTheWebPageForBots');
   await screenshot('panel-linked-dark-en.png');
+  await alsoChinese('panel-decision-missing-light-zh.png');
   // A Bot the owner adds on the web page appears and goes online with no step here.
   const bot = await f.createBot({ displayName: 'Shiyu', role: 'A friend and project partner', model: 'fixture/large', servers: [CHAT] });
   const card = page.getByRole('listitem', { name: 'Shiyu', exact: true });
   await card.locator('[data-status="online"]').waitFor();
   assert.match(await card.innerText(), new RegExp(`${bot.globalId}[\\s\\S]*fixture/large[\\s\\S]*chat\\.example[\\s\\S]*Online`));
-  assert.equal(await page.locator('.dc-step[aria-current="step"]').count(), 0, 'the guide is done once a Bot is online');
+  assert.equal(await step(), 'Set up the decision model', 'a Bot that is online without its decision model is not finished');
+  assert.equal((await f.api('GET', '/api/devices', { token: f.alice })).devices[0].decision.configured, false, 'the owner\'s web page is told');
   assert.deepEqual(f.locals.map(local => [local.name, local.role, local.model]), [['Shiyu', 'A friend and project partner', 'fixture/large']]);
   assert.deepEqual(nativeRequests.map(item => item.action).filter(action => !['status', 'kernel-state', 'kernel-update-status', 'sync', 'login'].includes(action)), []);
   checks.push('aBotAddedOnTheWebPageAppearsOnTheDeviceAndGoesOnlineWithoutAnyPanelStep');
@@ -284,15 +312,47 @@ try {
   const renamed = page.getByRole('listitem', { name: '诗雨', exact: true });
   await renamed.locator('[data-status="online"]').waitFor();
   checks.push('thePanelFollowsChangesMadeOnTheWebPage');
-  await page.getByText('Participation service', { exact: true }).click();
-  await page.getByLabel('Decision service API key', { exact: true }).fill('synthetic-decision-key');
-  await page.getByRole('button', { name: 'Save participation service', exact: true }).click();
-  await page.getByRole('status').filter({ hasText: 'Participation service saved' }).waitFor();
-  assert.equal(await page.getByLabel('Decision service API key', { exact: true }).inputValue(), '');
+  // Saving asks the service at once. A key it refuses is said so, with what to check, and the form stays in reach.
+  const keyField = decision.getByLabel('Decision model API key', { exact: true });
+  const save = decision.getByRole('button', { name: 'Save and check', exact: true });
+  await keyField.fill('synthetic-wrong-key');
+  await save.click();
+  await decision.getByRole('alert').filter({ hasText: 'The service refused this key (ATTENTION_HTTP_401)' }).waitFor();
+  assert.equal(await decision.getAttribute('data-state'), 'failed');
+  assert.match(await decision.locator('.dc-status').innerText(), /Check failed/);
+  assert.equal(await keyField.inputValue(), '');
+  assert.equal(await step(), 'Set up the decision model');
+  checks.push('aRefusedDecisionKeyIsReportedAtOnceWithWhatToCheck');
+  await decision.scrollIntoViewIfNeeded();
+  await screenshot('panel-decision-failed-dark-en.png');
+  await alsoChinese('panel-decision-failed-light-zh.png');
+  // A wrong address is refused before anything is saved, in the page's language.
+  await decision.getByLabel('Service address', { exact: true }).fill('ftp://decision.example');
+  await save.click();
+  await decision.getByRole('alert').filter({ hasText: 'The address must start with http:// or https://' }).waitFor();
+  assert.equal(await decision.getByLabel('Service address', { exact: true }).inputValue(), 'ftp://decision.example', 'what was typed stays to be corrected');
+  // The right key and the owner's own model: the status turns real and the guide is done.
+  await decision.getByLabel('Service address', { exact: true }).fill('https://decision.example/v2/decisions');
+  await decision.getByLabel('Decision model name', { exact: true }).fill('company/decision-v2');
+  await keyField.fill('synthetic-decision-key');
+  await save.click();
+  await decision.getByRole('status').filter({ hasText: 'Saved. The decision model is working.' }).waitFor();
+  assert.equal(await decision.getAttribute('data-state'), 'ready');
+  assert.equal(await decision.locator('.dc-status').innerText(), 'Working · company/decision-v2');
+  assert.deepEqual(decisionCalls.at(-1), { url: 'https://decision.example/v2/decisions', model: 'company/decision-v2' });
+  assert.equal(await decision.locator('form').isVisible(), false, 'a working model keeps its form folded away');
+  assert.equal(await page.locator('.dc-step').count(), 0, 'the guide is done once the decision model works and a Bot is online');
   assert.equal(await page.evaluate(() => JSON.stringify(window.fixture.connection.getSnapshot()).includes('synthetic-decision-key')), false);
   assert.equal((await page.locator('body').innerText()).includes('synthetic-decision-key'), false);
+  const reported = (await f.api('GET', '/api/devices', { token: f.alice })).devices[0].decision;
+  assert.equal(JSON.stringify(reported).includes('decision.example'), false, 'the address stays on the device');
   checks.push('decisionCredentialIsSubmitOnlyAndNeverReadBackOrStoredInConnectionSnapshot');
-  await screenshot('local-decision-private-dark-en.png');
+  checks.push('aWorkingDecisionModelCompletesTheGuideAndFoldsItsForm');
+  await screenshot('panel-decision-ready-dark-en.png');
+  await decision.locator('summary').click();
+  assert.equal(await decision.getByLabel('Decision model name', { exact: true }).inputValue(), 'company/decision-v2');
+  await alsoChinese('panel-decision-edit-light-zh.png');
+  await decision.locator('summary').click();
   const upgrades = page.getByRole('region', { name: 'Plugin version' });
   await upgrades.getByText('0.5.0 is available', { exact: true }).waitFor();
   await upgrades.locator('summary').click();

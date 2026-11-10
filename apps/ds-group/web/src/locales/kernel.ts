@@ -42,15 +42,15 @@ const en = {
     "Decide when a contribution would help, when to wait, and when to keep listening.",
   naturalNote:
     "Natural participation respects room access and work permissions. Staying quiet is an intentional choice.",
-  decisionModel: "Participation model",
+  decisionModel: "Decision model",
   configured: "Configured",
   notConfigured: "Not configured",
   available: "Available",
   healthUnknown: "Availability unknown",
   decisionPrivate:
-    "Configure the decision model on the Bot’s node. Credentials stay private to that node.",
+    "The decision model is set up on the computer that runs this Bot, in the DSCord panel of DSH. Its credentials stay on that device.",
   decisionRequired:
-    "Configure an available participation model on the node to use natural participation.",
+    "Set up a working decision model in DSH on that device before using natural participation.",
   save: "Save participation",
   saving: "Saving…",
   saved: "Participation saved",
@@ -144,13 +144,14 @@ export const kernelMessages: Catalog<keyof typeof en> = {
     naturalHelp: "判断什么时候补充有帮助、什么时候等待、什么时候继续倾听。",
     naturalNote:
       "自然参与仍受房间访问和工作授权限制。保持安静也可以是有意的选择。",
-    decisionModel: "参与判断模型",
+    decisionModel: "决策模型",
     configured: "已配置",
     notConfigured: "未配置",
     available: "可用",
     healthUnknown: "可用状态未知",
-    decisionPrivate: "请在 Bot 所在节点配置判断模型，凭据只保留在该节点。",
-    decisionRequired: "使用自然参与前，请在节点配置可用的参与判断模型。",
+    decisionPrivate:
+      "决策模型在运行这个 Bot 的电脑上配置：打开 DSH 的 DSCord 面板。凭据只保留在那台设备。",
+    decisionRequired: "使用自然参与前，请先在那台设备的 DSH 里配好决策模型。",
     save: "保存参与方式",
     saving: "正在保存…",
     saved: "参与方式已保存",

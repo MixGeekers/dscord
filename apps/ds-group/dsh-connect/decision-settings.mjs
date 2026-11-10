@@ -1,6 +1,9 @@
 import path from 'node:path';
 import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
-import { createOpenAIDecisionProvider, decisionProviderConfiguration } from '../src/decision-provider.mjs';
+import { createOpenAIDecisionProvider, decisionProviderConfiguration, turnQuestion } from '../src/decision-provider.mjs';
+
+// One short, synthetic exchange: enough for the service to answer, with nothing of the owner's in it.
+const PROBE = Object.freeze({ version: 1, self: { id: 'dscord-check', name: 'DSCord' }, phase: 'before', pending: [{ senderName: 'DSCord', text: '你好' }] });
 
 /** A private node setting. Only publicStatus is returned to a browser or Core. */
 export class DecisionSettings {
@@ -45,7 +48,23 @@ export class DecisionSettings {
     return { configured: Boolean(this.key()), enabled: this.config.enabled,
       available: !this.config.enabled || !this.provider ? false
         : health?.health === 'ok' ? true : health?.health === 'error' ? false : null,
-      model: this.provider?.model || this.options().model, health: health?.status || health?.health || 'unknown' };
+      model: this.provider?.model || this.options().model, health: health?.status || health?.health || 'unknown',
+      ...(health?.lastErrorCode ? { error: health.lastErrorCode } : {}) };
+  }
+
+  /** What the owner's own settings page fills its form with. The address stays on this device; the key is never read back. */
+  form() {
+    const { model, endpoint } = this.options();
+    return { enabled: this.config.enabled, hasKey: Boolean(this.key()), model, endpoint };
+  }
+
+  /**
+   * Ask the service one small question, so a wrong key, address or model shows now instead of as Bots that
+   * stay quiet later. The outcome is in the provider's health, which publicStatus reports.
+   */
+  async verify() {
+    if (this.provider?.decide) await this.provider.decide(PROBE, { question: turnQuestion }).catch(() => {});
+    return this.publicStatus();
   }
 
   async save({ apiKey, enabled, model, endpoint } = {}) {
@@ -57,6 +76,8 @@ export class DecisionSettings {
       ...(model === undefined ? {} : { model }),
       ...(endpoint === undefined ? {} : { endpoint }),
     };
+    // An emptied field goes back to the environment's value or the adapter's default.
+    for (const field of ['model', 'endpoint']) if (next[field] === '') delete next[field];
     this.options(next);
     await savePrivateJson(this.filename, next);
     this.config = next;
