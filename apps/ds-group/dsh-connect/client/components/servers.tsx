@@ -1,19 +1,10 @@
 import { useState } from "react";
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
-import type { MessageKey } from "../locale";
-import type { BotStatus, ListedServer, ServerBot } from "../types";
-import { ModelForm } from "./forms";
+import type { ListedServer } from "../types";
 import type { PageProps, ReadyProps } from "./forms";
 
-const STATUS_KEYS: Record<BotStatus, MessageKey> = {
-  offline: "statusOffline",
-  connecting: "statusConnecting",
-  online: "statusOnline",
-  error: "statusError",
-};
-
 /** The chat server's web address, when it is one a browser can open safely. */
-function webUrl(serverUrl: string) {
+export function webUrl(serverUrl: string) {
   try {
     const url = new URL(serverUrl);
     if (
@@ -36,150 +27,6 @@ function origin(url: string) {
   }
 }
 
-/** One Bot account on a chat server: its status, connect actions, the local Bot it runs as, and its model. */
-export function BotRow({
-  bot,
-  connection,
-  state,
-  value,
-  t,
-}: ReadyProps & { bot: ServerBot }) {
-  const [nativeId, setNativeId] = useState("");
-  const needsBinding = value.nativeMode && !bot.nativeBotId;
-  const busy = state.busy?.botId === bot.id;
-  const status = bot.status || "offline";
-  const connected =
-    bot.connected || status === "online" || status === "connecting";
-  const disabled = Boolean(state.busy);
-  const runtimeAvailable = value.runtime?.available !== false;
-  const name = bot.name || bot.id;
-  const catalog = value.models;
-  const nextModel = bot.modelSelection || catalog?.defaultSelection;
-  const modelAvailable =
-    catalog?.available !== true ||
-    catalog.providers.some((provider) =>
-      provider.models.some((model) => model.model === nextModel?.model),
-    );
-  const blocked = disabled || !runtimeAvailable || !modelAvailable;
-  const unbound = (value.nativeBots || []).filter(
-    (local) => !value.bots.some((item) => item.nativeBotId === local.id),
-  );
-  return (
-    <li className="dc-bot">
-      <div className="dc-bot-identity">
-        <span className="dc-avatar" aria-hidden>
-          {Array.from(name)[0]}
-        </span>
-        <div className="dc-bot-copy">
-          <p className="dc-bot-name">{name}</p>
-          <p className="dc-bot-id">{bot.localpart || bot.id}</p>
-          <p className="dc-status" data-status={status}>
-            {STATUS_KEYS[status] ? t(STATUS_KEYS[status]) : status}
-          </p>
-          {bot.activeModel && (
-            <p className="dc-muted dc-model-info">{`${t("activeModel")} · ${bot.activeModel.model}`}</p>
-          )}
-          {nextModel && (
-            <p className="dc-muted dc-model-info">{`${t("nextModel")} · ${nextModel.model}`}</p>
-          )}
-          {!modelAvailable && (
-            <p className="dc-error dc-bot-error">{t("modelUnavailable")}</p>
-          )}
-          {bot.lastError && (
-            <p className="dc-error dc-bot-error">{bot.lastError}</p>
-          )}
-        </div>
-      </div>
-      {needsBinding ? (
-        <form
-          className="dc-model-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void connection.attach(nativeId, bot.id);
-          }}
-        >
-          <label className="dc-field">
-            {t("bind")}
-            <select
-              value={nativeId}
-              onChange={(event) => setNativeId(event.target.value)}
-              disabled={disabled}
-            >
-              <option value="">{t("chooseNative")}</option>
-              {unbound.map((local) => (
-                <option key={local.id} value={local.id}>
-                  {local.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button
-            type="submit"
-            variant="primary"
-            disabled={disabled || !nativeId}
-          >
-            {t("bind")}
-          </Button>
-        </form>
-      ) : (
-        <div className="dc-actions">
-          {connected ? (
-            <Button
-              variant="outline"
-              type="button"
-              disabled={disabled}
-              onClick={() => void connection.disconnect(bot.id)}
-              aria-label={t("disconnectBot", { name })}
-            >
-              {t(
-                busy && state.busy?.action === "disconnect"
-                  ? "disconnecting"
-                  : "disconnect",
-              )}
-            </Button>
-          ) : (
-            <Button
-              variant="primary"
-              type="button"
-              className="dc-primary"
-              disabled={blocked}
-              onClick={() => void connection.connect(bot.id)}
-              aria-label={t("connectBot", { name })}
-            >
-              {t(busy ? "connecting" : "connect")}
-            </Button>
-          )}
-          {(connected || status === "error") && (
-            <Button
-              variant="outline"
-              type="button"
-              disabled={blocked}
-              onClick={() => void connection.reconnect(bot.id)}
-              aria-label={t("reconnectBot", { name })}
-            >
-              {t(
-                busy && state.busy?.action === "reconnect"
-                  ? "reconnecting"
-                  : "reconnect",
-              )}
-            </Button>
-          )}
-        </div>
-      )}
-      {!needsBinding && catalog?.available && (
-        <ModelForm
-          key={JSON.stringify(bot.modelSelection)}
-          bot={bot}
-          connection={connection}
-          state={state}
-          value={value}
-          t={t}
-        />
-      )}
-    </li>
-  );
-}
-
 /** Searches central's server index and adds a listed server in one step. */
 function ServerSearch({ connection, state, value, t }: ReadyProps) {
   const [results, setResults] = useState<ListedServer[] | null>(null);
@@ -189,9 +36,9 @@ function ServerSearch({ connection, state, value, t }: ReadyProps) {
     (value.servers || []).map((server) => origin(server.url)),
   );
   return (
-    <div className="dc-server-search">
+    <div className="dc-section">
       <form
-        className="dc-model-form"
+        className="dc-inline"
         role="search"
         aria-label={t("searchServers")}
         onSubmit={(event) => {
@@ -226,14 +73,14 @@ function ServerSearch({ connection, state, value, t }: ReadyProps) {
           {t(searching ? "searchingServers" : "searchQuery")}
         </Button>
       </form>
-      <p className="dc-muted">
+      <p className={error ? "dc-error dc-small" : "dc-hint"}>
         {error ||
           (results && !results.length
             ? t("noServerResults")
             : t("searchServersHelp"))}
       </p>
       {results && results.length > 0 && (
-        <ul className="dc-bots dc-server-list" aria-label={t("searchServers")}>
+        <ul className="dc-list" aria-label={t("searchServers")}>
           {results.map((server) => {
             const isAdded = server.added || added.has(server.origin);
             const inviteOnly = server.join === "invite" && !isAdded;
@@ -241,21 +88,21 @@ function ServerSearch({ connection, state, value, t }: ReadyProps) {
               ? ` · ${server.tags.map((tag) => `#${tag}`).join(" ")}`
               : "";
             return (
-              <li key={server.origin} className="dc-bot">
-                <div className="dc-bot-copy">
-                  <strong>{server.name}</strong>
-                  <p className="dc-server">{`${t("serverNumber", { number: server.number })} · ${server.origin}`}</p>
-                  <p className="dc-muted">
+              <li key={server.origin} className="dc-row">
+                <div className="dc-copy">
+                  <p className="dc-title">{server.name}</p>
+                  <p className="dc-meta">{`${t("serverNumber", { number: server.number })} · ${server.origin}`}</p>
+                  <p className="dc-meta">
                     {t("serverMembers", {
                       people: server.members?.people ?? 0,
                       bots: server.members?.bots ?? 0,
                     }) + tags}
                   </p>
                   {server.description && (
-                    <p className="dc-muted">{server.description}</p>
+                    <p className="dc-meta">{server.description}</p>
                   )}
                   {inviteOnly && (
-                    <p className="dc-muted">{t("inviteOnlyHint")}</p>
+                    <p className="dc-meta">{t("inviteOnlyHint")}</p>
                   )}
                 </div>
                 <Button
@@ -282,52 +129,60 @@ function ServerSearch({ connection, state, value, t }: ReadyProps) {
   );
 }
 
-/** The chat servers this account has added, with search and add-by-address. */
+/** The chat servers this account has added; adding another, by search or by address, opens on request. */
 export function ServersPanel(props: ReadyProps) {
   const { connection, state, value, t } = props;
   const busy = Boolean(state.busy);
+  const servers = value.servers || [];
   return (
     <section className="dc-panel" aria-label={t("servers")}>
-      <h2>{t("servers")}</h2>
-      <p className="dc-muted">{t("serversHelp")}</p>
-      <ul className="dc-bots dc-server-list">
-        {(value.servers || []).map((server) => {
-          const href = webUrl(server.url);
-          return (
-            <li key={server.url} className="dc-bot">
-              <div className="dc-bot-copy">
-                <strong>{server.serverName}</strong>
-                <p className="dc-server">{server.url}</p>
-              </div>
-              <div className="dc-toolbar">
-                {href && (
-                  <a
-                    className="dc-link"
-                    href={href}
-                    target="_blank"
-                    rel="noopener noreferrer"
+      <div className="dc-heading">
+        <h2>{t("servers")}</h2>
+        <p className="dc-muted">{t("serversHelp")}</p>
+      </div>
+      {servers.length ? (
+        <ul className="dc-list">
+          {servers.map((server) => {
+            const href = webUrl(server.url);
+            return (
+              <li key={server.url} className="dc-row">
+                <div className="dc-copy">
+                  <p className="dc-title">{server.serverName}</p>
+                  <p className="dc-meta">{server.url}</p>
+                </div>
+                <div className="dc-actions">
+                  {href && (
+                    <a href={href} target="_blank" rel="noopener noreferrer">
+                      {t("openWeb")}
+                    </a>
+                  )}
+                  <Button
+                    variant="outline"
+                    type="button"
+                    disabled={busy}
+                    onClick={() => void connection.removeServer(server.url)}
+                    aria-label={t("removeServerLabel", {
+                      server: server.serverName,
+                    })}
                   >
-                    {t("openWeb")}
-                  </a>
-                )}
-                <Button
-                  variant="outline"
-                  type="button"
-                  disabled={busy}
-                  onClick={() => void connection.removeServer(server.url)}
-                  aria-label={t("removeServerLabel", {
-                    server: server.serverName,
-                  })}
-                >
-                  {t("removeServer")}
-                </Button>
-              </div>
-            </li>
-          );
-        })}
-      </ul>
-      <ServerSearch {...props} />
-      <AddServerForm connection={connection} state={state} t={t} />
+                    {t("removeServer")}
+                  </Button>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <p className="dc-muted">{t("noServers")}</p>
+      )}
+      <details className="dc-disclosure dc-divided" open={!servers.length}>
+        <summary>{t("addServer")}</summary>
+        <div className="dc-body">
+          <ServerSearch {...props} />
+          <p className="dc-meta">{t("addByAddress")}</p>
+          <AddServerForm connection={connection} state={state} t={t} />
+        </div>
+      </details>
     </section>
   );
 }
@@ -336,7 +191,7 @@ function AddServerForm({ connection, state, t }: PageProps) {
   const busy = Boolean(state.busy);
   return (
     <form
-      className="dc-model-form"
+      className="dc-inline"
       aria-label={t("addServer")}
       onSubmit={(event) => {
         event.preventDefault();
@@ -365,7 +220,7 @@ function AddServerForm({ connection, state, t }: PageProps) {
         />
       </label>
       <label className="dc-field">
-        {t("inviteCodeOptional")}
+        {t("inviteCode")}
         <Input
           name="inviteCode"
           type="text"

@@ -271,26 +271,33 @@ try {
   await page.setViewportSize({ width: 1000, height: 900 });
   await page.goto(`${origin}/__native`);
   await page.evaluate(() => document.body.setAttribute('data-ds-dark-theme', ''));
-  await page.getByText('There are no Bots on this node yet. Create one here.', { exact: true }).waitFor();
-  await page.getByText('Create Bot', { exact: true }).click();
+  // A signed-in owner with no Bots lands on the open creation form, the second of the three setup steps.
+  await page.getByText('There are no Bots on this device yet.', { exact: true }).waitFor();
+  assert.equal(await page.locator('.dc-step[aria-current="step"]').innerText().then(text => text.split('\n')[1]), 'Create a Bot');
   await page.getByLabel('Name', { exact: true }).fill('Shiyu');
   await page.getByLabel('Role or introduction').fill('A friend and project partner');
-  await page.getByRole('button', { name: 'Create on this node' }).click();
+  await page.getByRole('button', { name: 'Create and go online' }).click();
   await page.getByRole('alert').filter({ hasText: 'Synthetic creation receipt lost' }).waitFor();
   await page.getByRole('button', { name: 'Confirm same creation' }).click();
-  await page.getByText('Bot created. You can now add it to the server.', { exact: true }).waitFor();
+  // Creation goes straight on to joining the chat server. This fixture has no central session, so the join
+  // fails: the Bot stays on the device, the page says why, and its row offers to join again.
+  await page.getByRole('alert').filter({ hasText: '请先登录并启用原生 DS-Bot' }).waitFor();
+  await page.getByRole('button', { name: 'Add Shiyu and go online', exact: true }).waitFor();
+  assert.deepEqual(nativeRequests.filter(item => item.action === 'attach'), [{ action: 'attach', nativeBotId: 'local-shiyu', serverUrl: nativeState.serverUrl }]);
+  assert.equal(await page.locator('.dc-step[aria-current="step"]').innerText().then(text => text.split('\n')[1]), 'Go online');
   const creationRequests = nativeRequests.filter(item => item.action === 'create-native');
   assert.equal(creationRequests.length, 2); assert.deepEqual(creationRequests[0], creationRequests[1]);
   assert.ok(typeof creationRequests[0].requestId === 'string' && creationRequests[0].requestId.length > 10);
   assert.deepEqual({ ...creationRequests[0], requestId: '[stable request]' }, { action: 'create-native', name: 'Shiyu', role: 'A friend and project partner', model: 'local/chat', requestId: '[stable request]' });
   assert.equal(nativeState.nativeBots.length, 1);
   checks.push('dshCreatesLocalBotWithChosenModelAndConfirmsSameRequestAfterLostReceipt');
-  await page.getByRole('button', { name: 'Bot settings', exact: true }).click();
+  checks.push('creatingABotGoesOnToJoinTheServerAndAFailedJoinKeepsTheBotWithARetry');
+  await page.getByRole('button', { name: 'Settings for Shiyu', exact: true }).click();
   await page.getByRole('radio', { name: /Join naturally/ }).check();
   await page.getByRole('button', { name: 'Save participation', exact: true }).click();
-  await page.getByRole('status').filter({ hasText: 'The node will apply this' }).first().waitFor();
+  await page.getByRole('status').filter({ hasText: 'The Bot applies this' }).first().waitFor();
   await page.getByRole('button', { name: 'Save participation', exact: true }).waitFor({ state: 'visible' });
-  await page.waitForFunction(() => !document.querySelector('.dc-mode-options').disabled);
+  await page.waitForFunction(() => !document.querySelector('.dc-options').disabled);
   assert.equal(await page.getByRole('radio', { name: /Join naturally/ }).isChecked(), true);
   assert.equal(await page.getByRole('button', { name: 'Save participation', exact: true }).isDisabled(), true);
   assert.equal(nativeRequests.find(item => item.action === 'attention-update').nativeBotId, 'local-shiyu');
@@ -310,6 +317,7 @@ try {
   await screenshot('local-kernel-dark-en.png');
   const upgrades = page.getByRole('region', { name: 'Plugin version' });
   await upgrades.getByText('0.5.0 is available', { exact: true }).waitFor();
+  await upgrades.locator('summary').click();
   await upgrades.getByText('Upgrade automatically', { exact: true }).click();
   await page.waitForFunction(() => document.querySelector('input[name="kernelUpdatePolicy"][value="auto"]')?.checked);
   assert.equal(updates.view().policy, 'auto');
@@ -335,6 +343,7 @@ try {
         members: { people: 5, bots: 1 } }] });
   };
   await page.setViewportSize({ width: 1000, height: 900 });
+  await page.locator('summary', { hasText: '添加服务器' }).click();
   const serverSearch = page.getByRole('search', { name: '搜索服务器' });
   await serverSearch.locator('input[name="query"]').fill('机器人');
   await serverSearch.getByRole('button', { name: '搜索', exact: true }).click();
@@ -359,7 +368,7 @@ try {
   });
   controller.state.user = { id: '@bob:home.test', name: 'Bob' };
   await page.evaluate(() => window.fixture.connection.refresh());
-  await page.getByText('此节点尚无 Bot，可以在这里创建。', { exact: true }).waitFor();
+  await page.getByText('这台设备上还没有 Bot。', { exact: true }).waitFor();
   assert.equal(await page.getByLabel('名称', { exact: true }).inputValue(), '');
   assert.doesNotMatch(await page.locator('.dc-content').innerText(), /Alice private draft|Alice draft role|local-shiyu/);
   checks.push('changingLocalAccountClearsSelectedBotAndKeepsOtherOwnersCreationDraftPrivate');

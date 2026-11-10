@@ -1287,6 +1287,8 @@ export default function App({
       />
       <CreateBotDialog
         open={createBotOpen}
+        session={session}
+        server={config.homeCoreUrl}
         onClose={() => setCreateBotOpen(false)}
       />
       <RoomDialog

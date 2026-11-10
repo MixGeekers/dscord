@@ -1,128 +1,119 @@
-// The page lives inside DSH, so it takes DSH's own --dsw-* tokens and only falls back to plain values.
-export const styles = `
-.dscord-connect {
-  --dc-background: var(--dsw-alias-bg-layer-1, #ffffff);
-  --dc-panel: var(--dsw-alias-settings-card-fill, #f7f8fa);
-  --dc-field: var(--dsw-alias-bg-layer-1, #ffffff);
-  --dc-text: var(--dsw-alias-label-primary, #202124);
-  --dc-muted: var(--dsw-alias-label-secondary, #69707a);
-  --dc-line: var(--dsw-alias-settings-card-stroke, #e5e7eb);
-  --dc-accent: var(--dsw-alias-state-business-primary, #4d6bfe);
-  --dc-danger: var(--dsw-alias-state-error-primary, #b42335);
-  --dc-success: var(--dsw-alias-state-success-primary, #16794d);
-  box-sizing: border-box;
-  width: 100%;
-  height: 100%;
-  min-height: 0;
-  overflow: auto;
-  background: var(--dc-background);
-  color: var(--dc-text);
-  font: 14px/1.5 var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif);
-}
-body[data-ds-dark-theme] .dscord-connect {
-  --dc-background: var(--dsw-alias-bg-layer-1, #1c1c1e);
-  --dc-panel: var(--dsw-alias-settings-card-fill, #242426);
-  --dc-field: var(--dsw-alias-bg-layer-1, #1c1c1e);
-  --dc-text: var(--dsw-alias-label-primary, #f2f3f5);
-  --dc-muted: var(--dsw-alias-label-secondary, #b5bac1);
-  --dc-line: var(--dsw-alias-settings-card-stroke, #39393d);
-  --dc-danger: var(--dsw-alias-state-error-primary, #ff8e99);
-  --dc-success: var(--dsw-alias-state-success-primary, #65d7a0);
-  color-scheme: dark;
-}
+import { tokens } from "./tokens";
+
+// Every colour, size of type, gap and radius comes from tokens.ts, the same names the web pages use.
+export const styles = `${tokens}
+.dscord-connect { box-sizing: border-box; width: 100%; height: 100%; min-height: 0; overflow: auto; background: var(--color-bg-primary); color: var(--color-text-primary); font: var(--font-size-body)/var(--line-height-body) var(--font-family-ui); }
 .dscord-connect *, .dscord-connect *::before, .dscord-connect *::after { box-sizing: border-box; }
-.dscord-connect .dc-content { width: min(100%, 880px); margin: 0 auto; padding: 28px; }
-.dscord-connect .dc-header, .dscord-connect .dc-toolbar, .dscord-connect .dc-actions { display: flex; align-items: center; gap: 10px; }
-.dscord-connect .dc-header { justify-content: space-between; margin-bottom: 24px; flex-wrap: wrap; }
-.dscord-connect h1 { margin: 0; font-size: 22px; font-weight: 650; }
-.dscord-connect h2 { margin: 0 0 16px; font-size: 17px; font-weight: 600; }
-.dscord-connect p { margin: 0; }
-.dscord-connect .dc-panel { padding: 22px; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-lg, 12px); background: var(--dc-panel); margin-bottom: 20px; }
-.dscord-connect .dc-login { max-width: 460px; margin: 0 auto; }
-.dscord-connect .dc-login > .dc-muted { margin: 0 0 18px; }
-.dscord-connect textarea.dc-key { box-sizing: border-box; width: 100%; min-height: 96px; resize: vertical; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-md, 8px); padding: 10px 12px; background: var(--dc-field); color: var(--dc-text); font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; font-weight: 400; word-break: break-all; }
-.dscord-connect textarea.dc-key:focus-visible { outline: 2px solid var(--dc-accent); outline-offset: 1px; }
-.dscord-connect .dc-field { display: grid; gap: 7px; margin-bottom: 18px; font-weight: 600; }
-.dscord-connect select { width: 100%; min-height: 42px; border: 1px solid var(--dc-line); border-radius: var(--dsw-radius-md, 8px); padding: 10px 12px; background: var(--dc-field); color: var(--dc-text); font: inherit; font-weight: 400; }
-.dscord-connect input::placeholder { color: var(--dc-muted); opacity: 1; }
-.dscord-connect .dc-link { min-height: 36px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; padding: 7px 13px; border: 1px solid var(--dc-line); border-radius: 5px; background: var(--dc-panel); color: var(--dc-text); font: inherit; font-weight: 500; text-decoration: none; cursor: pointer; white-space: nowrap; }
-.dscord-connect .dc-link:hover { background: var(--dc-field); }
-.dscord-connect .dc-login .dc-primary { width: 100%; min-height: 42px; }
-.dscord-connect :is(select, summary, a):focus-visible { outline: 2px solid var(--dc-accent); outline-offset: 3px; }
-.dscord-connect .dc-muted { color: var(--dc-muted); }
-.dscord-connect .dc-error { color: var(--dc-danger); overflow-wrap: anywhere; }
-.dscord-connect .dc-notice { padding: 12px 16px; border: 1px solid var(--dc-line); border-radius: 6px; margin-bottom: 18px; background: var(--dc-panel); }
-.dscord-connect .dc-account { display: flex; justify-content: space-between; gap: 16px; align-items: center; }
-.dscord-connect .dc-account > div { min-width: 0; flex: 1; }
-.dscord-connect .dc-account > button { flex-shrink: 0; }
-.dscord-connect .dc-account-name { font-weight: 600; margin-bottom: 4px; overflow-wrap: anywhere; }
-.dscord-connect .dc-server, .dscord-connect .dc-directory { overflow-wrap: anywhere; color: var(--dc-muted); }
-.dscord-connect .dc-bots { list-style: none; margin: 0; padding: 0; }
-.dscord-connect .dc-server-bots + .dc-server-bots { margin-top: 16px; }
-.dscord-connect .dc-server-list { margin: 12px 0; }
-.dscord-connect .dc-server-bots h3 { font-size: 13px; margin: 0 0 8px; color: var(--dc-muted); }
-.dscord-connect .dc-bot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 18px; padding: 17px 0; border-top: 1px solid var(--dc-line); }
-.dscord-connect .dc-bot:first-child { border-top: 0; padding-top: 0; }
-.dscord-connect .dc-bot:last-child { padding-bottom: 0; }
-.dscord-connect .dc-bot-identity { display: flex; gap: 12px; align-items: center; min-width: 0; }
-.dscord-connect .dc-avatar { display: flex; align-items: center; justify-content: center; width: 42px; height: 42px; border-radius: 13px; background: var(--dc-field); color: var(--dc-accent); font-size: 18px; font-weight: 600; flex: 0 0 auto; }
-.dscord-connect .dc-bot-copy { min-width: 0; }
-.dscord-connect .dc-bot-name { font-weight: 600; overflow-wrap: anywhere; }
-.dscord-connect .dc-bot-id { color: var(--dc-muted); font-size: 12px; overflow-wrap: anywhere; }
-.dscord-connect .dc-status { display: flex; align-items: center; gap: 6px; margin-top: 4px; color: var(--dc-muted); font-size: 13px; }
-.dscord-connect .dc-status::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
-.dscord-connect .dc-status[data-status="online"] { color: var(--dc-success); }
-.dscord-connect .dc-status[data-status="error"] { color: var(--dc-danger); }
-.dscord-connect .dc-status[data-status="connecting"] { color: var(--dc-accent); }
-.dscord-connect .dc-bot-error { font-size: 13px; margin-top: 6px; }
-.dscord-connect .dc-directory { font-size: 12px; }
-.dscord-connect .dc-directory summary { cursor: pointer; width: fit-content; }
-.dscord-connect .dc-directory code { display: block; margin-top: 6px; user-select: text; }
-.dscord-connect .dc-model-settings { flex-basis: 100%; width: 100%; }
-.dscord-connect .dc-model-form { display: flex; align-items: flex-end; gap: 12px; }
-.dscord-connect .dc-model-form .dc-field { flex: 1; margin: 0; min-width: 0; }
-.dscord-connect .dc-model-form select { max-width: 100%; text-overflow: ellipsis; }
-.dscord-connect .dc-model-form button { min-height: 42px; }
-.dscord-connect .dc-model-info { margin-top: 7px; font-size: 13px; overflow-wrap: anywhere; }
-.dscord-connect .dc-section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.dscord-connect .dc-section-heading h2 { margin: 0; }
-.dscord-connect .dc-create { margin-top: 18px; padding-top: 18px; border-top: 1px solid var(--dc-line); }
-.dscord-connect .dc-create .dc-field { margin-bottom: 12px; }
-.dscord-connect .dc-create > summary,.dscord-connect .dc-private > summary { cursor: pointer; font-weight: 600; }
-.dscord-connect .dc-create form { margin-top: 14px; }
-.dscord-connect .dc-local-settings { margin-top: 18px; }
-.dscord-connect .dc-local-settings h3 { margin: 20px 0 10px; font-size: 15px; }
-.dscord-connect .dc-local-settings .dc-field { margin-bottom: 12px; }
-.dscord-connect .dc-mode-options { display: grid; gap: 8px; margin: 12px 0; border: 0; padding: 0; }
-.dscord-connect .dc-mode-option { display: flex; align-items: flex-start; gap: 10px; padding: 12px; border: 1px solid var(--dc-line); border-radius: 8px; cursor: pointer; }
-.dscord-connect .dc-mode-option input { margin-top: 4px; flex: 0 0 auto; accent-color: var(--dc-accent); }
-.dscord-connect .dc-mode-option:has(input:checked) { border-color: var(--dc-accent); }
-.dscord-connect .dc-mode-option strong,.dscord-connect .dc-mode-option small { display: block; }
-.dscord-connect .dc-mode-option small { margin-top: 3px; color: var(--dc-muted); }
-.dscord-connect .dc-private { padding-top: 18px; margin-top: 20px; border-top: 1px solid var(--dc-line); }
-.dscord-connect .dc-private .dc-field { margin-top: 12px; }
-.dscord-connect .dc-check { display: flex; align-items: center; gap: 8px; margin: 12px 0; }
-.dscord-connect .dc-check input { accent-color: var(--dc-accent); }
-.dscord-connect .dc-memory { padding-top: 16px; border-top: 1px solid var(--dc-line); margin-top: 20px; }
-.dscord-connect .dc-memory-filter { display: flex; gap: 8px; flex-wrap: wrap; margin-block: 12px; }
+.dscord-connect :is(h1, h2, h3, p, ul, ol, fieldset, legend) { margin: 0; padding: 0; }
+.dscord-connect :is(ul, ol) { list-style: none; }
+.dscord-connect fieldset { border: 0; min-width: 0; }
+.dscord-connect .dc-content { display: grid; gap: var(--space-8); width: min(100%, 780px); margin: 0 auto; padding: var(--space-14) var(--space-12) var(--space-16); }
+.dscord-connect .dc-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4) var(--space-8); }
+.dscord-connect h1 { font-size: var(--font-size-xl); font-weight: var(--font-weight-semibold); line-height: var(--line-height-compact); }
+.dscord-connect h2 { font-size: var(--font-size-heading); font-weight: var(--font-weight-semibold); line-height: var(--line-height-compact); }
+.dscord-connect h3 { font-size: var(--font-size-body); font-weight: var(--font-weight-semibold); line-height: var(--line-height-compact); }
+.dscord-connect .dc-toolbar, .dscord-connect .dc-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-4); }
+.dscord-connect .dc-account { min-width: 0; text-align: right; line-height: var(--line-height-compact); }
+.dscord-connect .dc-account-name { font-weight: var(--font-weight-medium); overflow-wrap: anywhere; }
+.dscord-connect .dc-muted { color: var(--color-text-muted); }
+.dscord-connect .dc-small, .dscord-connect .dc-meta { font-size: var(--font-size-compact); }
+.dscord-connect .dc-meta { color: var(--color-text-muted); overflow-wrap: anywhere; }
+.dscord-connect .dc-error { color: var(--color-text-danger); overflow-wrap: anywhere; }
+.dscord-connect a { color: var(--color-link); text-decoration: none; white-space: nowrap; }
+.dscord-connect a:hover { text-decoration: underline; }
+.dscord-connect :is(select, textarea, summary, a, input[type="radio"], input[type="checkbox"]):focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--space-1); }
+
+.dscord-connect .dc-notices { position: sticky; top: var(--space-4); z-index: 1; display: grid; gap: var(--space-4); }
+.dscord-connect .dc-notice { padding: var(--space-5) var(--space-7); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); background: var(--color-bg-secondary); overflow-wrap: anywhere; }
+.dscord-connect .dc-notice[data-tone="success"] { border-color: color-mix(in srgb, var(--color-status-success) 45%, transparent); background: color-mix(in srgb, var(--color-status-success) 10%, var(--color-bg-primary)); }
+.dscord-connect .dc-notice[data-tone="error"] { border-color: color-mix(in srgb, var(--color-status-danger) 45%, transparent); background: color-mix(in srgb, var(--color-status-danger) 8%, var(--color-bg-primary)); color: var(--color-text-danger); }
+
+.dscord-connect .dc-steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--space-4); }
+.dscord-connect .dc-step { display: flex; align-items: flex-start; gap: var(--space-4); padding: var(--space-5) var(--space-6); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-xl); color: var(--color-text-muted); line-height: var(--line-height-compact); }
+.dscord-connect .dc-step-mark { display: grid; place-items: center; flex: 0 0 auto; width: var(--space-11); height: var(--space-11); border: 1px solid currentColor; border-radius: var(--radius-round); font-size: var(--font-size-sm); font-weight: var(--font-weight-semibold); }
+.dscord-connect .dc-step-copy { display: grid; gap: var(--space-1); min-width: 0; }
+.dscord-connect .dc-step strong { font-weight: var(--font-weight-medium); }
+.dscord-connect .dc-step small { font-size: var(--font-size-sm); }
+.dscord-connect .dc-step[data-state="current"] { border-color: var(--color-accent); background: color-mix(in srgb, var(--color-accent) 6%, transparent); color: var(--color-text-primary); }
+.dscord-connect .dc-step[data-state="current"] .dc-step-mark { border-color: var(--color-accent); background: var(--color-accent); color: var(--color-text-on-accent); }
+.dscord-connect .dc-step[data-state="done"] .dc-step-mark { border-color: var(--color-status-success); color: var(--color-status-success); }
+
+.dscord-connect .dc-panel { display: grid; gap: var(--space-8); padding: var(--space-10) var(--space-12); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-xl); background: var(--color-bg-secondary); }
+.dscord-connect .dc-heading { display: grid; gap: var(--space-2); }
+.dscord-connect .dc-how { display: grid; gap: var(--space-3); counter-reset: dc-how; color: var(--color-text-muted); }
+.dscord-connect .dc-how li { display: flex; gap: var(--space-4); counter-increment: dc-how; }
+.dscord-connect .dc-how li::before { content: counter(dc-how) "."; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+
+.dscord-connect .dc-form { display: grid; gap: var(--space-6); }
+.dscord-connect .dc-field { display: grid; gap: var(--space-3); min-width: 0; font-size: var(--font-size-compact); font-weight: var(--font-weight-medium); }
+.dscord-connect .dc-hint { color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: 400; }
+.dscord-connect .dc-inline { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--space-4); }
+.dscord-connect .dc-inline .dc-field { flex: 1 1 180px; }
+.dscord-connect :is(select, textarea) { width: 100%; border: 1px solid var(--color-border-normal); border-radius: var(--radius-lg); background: var(--color-bg-input); color: var(--color-text-primary); font: inherit; font-size: var(--font-size-body); font-weight: 400; }
+.dscord-connect select { min-height: var(--space-16); padding: var(--space-2) var(--space-5); text-overflow: ellipsis; }
+.dscord-connect textarea.dc-key { min-height: 88px; resize: vertical; padding: var(--space-4) var(--space-6); font-family: var(--font-family-code); font-size: var(--font-size-compact); word-break: break-all; }
+.dscord-connect :is(select, textarea):disabled { opacity: var(--opacity-disabled); }
+.dscord-connect :is(input, textarea)::placeholder { color: var(--color-text-muted); opacity: 1; }
+.dscord-connect .dc-actions select { width: auto; max-width: 240px; }
+.dscord-connect .dc-check { display: flex; align-items: center; gap: var(--space-4); }
+.dscord-connect input:is([type="radio"], [type="checkbox"]) { flex: 0 0 auto; accent-color: var(--color-accent); }
+
+.dscord-connect .dc-options { display: grid; gap: var(--space-1); }
+.dscord-connect .dc-options legend { margin-bottom: var(--space-3); font-size: var(--font-size-compact); font-weight: var(--font-weight-medium); }
+.dscord-connect .dc-option { display: flex; align-items: flex-start; gap: var(--space-5); padding: var(--space-4) var(--space-5); border-radius: var(--radius-lg); cursor: pointer; line-height: var(--line-height-compact); }
+.dscord-connect .dc-option:hover { background: var(--color-bg-hover); }
+.dscord-connect .dc-option:has(input:checked) { background: color-mix(in srgb, var(--color-accent) 9%, transparent); }
+.dscord-connect .dc-option input { margin: var(--space-1) 0 0; }
+.dscord-connect .dc-option strong, .dscord-connect .dc-option small { display: block; }
+.dscord-connect .dc-option strong { font-weight: var(--font-weight-medium); }
+.dscord-connect .dc-option small { margin-top: var(--space-1); color: var(--color-text-muted); font-size: var(--font-size-sm); }
+
+.dscord-connect .dc-list { display: grid; }
+.dscord-connect .dc-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--space-4) var(--space-8); padding: var(--space-6) 0; border-top: 1px solid var(--color-border-subtle); }
+.dscord-connect .dc-row:first-child { border-top: 0; padding-top: 0; }
+.dscord-connect .dc-row:last-child { padding-bottom: 0; }
+.dscord-connect .dc-copy { display: grid; gap: var(--space-1); flex: 1 1 220px; min-width: 0; }
+.dscord-connect .dc-title { font-weight: var(--font-weight-semibold); overflow-wrap: anywhere; }
+.dscord-connect .dc-group { display: grid; gap: var(--space-5); }
+.dscord-connect .dc-group > h3 { color: var(--color-text-muted); font-size: var(--font-size-compact); font-weight: var(--font-weight-medium); }
+
+.dscord-connect .dc-bots { display: grid; gap: var(--space-6); }
+.dscord-connect .dc-bot { display: grid; gap: var(--space-6); padding: var(--space-8); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-xl); background: var(--color-bg-primary); }
+.dscord-connect .dc-identity { display: flex; align-items: center; gap: var(--space-6); min-width: 0; flex: 1 1 220px; }
+.dscord-connect .dc-avatar { display: grid; place-items: center; flex: 0 0 auto; width: var(--size-avatar-message); height: var(--size-avatar-message); border-radius: var(--radius-xl); background: color-mix(in srgb, var(--color-accent) 12%, transparent); color: var(--color-accent); font-size: var(--font-size-lg); font-weight: var(--font-weight-semibold); }
+.dscord-connect .dc-links { display: grid; padding-top: var(--space-6); border-top: 1px solid var(--color-border-subtle); }
+.dscord-connect .dc-status { display: inline-flex; align-items: center; gap: var(--space-3); color: var(--color-text-muted); font-size: var(--font-size-compact); white-space: nowrap; }
+.dscord-connect .dc-status::before { content: ""; flex: 0 0 auto; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-round); background: currentColor; }
+.dscord-connect .dc-status[data-status="online"] { color: var(--color-status-success); }
+.dscord-connect .dc-status[data-status="error"] { color: var(--color-status-danger); }
+.dscord-connect .dc-status[data-status="connecting"] { color: var(--color-accent); }
+.dscord-connect .dc-settings { display: grid; gap: var(--space-8); padding-top: var(--space-6); border-top: 1px solid var(--color-border-subtle); }
+.dscord-connect .dc-section { display: grid; gap: var(--space-4); }
+
+.dscord-connect .dc-disclosure > summary { display: flex; align-items: center; gap: var(--space-4); width: fit-content; cursor: pointer; font-weight: var(--font-weight-medium); list-style: none; }
+.dscord-connect .dc-disclosure > summary::-webkit-details-marker { display: none; }
+.dscord-connect .dc-disclosure > summary::before { content: ""; flex: 0 0 auto; width: var(--space-3); height: var(--space-3); border-right: var(--focus-width) solid currentColor; border-bottom: var(--focus-width) solid currentColor; transform: rotate(-45deg); transition: transform var(--motion-fast); }
+.dscord-connect .dc-disclosure[open] > summary::before { transform: rotate(45deg); }
+.dscord-connect .dc-disclosure[open] > summary { margin-bottom: var(--space-6); }
+.dscord-connect .dc-disclosure > .dc-body { display: grid; gap: var(--space-6); }
+.dscord-connect .dc-divided { padding-top: var(--space-8); border-top: 1px solid var(--color-border-subtle); }
+.dscord-connect code { display: block; font-family: var(--font-family-code); font-size: var(--font-size-compact); overflow-wrap: anywhere; user-select: text; }
+
+.dscord-connect .dc-memory-filter { display: flex; flex-wrap: wrap; gap: var(--space-4); }
 .dscord-connect .dc-memory-filter select { width: auto; flex: 0 1 140px; }
 .dscord-connect .dc-memory-filter input { min-width: 0; flex: 1 1 150px; }
-.dscord-connect .dc-memory-list { display: grid; gap: 8px; }
-.dscord-connect .dc-memory-item { border: 1px solid var(--dc-line); border-radius: 8px; padding: 12px; margin: 8px 0; overflow-wrap: anywhere; }
-.dscord-connect .dc-memory-item p { white-space: pre-wrap; margin-bottom: 8px; }
-.dscord-connect .dc-memory-item details { margin-top: 8px; color: var(--dc-muted); font-size: 12px; }
-.dscord-connect .dc-memory-item li { margin-block: 8px; overflow-wrap: anywhere; }
-.dscord-connect .dc-memory-label { display: inline-block; font-size: 12px; color: var(--dc-muted); border: 1px solid var(--dc-line); border-radius: 4px; padding: 1px 5px; margin: 0 5px 6px 0; }
+.dscord-connect .dc-memory-list { display: flex; flex-wrap: wrap; gap: var(--space-4); }
+.dscord-connect .dc-memory-item { display: grid; gap: var(--space-3); padding: var(--space-6); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); overflow-wrap: anywhere; }
+.dscord-connect .dc-memory-item p { white-space: pre-wrap; }
+.dscord-connect .dc-memory-item details { color: var(--color-text-muted); font-size: var(--font-size-sm); }
+.dscord-connect .dc-memory-item li { margin-block: var(--space-4); overflow-wrap: anywhere; }
+.dscord-connect .dc-memory-label { display: inline-block; margin-right: var(--space-3); padding: 0 var(--space-3); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-sm); color: var(--color-text-muted); font-size: var(--font-size-sm); }
+
 @media (max-width: 640px) {
-  .dscord-connect .dc-model-form { flex-wrap: wrap; }
-  .dscord-connect .dc-model-form .dc-field { flex-basis: 100%; }
-  .dscord-connect .dc-content { padding: 18px 14px; }
-  .dscord-connect .dc-panel { padding: 16px; }
-  .dscord-connect .dc-header { gap: 12px; margin-bottom: 18px; }
-  .dscord-connect .dc-account { flex-direction: column; align-items: flex-start; gap: 12px; }
-  .dscord-connect .dc-account > div { width: 100%; }
-  .dscord-connect .dc-bot { align-items: flex-start; flex-direction: column; gap: 12px; }
-  .dscord-connect .dc-actions { flex-wrap: wrap; padding-left: 54px; }
-  .dscord-connect .dc-toolbar { flex-wrap: wrap; }
+  .dscord-connect .dc-content { padding: var(--space-9) var(--space-7) var(--space-12); }
+  .dscord-connect .dc-panel { padding: var(--space-8); }
+  .dscord-connect .dc-bot { padding: var(--space-6); }
+  .dscord-connect .dc-steps { grid-template-columns: minmax(0, 1fr); }
+  .dscord-connect .dc-account { text-align: left; }
 }
 `;

@@ -19,6 +19,12 @@ type ClientError = Error & {
 };
 
 const SHORT_ACTIONS = ["status", "login", "kernel-state", "memory-profile"];
+/** What the page says after an action that changes more than the row it was started from. */
+const NOTICES: Record<string, MessageKey> = {
+  "save-model": "savedModel",
+  "create-native": "localCreated",
+  attach: "botJoined",
+};
 const ERROR_KEYS: Record<string, MessageKey> = {
   MODEL_POLICY_DENIED: "serverPolicyDenied",
   MODEL_OUTPUT_LIMIT: "serverOutputLimit",
@@ -201,12 +207,7 @@ export function createConnectionModel(t: Translate) {
         value,
         error: null,
         errorTranslation: null,
-        notice:
-          action === "save-model"
-            ? "savedModel"
-            : action === "create-native"
-              ? "localCreated"
-              : null,
+        notice: NOTICES[action] || null,
       });
       return value;
     } catch (error) {
@@ -259,8 +260,20 @@ export function createConnectionModel(t: Translate) {
     logout: () => mutate("logout"),
     saveModel: (botId: string, selection: ModelChoice) =>
       mutate("save-model", { botId, selection }),
-    createNative: (payload: Record<string, unknown>) =>
-      mutate("create-native", payload),
+    /** Creates a Bot on this device; given a chat server, also adds the new Bot to it and brings it online. */
+    createNative: async (
+      payload: Record<string, unknown>,
+      serverUrl?: string,
+    ) => {
+      const known = new Set(snapshot.value?.nativeBots?.map((bot) => bot.id));
+      const created = await mutate("create-native", payload);
+      const bot = created?.nativeBots?.find((item) => !known.has(item.id));
+      if (!bot || !serverUrl) return created;
+      // A Bot that could not join stays on the device, where its own row offers to join again.
+      return (
+        (await mutate("attach", { nativeBotId: bot.id, serverUrl })) || created
+      );
+    },
     kernel: <T>(
       action: string,
       payload: Record<string, unknown> = {},

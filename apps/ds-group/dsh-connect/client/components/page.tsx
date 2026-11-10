@@ -1,69 +1,108 @@
 import { useSyncExternalStore } from "react";
 import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
-import type { Connection } from "../connection";
-import type { Translate } from "../locale";
+import type { Connection, Snapshot } from "../connection";
+import type { MessageKey, Translate } from "../locale";
 import { styles } from "../styles";
+import type { ConnectionState } from "../types";
+import { BotsPanel } from "./bots";
 import { LoginForm } from "./forms";
-import type { ReadyProps } from "./forms";
-import { KernelUpdatePanel, LocalKernelPanel } from "./kernel";
-import { BotRow, ServersPanel } from "./servers";
+import {
+  ConfigDirectory,
+  DecisionProviderForm,
+  KernelUpdatePanel,
+} from "./kernel";
+import { ServersPanel } from "./servers";
 
-/** The signed-in account, its chat servers, and the Bots it has on each. */
-function AccountSections(props: ReadyProps) {
-  const { connection, state, value, t } = props;
-  const user = value.user!;
+const STEPS: [MessageKey, MessageKey][] = [
+  ["stepAccount", "stepAccountHint"],
+  ["stepBot", "stepBotHint"],
+  ["stepOnline", "stepOnlineHint"],
+];
+
+/** The three steps from a fresh install to a Bot that answers, shown until the last one is done. */
+function SetupGuide({ value, t }: { value: ConnectionState; t: Translate }) {
+  const done = [
+    Boolean(value.user),
+    Boolean(value.nativeBots?.length || value.bots.length),
+    value.bots.some((bot) => bot.connected || bot.status === "online"),
+  ];
+  if (done[2]) return null;
+  const current = done.indexOf(false);
   return (
-    <>
-      <section className="dc-panel dc-account" aria-label={t("account")}>
-        <div>
-          <p className="dc-account-name">{user.name || user.id}</p>
-          <p className="dc-server">{user.globalId || user.id}</p>
-        </div>
-        <Button
-          variant="outline"
-          type="button"
-          disabled={Boolean(state.busy)}
-          onClick={() => void connection.logout()}
-        >
-          {t(state.busy?.action === "logout" ? "loggingOut" : "logout")}
-        </Button>
-      </section>
-      <ServersPanel {...props} />
-      <section className="dc-panel" aria-label={t("myBots")}>
-        <h2>{t("myBots")}</h2>
-        {value.bots.length === 0 ? (
-          <p className="dc-muted">{t("emptyBots")}</p>
-        ) : (
-          (value.servers || []).map((server) => {
-            const bots = value.bots.filter(
-              (bot) => bot.serverUrl === server.url,
-            );
-            return (
-              <section
-                key={server.url}
-                className="dc-server-bots"
-                aria-label={server.serverName}
-              >
-                <h3>{server.serverName}</h3>
-                {bots.length === 0 ? (
-                  <p className="dc-muted">{t("noServerBots")}</p>
-                ) : (
-                  <ul className="dc-bots">
-                    {bots.map((bot) => (
-                      <BotRow key={bot.id} bot={bot} {...props} />
-                    ))}
-                  </ul>
-                )}
-              </section>
-            );
-          })
-        )}
-      </section>
-    </>
+    <ol className="dc-steps" aria-label={t("guideLabel")}>
+      {STEPS.map(([title, hint], index) => {
+        const state = done[index]
+          ? "done"
+          : index === current
+            ? "current"
+            : "todo";
+        return (
+          <li
+            key={title}
+            className="dc-step"
+            data-state={state}
+            aria-current={state === "current" ? "step" : undefined}
+          >
+            <span className="dc-step-mark" aria-hidden>
+              {state === "done" ? "✓" : index + 1}
+            </span>
+            <span className="dc-step-copy">
+              <strong>{t(title)}</strong>
+              <small>{t(state === "done" ? "stepDone" : hint)}</small>
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
-/** DSCord's page in DSH: sign-in, chat servers, Bots, the local kernel and plugin updates. */
+/** What the last action said, and anything wrong with the connection; it stays in view while the page scrolls. */
+function Notices({
+  state,
+  value,
+  t,
+}: {
+  state: Snapshot;
+  value: ConnectionState | null;
+  t: Translate;
+}) {
+  const errorMessage = state.errorTranslation
+    ? t(state.errorTranslation.key, state.errorTranslation.params)
+    : state.error;
+  const lastError =
+    value?.lastError && value.lastError !== errorMessage
+      ? value.lastError
+      : null;
+  const runtimeDown = value?.runtime?.available === false;
+  if (!state.notice && !errorMessage && !lastError && !runtimeDown) return null;
+  return (
+    <div className="dc-notices">
+      {state.notice && (
+        <p role="status" className="dc-notice" data-tone="success">
+          {t(state.notice)}
+        </p>
+      )}
+      {errorMessage && (
+        <p role="alert" className="dc-notice" data-tone="error">
+          {errorMessage}
+        </p>
+      )}
+      {lastError && (
+        <p role="alert" className="dc-notice" data-tone="error">
+          {lastError}
+        </p>
+      )}
+      {runtimeDown && (
+        <p role="status" className="dc-notice" data-tone="error">
+          {value.runtime?.message || t("runtimeUnavailable")}
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** DSCord's page in DSH: connect the account, run Bots, pick chat servers, then the settings few people need. */
 export function ConnectionPage({
   connection,
   t,
@@ -77,71 +116,63 @@ export function ConnectionPage({
     connection.getSnapshot,
   );
   const value = state.value;
-  const errorMessage = state.errorTranslation
-    ? t(state.errorTranslation.key, state.errorTranslation.params)
-    : state.error;
+  const user = value?.user;
+  const busy = state.loading || Boolean(state.busy);
   const ready = value ? { connection, state, value, t } : null;
   return (
     <section
       className="dscord-connect"
       aria-label={t("pageLabel")}
-      aria-busy={state.loading || Boolean(state.busy)}
+      aria-busy={busy}
     >
       <style>{styles}</style>
       <div className="dc-content">
         <header className="dc-header">
           <h1>{t("title")}</h1>
           <div className="dc-toolbar">
+            {user && (
+              <div className="dc-account" aria-label={t("account")}>
+                <p className="dc-account-name">{user.name || user.id}</p>
+                <p className="dc-meta">{user.globalId || user.id}</p>
+              </div>
+            )}
+            {user && (
+              <Button
+                variant="outline"
+                type="button"
+                disabled={Boolean(state.busy)}
+                onClick={() => void connection.logout()}
+              >
+                {t(state.busy?.action === "logout" ? "loggingOut" : "logout")}
+              </Button>
+            )}
             <Button
               variant="outline"
               type="button"
-              disabled={state.loading || Boolean(state.busy)}
+              disabled={busy}
               onClick={() => void connection.refresh()}
             >
               {t("refresh")}
             </Button>
           </div>
         </header>
-        {state.notice && (
-          <p role="status" className="dc-notice">
-            {t(state.notice)}
-          </p>
-        )}
-        {errorMessage && (
-          <p role="alert" className="dc-notice dc-error">
-            {errorMessage}
-          </p>
-        )}
-        {value?.lastError && value.lastError !== errorMessage && (
-          <p role="alert" className="dc-notice dc-error">
-            {value.lastError}
-          </p>
-        )}
+        <Notices state={state} value={value} t={t} />
         {state.loading && (
           <p role="status" className="dc-muted">
             {t("readStatus")}
           </p>
         )}
-        {value?.runtime?.available === false && (
-          <p role="status" className="dc-notice dc-error">
-            {value.runtime.message || t("runtimeUnavailable")}
-          </p>
+        {value?.nativeMode && <SetupGuide value={value} t={t} />}
+        {!state.loading && !user && (
+          <LoginForm connection={connection} state={state} t={t} />
         )}
-        {!state.loading && !value?.user && (
-          <LoginForm
-            key={value?.servers?.[0]?.url || "login"}
-            connection={connection}
-            state={state}
-            t={t}
-          />
-        )}
-        {ready?.value.nativeMode && (
-          <LocalKernelPanel
-            key={`${ready.value.hostId || "local"}/${ready.value.user?.id || "local-owner"}`}
+        {ready && (ready.value.nativeMode || user) && (
+          <BotsPanel
+            key={`${ready.value.hostId || "local"}/${user?.id || "local-owner"}`}
             {...ready}
           />
         )}
-        {ready?.value.user && <AccountSections {...ready} />}
+        {ready && user && <ServersPanel {...ready} />}
         {value?.kernelUpdates && (
           <KernelUpdatePanel
             connection={connection}
@@ -149,11 +180,16 @@ export function ConnectionPage({
             t={t}
           />
         )}
-        {value?.dataDirectory && (
-          <details className="dc-directory">
-            <summary>{t("configDirectory")}</summary>
-            <code>{value.dataDirectory}</code>
-          </details>
+        {(value?.nativeMode || value?.dataDirectory) && (
+          <section className="dc-panel" aria-label={t("advanced")}>
+            <h2>{t("advanced")}</h2>
+            {value.nativeMode && (
+              <DecisionProviderForm connection={connection} t={t} />
+            )}
+            {value.dataDirectory && (
+              <ConfigDirectory directory={value.dataDirectory} t={t} />
+            )}
+          </section>
         )}
       </div>
     </section>

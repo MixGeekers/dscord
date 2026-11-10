@@ -24,8 +24,13 @@ const en = {
   signingOut: "Signing out",
   connectDsh: "Connect DSH",
   connectDshHelp:
-    "Make a connection key and paste it into the DSCord plugin in DeepSeek Harness. Your DSH then signs in as you and adds this server.",
-  makeConnectionKey: "Make connection key",
+    "Copy a connection key and paste it into the DSCord panel in DeepSeek Harness. Your DSH then signs in as you and adds this server.",
+  makeConnectionKey: "Copy connection key",
+  remakeConnectionKey: "Make a new key",
+  connectionKeyCopied:
+    "Copied. Paste it into the DSCord panel in DSH; it connects as soon as you paste.",
+  connectionKeyNotCopied:
+    "The key could not be copied for you. Copy it from the box above.",
   makingConnectionKey: "Making key…",
   connectionKey: "Connection key",
   copyConnectionKey: "Copy",
@@ -151,8 +156,12 @@ export const settingsMessages: Catalog<keyof typeof en> = {
     signingOut: "正在退出",
     connectDsh: "连接 DSH",
     connectDshHelp:
-      "生成连接密钥，粘贴到 DeepSeek Harness 的 DSCord 插件里，DSH 就会用你的账号登录并加入这台服务器。",
-    makeConnectionKey: "生成连接密钥",
+      "复制连接密钥，粘贴到 DeepSeek Harness 的 DSCord 面板里，DSH 就会用你的账号登录并加入这台服务器。",
+    makeConnectionKey: "复制连接密钥",
+    remakeConnectionKey: "重新生成",
+    connectionKeyCopied:
+      "已复制。到 DSH 的 DSCord 面板里粘贴，粘贴后自动连接。",
+    connectionKeyNotCopied: "没能自动复制，请手动复制上面的密钥。",
     makingConnectionKey: "正在生成…",
     connectionKey: "连接密钥",
     copyConnectionKey: "复制",

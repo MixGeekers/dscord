@@ -511,6 +511,11 @@ try {
   await page.locator('#create-bot-button').click();
   await page.locator('#create-bot-dialog[open]').waitFor();
   assert.equal(await page.locator('#create-bot-dialog input').count(), 0);
+  // Adding a Bot hands over the key DSH asks for, in the same dialog.
+  await page.locator('#bot-make-connection-key').click();
+  assert.deepEqual(JSON.parse(Buffer.from(await page.locator('#bot-connection-key').inputValue(), 'base64url').toString('utf8')), { server: origin, code: 'connect-2' });
+  await page.locator('#bot-copy-connection-key').waitFor();
+  checks.push('addBotDialogMakesTheDshConnectionKeyInPlace');
   await page.locator('#create-bot-done').click();
   await page.locator('#create-bot-dialog').waitFor({ state: 'hidden' });
   // DSH adds the Bot at central and links it; the web client only lists what Core reports.

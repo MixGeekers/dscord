@@ -1,4 +1,5 @@
-import { Fragment, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
+import type { ReactNode } from "react";
 import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { Connection } from "../connection";
 import type { MessageKey, Translate } from "../locale";
@@ -11,8 +12,6 @@ import type {
   MemorySource,
   NativeBot,
 } from "../types";
-import { CreateLocalBot } from "./forms";
-import type { ReadyProps } from "./forms";
 
 type Feedback = { ok: true; pending?: boolean } | { error: string } | null;
 const message = (reason: unknown) => (reason as Error).message;
@@ -31,7 +30,7 @@ function FeedbackLine({ feedback, ok }: { feedback: Feedback; ok: string }) {
   return (
     <p
       role={error ? "alert" : "status"}
-      className={error ? "dc-error dc-model-info" : "dc-model-info"}
+      className={error ? "dc-error dc-small" : "dc-meta"}
     >
       {error || ok}
     </p>
@@ -39,92 +38,105 @@ function FeedbackLine({ feedback, ok }: { feedback: Feedback; ok: string }) {
 }
 
 /** The private key for the natural-participation decision service; a saved key is never shown again. */
-function DecisionProviderForm({
+export function DecisionProviderForm({
   connection,
-  provider,
-  onSaved,
   t,
 }: {
   connection: Connection;
-  provider: DecisionProvider | null;
-  onSaved: (provider: DecisionProvider) => void;
   t: Translate;
 }) {
+  const [provider, setProvider] = useState<DecisionProvider | null>(null);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState<Feedback>(null);
-  const [enabled, setEnabled] = useState(provider?.enabled !== false);
+  const [enabled, setEnabled] = useState(true);
   useEffect(() => {
-    setEnabled(provider?.enabled !== false);
-  }, [provider?.enabled]);
+    const controller = new AbortController();
+    void connection
+      .kernel<KernelState>("kernel-state", {}, controller)
+      .then((kernel) => {
+        if (controller.signal.aborted) return;
+        setProvider(kernel.decisionProvider || null);
+        setEnabled(kernel.decisionProvider?.enabled !== false);
+      })
+      .catch((reason) => {
+        if (!controller.signal.aborted) setFeedback({ error: message(reason) });
+      });
+    return () => controller.abort();
+  }, [connection]);
   return (
-    <details className="dc-private">
+    <details className="dc-disclosure">
       <summary>{t("decisionTitle")}</summary>
-      <p className="dc-muted dc-model-info">
-        {provider
-          ? `${t(provider.configured ? "configured" : "notConfigured")} · ${t(
-              provider.available === true
-                ? "available"
-                : provider.available === false
-                  ? "serviceUnavailable"
-                  : "availabilityUnknown",
-            )}`
-          : t("unknown")}
-      </p>
-      {provider?.model && (
-        <p className="dc-muted dc-model-info">{provider.model}</p>
-      )}
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const input = event.currentTarget.elements.namedItem(
-            "decisionApiKey",
-          ) as HTMLInputElement;
-          const apiKey = input.value.trim();
-          input.value = "";
-          setBusy(true);
-          setFeedback(null);
-          try {
-            onSaved(
-              await connection.kernel<DecisionProvider>(
-                "save-decision-provider",
-                { enabled, ...(apiKey ? { apiKey } : {}) },
-              ),
-            );
-            setFeedback({ ok: true });
-          } catch (reason) {
-            setFeedback({ error: message(reason) });
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <label className="dc-field">
-          {t("decisionApiKey")}
-          <Input
-            name="decisionApiKey"
-            type="password"
-            autoComplete="new-password"
-            disabled={busy}
-            spellCheck={false}
-            autoCapitalize="none"
-          />
-        </label>
-        <p className="dc-muted dc-model-info">{t("decisionKeyHelp")}</p>
-        <label className="dc-check">
-          <input
-            name="enabled"
-            type="checkbox"
-            checked={enabled}
-            onChange={(event) => setEnabled(event.target.checked)}
-            disabled={busy}
-          />
-          {t("enableDecision")}
-        </label>
-        <Button type="submit" variant="outline" disabled={busy}>
-          {t("saveDecision")}
-        </Button>
-      </form>
-      <FeedbackLine feedback={feedback} ok={t("decisionSaved")} />
+      <div className="dc-body">
+        <p className="dc-meta">{t("decisionHelp")}</p>
+        <p className="dc-meta">
+          {provider
+            ? `${t(provider.configured ? "configured" : "notConfigured")} · ${t(
+                provider.available === true
+                  ? "available"
+                  : provider.available === false
+                    ? "serviceUnavailable"
+                    : "availabilityUnknown",
+              )}${provider.model ? ` · ${provider.model}` : ""}`
+            : t("unknown")}
+        </p>
+        <form
+          className="dc-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const input = event.currentTarget.elements.namedItem(
+              "decisionApiKey",
+            ) as HTMLInputElement;
+            const apiKey = input.value.trim();
+            input.value = "";
+            setBusy(true);
+            setFeedback(null);
+            try {
+              setProvider(
+                await connection.kernel<DecisionProvider>(
+                  "save-decision-provider",
+                  { enabled, ...(apiKey ? { apiKey } : {}) },
+                ),
+              );
+              setFeedback({ ok: true });
+            } catch (reason) {
+              setFeedback({ error: message(reason) });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <div className="dc-field">
+            <label className="dc-field">
+              {t("decisionApiKey")}
+              <Input
+                name="decisionApiKey"
+                type="password"
+                autoComplete="new-password"
+                disabled={busy}
+                spellCheck={false}
+                autoCapitalize="none"
+              />
+            </label>
+            <span className="dc-hint">{t("decisionKeyHelp")}</span>
+          </div>
+          <label className="dc-check">
+            <input
+              name="enabled"
+              type="checkbox"
+              checked={enabled}
+              onChange={(event) => setEnabled(event.target.checked)}
+              disabled={busy}
+            />
+            {t("enableDecision")}
+          </label>
+          <div className="dc-actions">
+            <Button type="submit" variant="outline" disabled={busy}>
+              {t("saveDecision")}
+            </Button>
+          </div>
+        </form>
+        <FeedbackLine feedback={feedback} ok={t("decisionSaved")} />
+      </div>
     </details>
   );
 }
@@ -191,7 +203,7 @@ function LocalSourceMemory({
   const view = result?.view;
   const filled = MEMORY_SECTIONS.filter((key) => view?.[key]?.length);
   return (
-    <section className="dc-memory" aria-label={t("memory")}>
+    <section className="dc-section" aria-label={t("memory")}>
       <h3>{t("memory")}</h3>
       <form
         className="dc-memory-filter"
@@ -249,11 +261,11 @@ function LocalSourceMemory({
         </div>
       )}
       {view && (
-        <div>
+        <div className="dc-section">
           <h3>{result.identity?.name || result.id}</h3>
-          <p className="dc-bot-id">{result.id}</p>
+          <p className="dc-meta">{result.id}</p>
           {filled.map((key) => (
-            <section key={key}>
+            <section key={key} className="dc-section">
               <h3>{t(key)}</h3>
               {view[key]?.map((item) => (
                 <article
@@ -271,10 +283,10 @@ function LocalSourceMemory({
                     </span>
                   )}
                   <p>{item.text}</p>
-                  {item.saidBy && <p className="dc-muted">{item.saidBy}</p>}
-                  {item.scope && <p className="dc-muted">{item.scope}</p>}
+                  {item.saidBy && <p className="dc-meta">{item.saidBy}</p>}
+                  {item.scope && <p className="dc-meta">{item.scope}</p>}
                   {item.conflicts?.length ? (
-                    <p className="dc-muted">{t("conflicts")}</p>
+                    <p className="dc-meta">{t("conflicts")}</p>
                   ) : null}
                   <details>
                     <summary>{t("sources")}</summary>
@@ -291,29 +303,29 @@ function LocalSourceMemory({
           ))}
           {!filled.length && <p className="dc-muted">{t("noMemory")}</p>}
           {view.historyGaps?.length ? (
-            <p className="dc-muted dc-model-info">{t("limitedMemory")}</p>
+            <p className="dc-meta">{t("limitedMemory")}</p>
           ) : null}
           {Object.values(view.budget?.omitted || {}).some(
             (count) => count > 0,
-          ) && <p className="dc-muted dc-model-info">{t("shortenedMemory")}</p>}
+          ) && <p className="dc-meta">{t("shortenedMemory")}</p>}
         </div>
       )}
-      <p className="dc-muted dc-model-info">{t("memoryHelp")}</p>
+      <p className="dc-hint">{t("memoryHelp")}</p>
     </section>
   );
 }
 
-/** One local Bot's activity, how it takes part in conversations, and its memory. */
-function LocalBotSettings({
+/** One local Bot's settings: its model (passed in by the row), how it takes part in conversations, and its memory. */
+export function LocalBotSettings({
   bot,
   connection,
   t,
-  onBack,
+  children,
 }: {
   bot: NativeBot;
   connection: Connection;
   t: Translate;
-  onBack: () => void;
+  children?: ReactNode;
 }) {
   const [kernel, setKernel] = useState<KernelState | null>(null);
   const [mode, setMode] = useState<AttentionMode | "">("");
@@ -345,216 +357,99 @@ function LocalBotSettings({
   const activity = kernel?.attention?.activity || kernel?.attention?.status;
   const current = kernel?.desiredAttention?.mode || kernel?.attention?.mode;
   return (
-    <section className="dc-local-settings" aria-label={t("settings")}>
-      <Button variant="outline" disabled={busy} onClick={onBack}>
-        {t("back")}
-      </Button>
-      <h3>{bot.name}</h3>
-      <p className="dc-bot-id">{`${t("stableIdentity")} · ${bot.id}`}</p>
-      {loading && (
-        <p role="status" className="dc-muted">
-          {t("loadingKernel")}
-        </p>
-      )}
-      {error && (
-        <p role="alert" className="dc-error">
-          {error}
-        </p>
-      )}
-      {kernel && (
-        <p className="dc-model-info">
-          {t(
-            activity && ACTIVITIES.includes(activity)
-              ? (activity as MessageKey)
-              : "unknown",
-          )}
-        </p>
-      )}
-      <p className="dc-muted dc-model-info">{t("waitHelp")}</p>
-      <h3>{t("participation")}</h3>
-      {kernel?.desiredAttention?.status === "pending" && (
-        <p role="status" className="dc-muted dc-model-info">
-          {t("participationPending")}
-        </p>
-      )}
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          setBusy(true);
-          setFeedback(null);
-          try {
-            const receipt = await connection.kernel<{ status?: string }>(
-              "attention-update",
-              { nativeBotId: bot.id, mode },
-            );
-            setFeedback({ ok: true, pending: receipt.status === "pending" });
-            setRevision((value) => value + 1);
-          } catch (reason) {
-            setFeedback({ error: message(reason) });
-          } finally {
-            setBusy(false);
-          }
-        }}
-      >
-        <fieldset
-          className="dc-mode-options"
-          disabled={busy || loading || !kernel}
-        >
-          <legend className="dc-muted">{t("participation")}</legend>
-          {MODES.map((value) => (
-            <label className="dc-mode-option" key={value}>
-              <input
-                type="radio"
-                name="participationMode"
-                value={value}
-                checked={mode === value}
-                onChange={() => setMode(value)}
-              />
-              <span>
-                <strong>{t(value)}</strong>
-                <small>{t(`${value}Help`)}</small>
-              </span>
-            </label>
-          ))}
-        </fieldset>
-        <Button
-          type="submit"
-          variant="primary"
-          disabled={busy || loading || !kernel || !mode || mode === current}
-        >
-          {t("saveParticipation")}
-        </Button>
-      </form>
-      <FeedbackLine
-        feedback={feedback}
-        ok={t(
-          feedback && "pending" in feedback && feedback.pending
-            ? "participationPending"
-            : "participationSaved",
+    <section
+      className="dc-settings"
+      aria-label={t("botSettings", { name: bot.name })}
+    >
+      {children}
+      <div className="dc-section">
+        <h3>{t("participation")}</h3>
+        {loading && (
+          <p role="status" className="dc-muted">
+            {t("loadingKernel")}
+          </p>
         )}
-      />
-      <LocalSourceMemory connection={connection} nativeBotId={bot.id} t={t} />
-    </section>
-  );
-}
-
-/** The Bots that live on this DSH node: create them, add them to chat servers, and open their settings. */
-export function LocalKernelPanel({ connection, state, value, t }: ReadyProps) {
-  const [selected, setSelected] = useState<string | null>(null);
-  const [provider, setProvider] = useState<DecisionProvider | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const [serverUrl, setServerUrl] = useState("");
-  useEffect(() => {
-    const controller = new AbortController();
-    void connection
-      .kernel<KernelState>("kernel-state", {}, controller)
-      .then((kernel) => {
-        if (controller.signal.aborted) return;
-        setProvider(kernel.decisionProvider || null);
-        setError(null);
-      })
-      .catch((reason) => {
-        if (!controller.signal.aborted) setError(message(reason));
-      });
-    return () => controller.abort();
-  }, [connection]);
-  const servers = value.servers || [];
-  const target = servers.length === 1 ? servers[0].url : serverUrl;
-  const detail = value.nativeBots?.find((bot) => bot.id === selected);
-  const busy = Boolean(state.busy);
-  return (
-    <section className="dc-panel" aria-label={t("nativeBots")}>
-      <h2>{t("nativeBots")}</h2>
-      <p className="dc-muted">{t("nativeHelp")}</p>
-      {error && (
-        <p role="alert" className="dc-error dc-model-info">
-          {error}
-        </p>
-      )}
-      {detail ? (
-        <LocalBotSettings
-          key={detail.id}
-          bot={detail}
-          connection={connection}
-          t={t}
-          onBack={() => setSelected(null)}
+        {error && (
+          <p role="alert" className="dc-error">
+            {error}
+          </p>
+        )}
+        {kernel && (
+          <p className="dc-meta">
+            {`${t("activity")} · ${t(
+              activity && ACTIVITIES.includes(activity)
+                ? (activity as MessageKey)
+                : "unknown",
+            )}`}
+          </p>
+        )}
+        {kernel?.desiredAttention?.status === "pending" && (
+          <p role="status" className="dc-meta">
+            {t("participationPending")}
+          </p>
+        )}
+        <form
+          className="dc-form"
+          onSubmit={async (event) => {
+            event.preventDefault();
+            setBusy(true);
+            setFeedback(null);
+            try {
+              const receipt = await connection.kernel<{ status?: string }>(
+                "attention-update",
+                { nativeBotId: bot.id, mode },
+              );
+              setFeedback({ ok: true, pending: receipt.status === "pending" });
+              setRevision((value) => value + 1);
+            } catch (reason) {
+              setFeedback({ error: message(reason) });
+            } finally {
+              setBusy(false);
+            }
+          }}
+        >
+          <fieldset
+            className="dc-options"
+            aria-label={t("participation")}
+            disabled={busy || loading || !kernel}
+          >
+            {MODES.map((value) => (
+              <label className="dc-option" key={value}>
+                <input
+                  type="radio"
+                  name="participationMode"
+                  value={value}
+                  checked={mode === value}
+                  onChange={() => setMode(value)}
+                />
+                <span>
+                  <strong>{t(value)}</strong>
+                  <small>{t(`${value}Help`)}</small>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <div className="dc-actions">
+            <Button
+              type="submit"
+              variant="outline"
+              disabled={busy || loading || !kernel || !mode || mode === current}
+            >
+              {t("saveParticipation")}
+            </Button>
+          </div>
+        </form>
+        <FeedbackLine
+          feedback={feedback}
+          ok={t(
+            feedback && "pending" in feedback && feedback.pending
+              ? "participationPending"
+              : "participationSaved",
+          )}
         />
-      ) : (
-        <Fragment>
-          <ul className="dc-bots">
-            {(value.nativeBots || []).map((bot) => {
-              const bound = value.bots.some(
-                (link) => link.nativeBotId === bot.id,
-              );
-              return (
-                <li key={bot.id} className="dc-bot">
-                  <div className="dc-bot-copy">
-                    <strong>{bot.name}</strong>
-                    <p className="dc-bot-id">{bot.id}</p>
-                    {bot.role && <p className="dc-muted">{bot.role}</p>}
-                  </div>
-                  <div className="dc-toolbar">
-                    <Button
-                      variant="outline"
-                      disabled={busy}
-                      onClick={() => setSelected(bot.id)}
-                    >
-                      {t("settings")}
-                    </Button>
-                    <Button
-                      variant="outline"
-                      disabled={
-                        busy || bound || !bot.model || !value.user || !target
-                      }
-                      onClick={() =>
-                        void connection.attach(bot.id, undefined, target)
-                      }
-                    >
-                      {t(bound ? "nativeBound" : "attach")}
-                    </Button>
-                  </div>
-                </li>
-              );
-            })}
-          </ul>
-          {servers.length > 1 && (
-            <label className="dc-field">
-              {t("attach")}
-              <select
-                value={serverUrl}
-                onChange={(event) => setServerUrl(event.target.value)}
-                disabled={busy}
-              >
-                <option value="">{t("chooseServer")}</option>
-                {servers.map((server) => (
-                  <option key={server.url} value={server.url}>
-                    {server.serverName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          )}
-          {!value.nativeBots?.length && (
-            <p className="dc-muted dc-model-info">{t("nativeEmpty")}</p>
-          )}
-          {!value.user && (
-            <p className="dc-muted dc-model-info">{t("signInToAttach")}</p>
-          )}
-          <CreateLocalBot
-            connection={connection}
-            state={state}
-            value={value}
-            t={t}
-          />
-        </Fragment>
-      )}
-      <DecisionProviderForm
-        connection={connection}
-        provider={provider}
-        onSaved={setProvider}
-        t={t}
-      />
-      <p className="dc-muted dc-model-info">{t("nativeLifecycle")}</p>
+      </div>
+      <LocalSourceMemory connection={connection} nativeBotId={bot.id} t={t} />
+      <p className="dc-meta">{`${t("stableIdentity")} · ${bot.id}`}</p>
     </section>
   );
 }
@@ -620,88 +515,117 @@ export function KernelUpdatePanel({
                 : t("updateLatest");
   return (
     <section className="dc-panel" aria-label={t("updateTitle")}>
-      <h2>{t("updateTitle")}</h2>
-      <p className="dc-model-info">
-        {t("updateCurrent", { version: view.current }) +
-          (view.serverProtocol
-            ? ` · ${t("updateProtocol", { protocol: view.serverProtocol })}`
-            : "")}
-      </p>
-      <p
-        role="status"
-        className={
-          view.phase === "failed" || view.compatible === false
-            ? "dc-error dc-model-info"
-            : "dc-muted dc-model-info"
-        }
-      >
-        {summary}
-      </p>
-      {view.source && view.source !== "registry" && (
-        <p className="dc-muted dc-model-info">{t("updateNotRegistry")}</p>
-      )}
-      <fieldset className="dc-mode-options" disabled={busy || installing}>
-        <legend className="dc-muted">{t("updatePolicy")}</legend>
-        {POLICIES.map(([policy, key]) => (
-          <label className="dc-mode-option" key={policy}>
-            <input
-              type="radio"
-              name="kernelUpdatePolicy"
-              value={policy}
-              checked={view.policy === policy}
-              onChange={() => void run("kernel-update-policy", { policy })}
-            />
-            <span>
-              <strong>{t(key)}</strong>
-              <small>{t(`${key}Help`)}</small>
-            </span>
-          </label>
-        ))}
-        <label className="dc-mode-option">
-          <input
-            type="checkbox"
-            checked={view.channel === "prerelease"}
-            onChange={(event) =>
-              void run("kernel-update-policy", {
-                channel: event.target.checked ? "prerelease" : "stable",
-              })
+      <div className="dc-row">
+        <div className="dc-copy">
+          <h2>{t("updateTitle")}</h2>
+          <p className="dc-meta">
+            {t("updateCurrent", { version: view.current }) +
+              (view.serverProtocol
+                ? ` · ${t("updateProtocol", { protocol: view.serverProtocol })}`
+                : "")}
+          </p>
+          <p
+            role="status"
+            className={
+              view.phase === "failed" || view.compatible === false
+                ? "dc-error dc-small"
+                : "dc-meta"
             }
-          />
-          <span>
-            <strong>{t("updatePrerelease")}</strong>
-          </span>
-        </label>
-      </fieldset>
-      <div className="dc-toolbar">
-        <Button
-          variant="outline"
-          type="button"
-          disabled={busy || installing}
-          onClick={() => void run("kernel-update-check")}
-        >
-          {t("updateCheck")}
-        </Button>
-        {view.available &&
-          view.source === "registry" &&
-          view.phase !== "installed" &&
-          view.phase !== "restart-required" && (
-            <Button
-              variant="primary"
-              type="button"
-              disabled={busy || installing}
-              onClick={() => void run("kernel-update-install")}
-            >
-              {installing
-                ? t("updateInstalling")
-                : t("updateInstall", { version: view.available })}
-            </Button>
+          >
+            {summary}
+          </p>
+          {view.source && view.source !== "registry" && (
+            <p className="dc-meta">{t("updateNotRegistry")}</p>
           )}
+        </div>
+        <div className="dc-actions">
+          <Button
+            variant="outline"
+            type="button"
+            disabled={busy || installing}
+            onClick={() => void run("kernel-update-check")}
+          >
+            {t("updateCheck")}
+          </Button>
+          {view.available &&
+            view.source === "registry" &&
+            view.phase !== "installed" &&
+            view.phase !== "restart-required" && (
+              <Button
+                variant="primary"
+                type="button"
+                disabled={busy || installing}
+                onClick={() => void run("kernel-update-install")}
+              >
+                {installing
+                  ? t("updateInstalling")
+                  : t("updateInstall", { version: view.available })}
+              </Button>
+            )}
+        </div>
       </div>
       {error && (
-        <p role="alert" className="dc-error dc-model-info">
+        <p role="alert" className="dc-error dc-small">
           {error}
         </p>
       )}
+      <details className="dc-disclosure dc-divided">
+        <summary>{`${t("updatePolicy")} · ${t(
+          POLICIES.find(([policy]) => policy === view.policy)?.[1] ||
+            "policyNotify",
+        )}`}</summary>
+        <fieldset
+          className="dc-options"
+          aria-label={t("updatePolicy")}
+          disabled={busy || installing}
+        >
+          {POLICIES.map(([policy, key]) => (
+            <label className="dc-option" key={policy}>
+              <input
+                type="radio"
+                name="kernelUpdatePolicy"
+                value={policy}
+                checked={view.policy === policy}
+                onChange={() => void run("kernel-update-policy", { policy })}
+              />
+              <span>
+                <strong>{t(key)}</strong>
+                <small>{t(`${key}Help`)}</small>
+              </span>
+            </label>
+          ))}
+          <label className="dc-option">
+            <input
+              type="checkbox"
+              checked={view.channel === "prerelease"}
+              onChange={(event) =>
+                void run("kernel-update-policy", {
+                  channel: event.target.checked ? "prerelease" : "stable",
+                })
+              }
+            />
+            <span>
+              <strong>{t("updatePrerelease")}</strong>
+            </span>
+          </label>
+        </fieldset>
+      </details>
     </section>
+  );
+}
+
+/** Where on this device the plugin keeps the account's connection and each Bot's files. */
+export function ConfigDirectory({
+  directory,
+  t,
+}: {
+  directory: string;
+  t: Translate;
+}) {
+  return (
+    <details className="dc-disclosure">
+      <summary>{t("configDirectory")}</summary>
+      <code>{directory}</code>
+    </details>
   );
 }

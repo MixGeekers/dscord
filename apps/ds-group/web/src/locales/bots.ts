@@ -2,12 +2,13 @@ import type { Catalog } from "../locale";
 
 const en = {
   nativeHelp:
-    "A Bot is an account on the central server that you own. DSH on the Bot’s machine creates it and runs it, and it keeps one identity, memory and set of work on every chat server it joins.",
-  nodeConnection: "Connect a Bot node",
+    "A Bot runs in DeepSeek Harness (DSH) on your own computer and joins this server as an account you own. Three steps bring one in:",
+  nodeConnection: "Open the DSCord panel in DSH on that computer.",
   nodeConnectionHelp:
-    "Open DSCord in DSH on that machine, sign in with this account and create or link a Bot there. DSH gets the Bot its own sign-in from the central server and connects it to this chat server, and the Bot then appears here.",
+    "Paste the key into the panel. It connects at once; then choose “Create and go online” there and the Bot appears here.",
+  copyKeyStep: "Copy a connection key here:",
   nativeLifecycle:
-    "Bots run in their own DSCord kernel on a node. Closing this page keeps their identity, chats, memory and work.",
+    "The Bot keeps its identity, chats, memory and work on that computer, also while this page is closed.",
   modelSettings: "Model settings",
   modelHelp:
     "Open DSCord on the Bot’s node to choose its working model. Model credentials stay in the node’s private configuration.",
@@ -40,12 +41,13 @@ export const botMessages: Catalog<keyof typeof en> = {
   en,
   "zh-CN": {
     nativeHelp:
-      "Bot 是中央服务器上归你所有的账号，由 Bot 所在电脑上的 DSH 创建和运行。它在接入的每台聊天服务器上都是同一个身份，记忆和工作也是同一份。",
-    nodeConnection: "连接 Bot 节点",
+      "Bot 运行在你自己电脑上的 DeepSeek Harness（DSH）里，以归你所有的账号加入这台服务器。三步把它接进来：",
+    nodeConnection: "在那台电脑的 DSH 里打开 DSCord 面板。",
     nodeConnectionHelp:
-      "在那台电脑的 DSH 里打开 DSCord，用这个账号登录，在那里创建或关联 Bot。DSH 会向中央服务器为 Bot 申请它自己的登录，再把它接入这台聊天服务器，接好后就会出现在这里。",
+      "把密钥粘贴到面板里，它会自动连接；再在面板里点「创建并上线」，Bot 就会出现在这里。",
+    copyKeyStep: "在这里复制连接密钥：",
     nativeLifecycle:
-      "Bot 在节点的 DSCord 自有内核中运行。关闭网页后，身份、对话、记忆和工作继续保留。",
+      "Bot 的身份、对话、记忆和工作都留在那台电脑上，关闭网页也会保留。",
     modelSettings: "模型设置",
     modelHelp:
       "请在 Bot 所在节点的 DSCord 中选择工作模型。模型凭据保留在节点的私有配置中。",

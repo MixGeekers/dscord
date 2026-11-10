@@ -2,15 +2,27 @@ import { Button } from "../../../ui/controls";
 import { useEffect, useRef } from "react";
 import { useTranslation } from "../locale";
 import { botMessages } from "../locales/bots";
+import type { Session } from "../types";
+import { ConnectDsh } from "./ConnectDsh";
 import { Icon } from "./Icons";
 
 export interface CreateBotDialogProps {
   open: boolean;
+  session: Session | null;
+  server: string;
   onClose(): void;
 }
 
-/** Bots are central accounts that DSH creates and runs, so this page explains where to add one. */
-export function CreateBotDialog({ open, onClose }: CreateBotDialogProps) {
+/**
+ * Bots are central accounts that DSH creates and runs, so adding one starts here with the connection key DSH
+ * asks for, and the three steps that end with the Bot online.
+ */
+export function CreateBotDialog({
+  open,
+  session,
+  server,
+  onClose,
+}: CreateBotDialogProps) {
   const t = useTranslation(botMessages);
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
@@ -41,15 +53,23 @@ export function CreateBotDialog({ open, onClose }: CreateBotDialogProps) {
         </Button>
       </header>
       <div className="dialog-scroll-region">
-        <p className="muted">{t("nativeHelp")}</p>
-        <div className="bot-node-help">
-          <h3>
-            <Icon name="server" />
-            {t("nodeConnection")}
-          </h3>
-          <p>{t("nodeConnectionHelp")}</p>
-        </div>
-        <p className="muted">{t("nativeLifecycle")}</p>
+        <p>{t("nativeHelp")}</p>
+        <ol className="bot-add-steps">
+          <li>{t("nodeConnection")}</li>
+          <li>
+            {t("copyKeyStep")}
+            {session && open && (
+              <ConnectDsh
+                session={session}
+                server={server}
+                idPrefix="bot-"
+                bare
+              />
+            )}
+          </li>
+          <li>{t("nodeConnectionHelp")}</li>
+        </ol>
+        <p className="muted small">{t("nativeLifecycle")}</p>
       </div>
       <footer className="dialog-footer">
         <Button id="create-bot-done" onClick={onClose}>

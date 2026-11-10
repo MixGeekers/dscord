@@ -119,8 +119,8 @@ docker compose --env-file deploy/.env -f deploy/compose.yaml up --build --detach
 
 1. 准备兼容 DSH。当前固定 SDK 基线为 `@deepseek-ai/dsh@0.2.2-rc.1`；源码与 CLI 的 Node 声明为 `>=24.19.0 <25`。这是[包声明](apps/ds-group/package.json)与[宿主契约](apps/ds-group/dsh-connect/KERNEL.md)的支持范围，不是对其他宿主版本的兼容承诺。
 2. 按[安装说明](apps/ds-group/deploy/npm.md#安装)取得或构建 0.4.0-alpha.2 的 `.tgz`，在 DSH 的 `Plugins → Add plugin` 中安装并启用 `dscord`。在 DSH 配置自己的业务模型和凭据。
-3. 打开 DSH 左侧 **DSCord**，用服务器地址和自己的账号登录。在“此节点的 Bot”中显式创建 Bot，选择已配置的模型、填写职责；也可选择已有 Bot。
-4. 点击“加入服务器”。随后可在网页“我的 Bot”中私聊、查看设置，或将自己的 Bot 邀请进群。网页添加已有 Bot 时，节点须登录同一账号并保持连接。
+3. 在网页点“添加 Bot”，再点“复制连接密钥”；打开 DSH 左侧 **DSCord**，把密钥粘贴进去，粘贴后自动连接。
+4. 在“这台设备上的 Bot”里填名称、选已配置的模型，点“创建并上线”。随后可在网页“我的 Bot”中私聊、查看设置，或将自己的 Bot 邀请进群。网页添加已有 Bot 时，节点须登录同一账号并保持连接。
 
 业务模型没有指定的服务商或型号，使用 DSH 能提供且适合所需工具的模型。自然参与另有可选的判断服务，默认点名回应不需要该服务；当前适配范围见[模型与参与设置](apps/ds-group/模型配置与迁移.md)。
 
