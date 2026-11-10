@@ -1,9 +1,24 @@
-import { tokens } from "./tokens";
+import { design } from "./design";
 
-// Every colour, size of type, gap and radius comes from tokens.ts, the same names the web pages use.
-export const styles = `${tokens}
-.dscord-connect { box-sizing: border-box; width: 100%; height: 100%; min-height: 0; overflow: auto; background: var(--color-bg-primary); color: var(--color-text-primary); font: var(--font-size-body)/var(--line-height-body) var(--font-family-ui); }
-.dscord-connect *, .dscord-connect *::before, .dscord-connect *::after { box-sizing: border-box; }
+// The design system as the page needs it: design.ts (the web pages' tokens and control rules) and the few
+// declarations the web pages get from Tailwind utilities or Base UI and a plain element has to get here.
+// Every colour, size of type, gap and radius comes from a token.
+export const base = `${design}
+.dscord-ui { font-family: var(--font-family-ui); font-synthesis: none; }
+.dscord-ui, .dscord-ui *, .dscord-ui *::before, .dscord-ui *::after { box-sizing: border-box; }
+.dscord-ui .ds-button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: var(--space-4); margin: 0; font-family: inherit; white-space: nowrap; user-select: none; transition: background-color var(--motion-fast), color var(--motion-fast); }
+.dscord-ui .ds-input { display: block; width: 100%; min-width: 0; margin: 0; outline: none; }
+.dscord-ui input:is(.ds-checkbox, .ds-radio) { appearance: none; -webkit-appearance: none; }
+.dscord-ui input.ds-checkbox:checked { border-color: var(--color-accent); background: var(--color-accent); }
+.dscord-ui input.ds-checkbox:checked::after { content: ""; width: var(--space-2); height: var(--space-4); margin-top: calc(-1 * var(--space-1)); border: solid var(--color-text-on-accent); border-width: 0 var(--focus-width) var(--focus-width) 0; transform: rotate(45deg); }
+.dscord-ui input.ds-radio:checked { border-color: var(--color-accent); }
+.dscord-ui input.ds-radio:checked::after { content: ""; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-round); background: var(--color-accent); }
+.dscord-ui input:is(.ds-checkbox, .ds-radio):disabled { opacity: var(--opacity-disabled); cursor: default; }
+`;
+
+/** The page's own layout, on top of the design system. */
+export const styles = `${base}
+.dscord-connect { width: 100%; height: 100%; min-height: 0; overflow: auto; background: var(--color-bg-primary); color: var(--color-text-primary); font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .dscord-connect :is(h1, h2, h3, p, ul, ol, fieldset, legend) { margin: 0; padding: 0; }
 .dscord-connect :is(ul, ol) { list-style: none; }
 .dscord-connect fieldset { border: 0; min-width: 0; }
@@ -21,7 +36,7 @@ export const styles = `${tokens}
 .dscord-connect .dc-error { color: var(--color-text-danger); overflow-wrap: anywhere; }
 .dscord-connect a { color: var(--color-link); text-decoration: none; white-space: nowrap; }
 .dscord-connect a:hover { text-decoration: underline; }
-.dscord-connect :is(select, textarea, summary, a, input[type="radio"], input[type="checkbox"]):focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--space-1); }
+.dscord-connect :is(summary, a):focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--space-1); }
 
 .dscord-connect .dc-notices { position: sticky; top: var(--space-4); z-index: 1; display: grid; gap: var(--space-4); }
 .dscord-connect .dc-notice { padding: var(--space-5) var(--space-7); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); background: var(--color-bg-secondary); overflow-wrap: anywhere; }
@@ -52,13 +67,9 @@ export const styles = `${tokens}
 .dscord-connect .dc-form { display: grid; gap: var(--space-6); }
 .dscord-connect .dc-field { display: grid; gap: var(--space-3); min-width: 0; font-size: var(--font-size-compact); font-weight: var(--font-weight-medium); }
 .dscord-connect .dc-hint { color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: 400; }
-.dscord-connect :is(select, textarea) { width: 100%; border: 1px solid var(--color-border-normal); border-radius: var(--radius-lg); background: var(--color-bg-input); color: var(--color-text-primary); font: inherit; font-size: var(--font-size-body); font-weight: 400; }
-.dscord-connect select { min-height: var(--space-16); padding: var(--space-2) var(--space-5); text-overflow: ellipsis; }
-.dscord-connect textarea.dc-key { min-height: 88px; resize: vertical; padding: var(--space-4) var(--space-6); font-family: var(--font-family-code); font-size: var(--font-size-compact); word-break: break-all; }
-.dscord-connect :is(select, textarea):disabled { opacity: var(--opacity-disabled); }
-.dscord-connect :is(input, textarea)::placeholder { color: var(--color-text-muted); opacity: 1; }
-.dscord-connect .dc-check { display: flex; align-items: center; gap: var(--space-4); }
-.dscord-connect input:is([type="radio"], [type="checkbox"]) { flex: 0 0 auto; accent-color: var(--color-accent); }
+.dscord-connect .dc-field .ds-input { font-weight: 400; }
+.dscord-connect .dc-key { font-family: var(--font-family-code); word-break: break-all; }
+.dscord-connect .dc-check { display: flex; align-items: center; gap: var(--space-4); cursor: pointer; }
 
 .dscord-connect .dc-options { display: grid; gap: var(--space-1); }
 .dscord-connect .dc-options legend { margin-bottom: var(--space-3); font-size: var(--font-size-compact); font-weight: var(--font-weight-medium); }

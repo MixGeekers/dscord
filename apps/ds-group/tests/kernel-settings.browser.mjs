@@ -83,8 +83,8 @@ const dshHtml = `<!doctype html><html><head><meta name="viewport" content="width
   await import('/@fs/${packageRoot}/dsh-connect/client.js');
   const listeners=new Set();const dictionaries=new Map();let language='en';let main;const cleanup=[];
   const locale={register:(id,value)=>{dictionaries.set(id,value);},bind:id=>(key,params={})=>{const text=dictionaries.get(id)?.[language]?.[key]||key;return text.replace(/\\{(\\w+)\\}/g,(m,k)=>params[k]??m);}};
-  function Button({variant,...props}){return React.createElement('button',props);}
-  const plugin=descriptor.factory(name=>name==='react'?React:name==='react/jsx-runtime'?JsxRuntime:name==='react-dom'?{createPortal:element=>element}:{Button,Input:'input',IconPluginPinwheelOutlineRegular:()=>null});
+  const modules={react:React,'react/jsx-runtime':JsxRuntime,'react-dom':{createPortal:element=>element}};
+  const plugin=descriptor.factory(name=>{if(!modules[name])throw new Error('The page asked DSH for '+name);return modules[name];});
   plugin.apply({locale,effect:fn=>cleanup.push(fn()),slots:{inject:(_n,fn)=>fn(),register:(options,component)=>{if(options.name==='main')main={options,component};return ()=>{};}},layout:{selectPanel:()=>{}}});
   const root=createRoot(document.getElementById('root'));const connection=main.options.inject().connection;
   window.fixture={connection,locale:value=>{language=value;render();}};
@@ -110,7 +110,7 @@ let page;
 let f;
 let reporting;
 let updates;
-async function screenshot(name) { const filename = path.join(output, name); await page.screenshot({ path: filename }); report.screenshots.push(filename); }
+async function screenshot(name) { const filename = path.join(output, name); await page.screenshot({ path: filename, animations: 'disabled' }); report.screenshots.push(filename); }
 try {
   await server.listen(); browser = await chromium.launch();
   const context = await browser.newContext({ viewport: { width: 1120, height: 850 }, locale: 'en-US' });

@@ -7,12 +7,57 @@ window.__ModuleLoader__.load({
 Object.defineProperty(exports, Symbol.toStringTag, { value: "Module" });
 let react = require("react");
 let react_dom = require("react-dom");
-let _deepseek_ai_dsh_client_ui_primitives = require("@deepseek-ai/dsh-client-ui-primitives");
 let react_jsx_runtime = require("react/jsx-runtime");
+// dsh-connect/client/components/controls.tsx
+var classes = (...names) => names.filter(Boolean).join(" ");
+/**
+* DSCord's own controls for the page inside DSH. They are plain elements carrying the design system's class
+* names, so the rules generated from ui/styles.css draw them exactly as ui/controls.tsx is drawn on the web
+* pages, whatever DSH's own controls look like.
+*/
+function Button({ variant = "default", size = "default", className, ...props }) {
+	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("button", {
+		"data-slot": "button",
+		className: classes("ds-button", `ds-button-${variant}`, `ds-button-size-${size}`, className),
+		...props
+	});
+}
+function Input({ className, ...props }) {
+	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+		"data-slot": "input",
+		className: classes("ds-input", className),
+		...props
+	});
+}
+function Textarea({ className, ...props }) {
+	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("textarea", {
+		"data-slot": "textarea",
+		className: classes("ds-input ds-textarea", className),
+		...props
+	});
+}
+/** A native checkbox, so it submits and resets with its form; styles.ts draws its checked state. */
+function Checkbox(props) {
+	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+		type: "checkbox",
+		"data-slot": "checkbox",
+		className: "ds-checkbox",
+		...props
+	});
+}
+function Radio(props) {
+	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+		type: "radio",
+		"data-slot": "radio",
+		className: "ds-radio",
+		...props
+	});
+}
 // dsh-connect/client/styles.ts
-var styles = `
-.dscord-connect {
+var base = `
+.dscord-ui {
   color-scheme: light;
+  --font-family-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
   --font-family-code: ui-monospace, SFMono-Regular, Consolas, monospace;
   --font-size-2xs: .625rem;
   --font-size-xs: .6875rem;
@@ -49,56 +94,244 @@ var styles = `
   --radius-sm: 4px;
   --radius-control: 5px;
   --radius-md: 6px;
+  --radius-lg: 8px;
+  --radius-xl: 12px;
   --radius-server: 16px;
   --radius-pill: 999px;
   --radius-round: 50%;
+  --height-header: 49px;
+  --size-icon: 20px;
+  --size-avatar: 32px;
   --size-avatar-message: 40px;
+  --width-server-rail: 72px;
+  --width-channel-sidebar: 240px;
+  --width-member-sidebar: 240px;
   --focus-width: 2px;
   --motion-fast: 150ms;
+  --motion-panel: 180ms;
+  --motion-highlight: 3s;
+  --z-message-actions: 1;
+  --z-header: 2;
+  --z-floating: 3;
+  --z-backdrop: 5;
+  --z-panel: 6;
+  --z-navigation: 7;
+  --z-suggestions: 12;
+  --z-drop-target: 20;
+  --z-toast: 50;
+  --z-ui-popover: 80;
+  --z-ui-dialog-backdrop: 90;
+  --z-ui-dialog: 91;
+  --color-bg-canvas: #e3e5e8;
+  --color-bg-primary: #ffffff;
+  --color-bg-secondary: #f2f3f5;
+  --color-bg-tertiary: #e7e9ec;
+  --color-bg-input: #ebedef;
+  --color-bg-hover: #e7e9ec;
+  --color-bg-selected: #dce0e5;
+  --color-bg-message-hover: #f2f3f5;
+  --color-bg-neutral: #d4d7dc;
+  --color-bg-neutral-hover: #c7ccd4;
+  --color-bg-toast: #313338;
+  --color-text-primary: #060607;
+  --color-text-normal: #313338;
+  --color-text-secondary: #4e5058;
+  --color-text-muted: #5c6069;
   --color-text-on-accent: #ffffff;
-  --font-family-ui: var(--dsw-font-family, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif);
-  --radius-lg: var(--dsw-radius-md, 8px);
-  --radius-xl: var(--dsw-radius-lg, 12px);
-  --color-bg-primary: var(--dsw-alias-bg-layer-1, #ffffff);
-  --color-bg-secondary: var(--dsw-alias-settings-card-fill, #f2f3f5);
-  --color-bg-input: var(--dsw-alias-bg-layer-1, #ebedef);
-  --color-bg-hover: var(--dsw-alias-interactive-bg-hover, #e7e9ec);
-  --color-text-primary: var(--dsw-alias-label-primary, #060607);
-  --color-text-muted: var(--dsw-alias-label-secondary, #5c6069);
-  --color-border-subtle: var(--dsw-alias-settings-card-stroke, #e0e2e6);
-  --color-border-normal: var(--dsw-alias-settings-card-stroke, #cdd1d7);
-  --color-accent: var(--dsw-alias-state-business-primary, #5865f2);
-  --color-focus: var(--dsw-alias-state-business-primary, #0068a8);
-  --color-link: var(--dsw-alias-link, #0068a8);
-  --color-status-success: var(--dsw-alias-state-success-primary, #008642);
-  --color-status-warning: var(--dsw-alias-state-warn-primary, #997000);
-  --color-status-danger: var(--dsw-alias-state-error-primary, #d72f36);
-  --color-text-danger: var(--dsw-alias-state-error-primary, #c92d35);
+  --color-document-paper: #ffffff;
+  --color-icon-muted: #6d6f78;
+  --color-link: #0068a8;
+  --color-focus: #0068a8;
+  --color-border-subtle: #e0e2e6;
+  --color-border-normal: #cdd1d7;
+  --color-border-strong: #a7adb8;
+  --color-border-header: #d7dbe0;
+  --color-border-divider: #dce0e5;
+  --color-border-inset: #d7dbe0;
+  --palette-indigo: #5865f2;
+  --palette-blue: #2563eb;
+  --palette-teal: #0f766e;
+  --palette-rose: #be185d;
+  --palette-amber: #b45309;
+  --color-accent: var(--palette-indigo);
+  --color-accent-hover: #4752c4;
+  --color-status-success: #008642;
+  --color-status-warning: #997000;
+  --color-status-danger: #d72f36;
+  --color-danger-action: #da373c;
+  --color-text-danger: #c92d35;
+  --color-text-danger-soft: #9c2026;
+  --color-bg-danger: #fde7e8;
+  --color-border-danger: #c7474e;
+  --color-text-bot: #1d7562;
+  --color-code-keyword: #cf222e;
+  --color-code-string: #0a3069;
+  --color-code-comment: #6e7781;
+  --color-code-number: #0550ae;
+  --color-code-title: #8250df;
+  --color-code-attribute: #953800;
+  --color-code-added: #116329;
+  --color-code-deleted: #82071e;
+  --color-quote-border: var(--color-bg-neutral);
+  --color-mention-bg: #5865f224;
+  --color-mention-text: #3b48b4;
+  --color-mention-message-bg: #f0b2321a;
+  --color-mention-message-hover: #f0b2322b;
+  --color-message-highlight: #5865f233;
+  --color-drop-background: #5865f2ed;
+  --color-drop-border: #b8bfff;
+  --color-file-pdf-border: #b13036;
+  --color-file-image: #3457ab;
+  --color-file-text: #24754d;
+  --color-file-text-border: #438b68;
+  --color-avatar-human: #9255a5;
+  --color-avatar-bot: #3b8d7b;
+  --color-avatar-alternate: #5865f2;
+  --color-role-default: #6d6f78;
+  --color-scrollbar-thumb: #c4c9d1;
+  --color-overlay: #00000033;
+  --color-dialog-overlay: #00000066;
+  --shadow-header: 0 1px 3px #00000015;
+  --shadow-actions: 0 2px 5px #00000022;
+  --shadow-float: 0 3px 10px #00000022;
+  --shadow-suggestions: 0 6px 24px #00000026;
+  --shadow-panel: -5px 0 20px #00000022;
+  --shadow-navigation: 4px 0 20px #00000022;
+  --shadow-dialog: 0 12px 48px #00000033;
+  --shadow-toast: 0 3px 20px #00000033;
+  --green: var(--color-accent);
+  --muted: var(--color-text-muted);
+  --line: var(--color-border-subtle);
+  --surface: var(--color-bg-primary);
+  --side: var(--color-bg-secondary);
+  --accent: var(--color-accent);
 }
-body[data-ds-dark-theme] .dscord-connect {
+body[data-ds-dark-theme] .dscord-ui {
   color-scheme: dark;
-  --color-bg-primary: var(--dsw-alias-bg-layer-1, #313338);
-  --color-bg-secondary: var(--dsw-alias-settings-card-fill, #2b2d31);
-  --color-bg-input: var(--dsw-alias-bg-layer-1, #383a40);
-  --color-bg-hover: var(--dsw-alias-interactive-bg-hover, #35373c);
-  --color-text-primary: var(--dsw-alias-label-primary, #f2f3f5);
-  --color-text-muted: var(--dsw-alias-label-secondary, #949ba4);
-  --color-border-subtle: var(--dsw-alias-settings-card-stroke, #3f4147);
-  --color-border-normal: var(--dsw-alias-settings-card-stroke, #45474e);
-  --color-accent: var(--dsw-alias-state-business-primary, #5865f2);
-  --color-focus: var(--dsw-alias-state-business-primary, #00a8fc);
-  --color-link: var(--dsw-alias-link, #00a8fc);
-  --color-status-success: var(--dsw-alias-state-success-primary, #23a559);
-  --color-status-warning: var(--dsw-alias-state-warn-primary, #f0b232);
-  --color-status-danger: var(--dsw-alias-state-error-primary, #f23f43);
-  --color-text-danger: var(--dsw-alias-state-error-primary, #fa777c);
+  --color-bg-canvas: #1e1f22;
+  --color-bg-primary: #313338;
+  --color-bg-secondary: #2b2d31;
+  --color-bg-tertiary: #232428;
+  --color-bg-input: #383a40;
+  --color-bg-hover: #35373c;
+  --color-bg-selected: #404249;
+  --color-bg-message-hover: #2e3035;
+  --color-bg-neutral: #4e5058;
+  --color-bg-neutral-hover: #6d6f78;
+  --color-bg-toast: #111214;
+  --color-text-primary: #f2f3f5;
+  --color-text-normal: #dbdee1;
+  --color-text-secondary: #b5bac1;
+  --color-text-muted: #949ba4;
+  --color-icon-muted: #80848e;
+  --color-link: #00a8fc;
+  --color-focus: #00a8fc;
+  --color-border-subtle: #3f4147;
+  --color-border-normal: #45474e;
+  --color-border-strong: #53565f;
+  --color-border-header: #26272c;
+  --color-border-divider: #42444a;
+  --color-border-inset: #25262b;
+  --color-status-success: #23a559;
+  --color-status-warning: #f0b232;
+  --color-status-danger: #f23f43;
+  --color-text-danger: #fa777c;
+  --color-text-danger-soft: #f2a9ab;
+  --color-bg-danger: #5b3335;
+  --color-border-danger: #b74348;
+  --color-text-bot: #82c7b7;
+  --color-code-keyword: #ff7b72;
+  --color-code-string: #a5d6ff;
+  --color-code-comment: #8b949e;
+  --color-code-number: #79c0ff;
+  --color-code-title: #d2a8ff;
+  --color-code-attribute: #ffa657;
+  --color-code-added: #7ee787;
+  --color-code-deleted: #ffa198;
+  --color-mention-bg: #5865f24d;
+  --color-mention-text: #c9cdfb;
+  --color-mention-message-bg: #f0b2320c;
+  --color-mention-message-hover: #f0b23215;
+  --color-message-highlight: #5865f259;
+  --color-file-pdf-border: #da686e;
+  --color-file-image: #95baff;
+  --color-file-text: #8ed8b3;
+  --color-file-text-border: #438b68;
+  --color-role-default: #99aab5;
+  --color-scrollbar-thumb: #1a1b1e;
+  --color-overlay: #00000077;
+  --color-dialog-overlay: #000000aa;
+  --shadow-header: 0 1px 3px #00000022;
+  --shadow-actions: 0 2px 5px #00000044;
+  --shadow-float: 0 3px 10px #00000033;
+  --shadow-suggestions: 0 6px 24px #00000066;
+  --shadow-panel: -5px 0 20px #00000044;
+  --shadow-navigation: 4px 0 20px #00000044;
+  --shadow-dialog: 0 12px 48px #00000077;
+  --shadow-toast: 0 3px 20px #00000066;
 }
 @media (prefers-reduced-motion: reduce) {
-  .dscord-connect { --motion-fast: 0ms; }
+  .dscord-ui { --motion-fast: 0ms; --motion-panel: 0ms; --motion-highlight: 0ms; }
+}
+.dscord-ui .ds-button { min-height: 38px; padding: 0 14px; border: 1px solid transparent; border-radius: var(--radius-md); font-size: var(--font-size-compact); font-weight: var(--font-weight-semibold); line-height: 1.25; cursor: pointer; }
+.dscord-ui .ds-button-size-sm { min-height: 34px; padding-inline: 11px; }
+.dscord-ui .ds-button-size-icon { width: 36px; min-height: 36px; padding: 0; }
+.dscord-ui .ds-button svg { width: 16px; height: 16px; stroke-width: 2; }
+.dscord-ui .ds-button-size-icon svg { width: 20px; height: 20px; }
+.dscord-ui .ds-button-default { background: var(--color-accent); color: var(--color-text-on-accent); }
+.dscord-ui .ds-button-default:hover:not(:disabled) { background: var(--color-accent-hover); }
+.dscord-ui .ds-button-secondary { background: var(--color-bg-neutral); color: var(--color-text-primary); }
+.dscord-ui .ds-button-secondary:hover:not(:disabled) { background: var(--color-bg-neutral-hover); }
+.dscord-ui .ds-button-ghost { background: transparent; color: var(--color-text-secondary); }
+.dscord-ui .ds-button-ghost:hover:not(:disabled) { background: var(--color-bg-hover); color: var(--color-text-primary); }
+.dscord-ui .ds-button-destructive { background: var(--color-bg-danger); color: var(--color-text-danger); }
+.dscord-ui .ds-button-destructive:hover:not(:disabled) { background: var(--color-border-danger); color: var(--color-text-on-accent); }
+.dscord-ui .ds-button:focus-visible, .dscord-ui .ds-input:focus-visible, .dscord-ui .ds-popover-content:focus-visible, .dscord-ui .ds-dialog-content:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: 2px; }
+.dscord-ui .ds-button:disabled, .dscord-ui .ds-input:disabled { cursor: default; opacity: var(--opacity-disabled); }
+.dscord-ui .ds-input { min-height: 38px; padding: 8px 11px; border: 1px solid var(--color-border-normal); border-radius: var(--radius-md); background: var(--color-bg-input); color: var(--color-text-primary); font: inherit; font-size: var(--font-size-compact); }
+.dscord-ui .ds-input::placeholder { color: var(--color-text-muted); }
+.dscord-ui .ds-input[aria-invalid="true"], .dscord-ui .ds-input:user-invalid { border-color: var(--color-border-danger); }
+.dscord-ui .ds-select-wrap { position: relative; display: block; width: 100%; min-width: 0; }
+.dscord-ui .ds-select { appearance: none; padding-right: 34px; cursor: pointer; }
+.dscord-ui .ds-select-wrap > svg { position: absolute; top: 50%; right: 11px; transform: translateY(-50%); width: 16px; height: 16px; pointer-events: none; color: var(--color-text-secondary); }
+.dscord-ui .ds-select:disabled { cursor: default; }
+.dscord-ui .ds-select-wrap:has(.ds-select:disabled) > svg { opacity: var(--opacity-disabled); }
+.dscord-ui .ds-textarea { min-height: 92px; resize: vertical; line-height: var(--line-height-body); }
+.dscord-ui .ds-checkbox, .dscord-ui .ds-radio { display: inline-grid; place-items: center; flex: 0 0 16px; width: 16px; height: 16px; margin: 0; padding: 0; border: 1px solid var(--color-border-strong); background: var(--color-bg-input); cursor: pointer; vertical-align: middle; }
+.dscord-ui .ds-checkbox { border-radius: var(--radius-sm); }
+.dscord-ui .ds-radio { border-radius: var(--radius-round); }
+.dscord-ui .ds-checkbox[data-checked] { border-color: var(--color-accent); background: var(--color-accent); }
+.dscord-ui .ds-checkbox-indicator { display: grid; place-items: center; color: var(--color-text-on-accent); }
+.dscord-ui .ds-checkbox-indicator svg { width: 12px; height: 12px; }
+.dscord-ui .ds-radio[data-checked] { border-color: var(--color-accent); }
+.dscord-ui .ds-radio-indicator { width: 8px; height: 8px; border-radius: 50%; background: var(--color-accent); }
+.dscord-ui .ds-checkbox:focus-visible, .dscord-ui .ds-radio:focus-visible, .dscord-ui .ds-color-input:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: 2px; }
+.dscord-ui .ds-checkbox[data-disabled], .dscord-ui .ds-radio[data-disabled] { opacity: var(--opacity-disabled); cursor: default; }
+.dscord-ui .ds-color-input { width: 54px; min-height: 38px; padding: 3px; border: 1px solid var(--color-border-normal); border-radius: var(--radius-md); background: var(--color-bg-input); cursor: pointer; }
+.dscord-ui .ds-color-input:disabled { opacity: var(--opacity-disabled); cursor: default; }
+.dscord-ui .ds-popover-positioner { z-index: var(--z-ui-popover); max-width: calc(100vw - 16px); }
+.dscord-ui .ds-popover-content { max-height: min(760px, calc(100dvh - 24px)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--color-border-normal); border-radius: var(--radius-xl); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-suggestions); }
+.dscord-ui .ds-dialog-backdrop { position: fixed; inset: 0; z-index: var(--z-ui-dialog-backdrop); background: var(--color-dialog-overlay); }
+.dscord-ui .ds-dialog-content { position: fixed; top: 50%; left: 50%; z-index: var(--z-ui-dialog); transform: translate(-50%, -50%); max-height: calc(100dvh - 32px); overflow: hidden; overscroll-behavior: contain; border: 1px solid var(--color-border-normal); border-radius: var(--radius-xl); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-dialog); }
+.dscord-ui .ds-dialog-content[data-open] { display: flex; flex-direction: column; }
+@media (max-width: 480px) {
+  .dscord-ui .ds-dialog-content { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
 }
 
-.dscord-connect { box-sizing: border-box; width: 100%; height: 100%; min-height: 0; overflow: auto; background: var(--color-bg-primary); color: var(--color-text-primary); font: var(--font-size-body)/var(--line-height-body) var(--font-family-ui); }
-.dscord-connect *, .dscord-connect *::before, .dscord-connect *::after { box-sizing: border-box; }
+.dscord-ui { font-family: var(--font-family-ui); font-synthesis: none; }
+.dscord-ui, .dscord-ui *, .dscord-ui *::before, .dscord-ui *::after { box-sizing: border-box; }
+.dscord-ui .ds-button { display: inline-flex; flex: 0 0 auto; align-items: center; justify-content: center; gap: var(--space-4); margin: 0; font-family: inherit; white-space: nowrap; user-select: none; transition: background-color var(--motion-fast), color var(--motion-fast); }
+.dscord-ui .ds-input { display: block; width: 100%; min-width: 0; margin: 0; outline: none; }
+.dscord-ui input:is(.ds-checkbox, .ds-radio) { appearance: none; -webkit-appearance: none; }
+.dscord-ui input.ds-checkbox:checked { border-color: var(--color-accent); background: var(--color-accent); }
+.dscord-ui input.ds-checkbox:checked::after { content: ""; width: var(--space-2); height: var(--space-4); margin-top: calc(-1 * var(--space-1)); border: solid var(--color-text-on-accent); border-width: 0 var(--focus-width) var(--focus-width) 0; transform: rotate(45deg); }
+.dscord-ui input.ds-radio:checked { border-color: var(--color-accent); }
+.dscord-ui input.ds-radio:checked::after { content: ""; width: var(--space-4); height: var(--space-4); border-radius: var(--radius-round); background: var(--color-accent); }
+.dscord-ui input:is(.ds-checkbox, .ds-radio):disabled { opacity: var(--opacity-disabled); cursor: default; }
+`;
+/** The page's own layout, on top of the design system. */
+var styles = `${base}
+.dscord-connect { width: 100%; height: 100%; min-height: 0; overflow: auto; background: var(--color-bg-primary); color: var(--color-text-primary); font-size: var(--font-size-body); line-height: var(--line-height-body); }
 .dscord-connect :is(h1, h2, h3, p, ul, ol, fieldset, legend) { margin: 0; padding: 0; }
 .dscord-connect :is(ul, ol) { list-style: none; }
 .dscord-connect fieldset { border: 0; min-width: 0; }
@@ -116,7 +349,7 @@ body[data-ds-dark-theme] .dscord-connect {
 .dscord-connect .dc-error { color: var(--color-text-danger); overflow-wrap: anywhere; }
 .dscord-connect a { color: var(--color-link); text-decoration: none; white-space: nowrap; }
 .dscord-connect a:hover { text-decoration: underline; }
-.dscord-connect :is(select, textarea, summary, a, input[type="radio"], input[type="checkbox"]):focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--space-1); }
+.dscord-connect :is(summary, a):focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--space-1); }
 
 .dscord-connect .dc-notices { position: sticky; top: var(--space-4); z-index: 1; display: grid; gap: var(--space-4); }
 .dscord-connect .dc-notice { padding: var(--space-5) var(--space-7); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); background: var(--color-bg-secondary); overflow-wrap: anywhere; }
@@ -147,13 +380,9 @@ body[data-ds-dark-theme] .dscord-connect {
 .dscord-connect .dc-form { display: grid; gap: var(--space-6); }
 .dscord-connect .dc-field { display: grid; gap: var(--space-3); min-width: 0; font-size: var(--font-size-compact); font-weight: var(--font-weight-medium); }
 .dscord-connect .dc-hint { color: var(--color-text-muted); font-size: var(--font-size-sm); font-weight: 400; }
-.dscord-connect :is(select, textarea) { width: 100%; border: 1px solid var(--color-border-normal); border-radius: var(--radius-lg); background: var(--color-bg-input); color: var(--color-text-primary); font: inherit; font-size: var(--font-size-body); font-weight: 400; }
-.dscord-connect select { min-height: var(--space-16); padding: var(--space-2) var(--space-5); text-overflow: ellipsis; }
-.dscord-connect textarea.dc-key { min-height: 88px; resize: vertical; padding: var(--space-4) var(--space-6); font-family: var(--font-family-code); font-size: var(--font-size-compact); word-break: break-all; }
-.dscord-connect :is(select, textarea):disabled { opacity: var(--opacity-disabled); }
-.dscord-connect :is(input, textarea)::placeholder { color: var(--color-text-muted); opacity: 1; }
-.dscord-connect .dc-check { display: flex; align-items: center; gap: var(--space-4); }
-.dscord-connect input:is([type="radio"], [type="checkbox"]) { flex: 0 0 auto; accent-color: var(--color-accent); }
+.dscord-connect .dc-field .ds-input { font-weight: 400; }
+.dscord-connect .dc-key { font-family: var(--font-family-code); word-break: break-all; }
+.dscord-connect .dc-check { display: flex; align-items: center; gap: var(--space-4); cursor: pointer; }
 
 .dscord-connect .dc-options { display: grid; gap: var(--space-1); }
 .dscord-connect .dc-options legend { margin-bottom: var(--space-3); font-size: var(--font-size-compact); font-weight: var(--font-weight-medium); }
@@ -368,7 +597,7 @@ function LoginForm({ connection, state, t }) {
 				className: "dc-field",
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					className: "dc-field",
-					children: [t("connectionKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("textarea", {
+					children: [t("connectionKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Textarea, {
 						name: "connectionKey",
 						className: "dc-key",
 						required: true,
@@ -393,8 +622,7 @@ function LoginForm({ connection, state, t }) {
 			}),
 			/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: "dc-actions",
-				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-					variant: "primary",
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Button, {
 					type: "submit",
 					disabled: busy,
 					children: t(state.busy?.action === "login" ? "loggingIn" : "login")
@@ -501,7 +729,7 @@ function DecisionPanel({ connection, status, t }) {
 				className: "dc-field",
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					className: "dc-field",
-					children: [t("decisionApiKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+					children: [t("decisionApiKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
 						name: "decisionApiKey",
 						type: "password",
 						autoComplete: "new-password",
@@ -519,7 +747,7 @@ function DecisionPanel({ connection, status, t }) {
 				className: "dc-field",
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					className: "dc-field",
-					children: [t("decisionModelName"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+					children: [t("decisionModelName"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
 						name: "decisionModel",
 						defaultValue: form?.model ?? "",
 						disabled: busy,
@@ -535,7 +763,7 @@ function DecisionPanel({ connection, status, t }) {
 				className: "dc-field",
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					className: "dc-field",
-					children: [t("decisionEndpoint"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Input, {
+					children: [t("decisionEndpoint"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
 						name: "decisionEndpoint",
 						defaultValue: form?.endpoint ?? "",
 						disabled: busy,
@@ -549,9 +777,8 @@ function DecisionPanel({ connection, status, t }) {
 			}),
 			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 				className: "dc-check",
-				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
+				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Checkbox, {
 					name: "enabled",
-					type: "checkbox",
 					checked: enabled,
 					onChange: (event) => setEnabled(event.target.checked),
 					disabled: busy
@@ -559,9 +786,9 @@ function DecisionPanel({ connection, status, t }) {
 			}),
 			/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
 				className: "dc-actions",
-				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
+				children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Button, {
 					type: "submit",
-					variant: working ? "outline" : "primary",
+					variant: working ? "secondary" : "default",
 					disabled: busy,
 					children: t(busy ? "decisionSaving" : "saveDecision")
 				})
@@ -680,14 +907,13 @@ function KernelUpdatePanel({ connection, initial, t }) {
 					]
 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 					className: "dc-actions",
-					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-						variant: "outline",
+					children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Button, {
+						variant: "secondary",
 						type: "button",
 						disabled: busy || installing,
 						onClick: () => void run("kernel-update-check"),
 						children: t("updateCheck")
-					}), view.available && view.source === "registry" && view.phase !== "installed" && view.phase !== "restart-required" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-						variant: "primary",
+					}), view.available && view.source === "registry" && view.phase !== "installed" && view.phase !== "restart-required" && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Button, {
 						type: "button",
 						disabled: busy || installing,
 						onClick: () => void run("kernel-update-install"),
@@ -708,8 +934,7 @@ function KernelUpdatePanel({ connection, initial, t }) {
 					disabled: busy || installing,
 					children: [POLICIES.map(([policy, key]) => /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 						className: "dc-option",
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-							type: "radio",
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Radio, {
 							name: "kernelUpdatePolicy",
 							value: policy,
 							checked: view.policy === policy,
@@ -717,8 +942,7 @@ function KernelUpdatePanel({ connection, initial, t }) {
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t(key) }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("small", { children: t(`${key}Help`) })] })]
 					}, policy)), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 						className: "dc-option",
-						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
-							type: "checkbox",
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Checkbox, {
 							checked: view.channel === "prerelease",
 							onChange: (event) => void run("kernel-update-policy", { channel: event.target.checked ? "prerelease" : "stable" })
 						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", { children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("strong", { children: t("updatePrerelease") }) })]
@@ -822,7 +1046,7 @@ function ConnectionPage({ connection, t }) {
 	const user = value?.user;
 	const busy = state.loading || Boolean(state.busy);
 	return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
-		className: "dscord-connect",
+		className: "dscord-ui dscord-connect",
 		"aria-label": t("pageLabel"),
 		"aria-busy": busy,
 		children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("style", { children: styles }), /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
@@ -844,15 +1068,15 @@ function ConnectionPage({ connection, t }) {
 									children: [user.globalId || user.id, value?.label].filter(Boolean).join(" · ")
 								})]
 							}),
-							user && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: "outline",
+							user && /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Button, {
+								variant: "secondary",
 								type: "button",
 								disabled: Boolean(state.busy),
 								onClick: () => void connection.logout(),
 								children: t(state.busy?.action === "logout" ? "loggingOut" : "logout")
 							}),
-							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-								variant: "outline",
+							/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Button, {
+								variant: "secondary",
 								type: "button",
 								disabled: busy,
 								onClick: () => void (user ? connection.sync() : connection.refresh()),
@@ -1371,7 +1595,8 @@ function apply(ctx) {
 	}
 	function NativeShortcutButton({ face }) {
 		if ((0, react.useSyncExternalStore)(face.hooks.surface.subscribe, () => face.hooks.surface.getSnapshot().mode) !== "bot") return null;
-		return (0, react_dom.createPortal)(/* @__PURE__ */ (0, react_jsx_runtime.jsx)("div", {
+		return (0, react_dom.createPortal)(/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+			className: "dscord-ui",
 			style: {
 				position: "fixed",
 				left: 56,
@@ -1379,15 +1604,15 @@ function apply(ctx) {
 				zIndex: 50,
 				pointerEvents: "auto"
 			},
-			children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)(_deepseek_ai_dsh_client_ui_primitives.Button, {
-				variant: "outline",
+			children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("style", { children: base }), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Button, {
+				variant: "secondary",
 				type: "button",
 				onClick: () => {
 					face.actions.setSurface("agent");
 					ctx.layout.selectPanel(panelId);
 				},
 				children: t("title")
-			})
+			})]
 		}), document.body);
 	}
 	function NativeShortcut() {

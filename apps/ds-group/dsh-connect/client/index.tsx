@@ -1,12 +1,13 @@
 import { useSyncExternalStore } from "react";
 import type { ComponentType } from "react";
 import { createPortal } from "react-dom";
-import { Button } from "@deepseek-ai/dsh-client-ui-primitives";
+import { Button } from "./components/controls";
 import { ConnectionPage } from "./components/page";
 import { createConnectionModel } from "./connection";
 import { en, localeNamespace, zh } from "./locale";
 import type { Translate } from "./locale";
 import mark from "./mark.png";
+import { base } from "./styles";
 
 const panelId = "dscord";
 
@@ -95,7 +96,9 @@ export function apply(ctx: PluginContext) {
     );
     if (mode !== "bot") return null;
     return createPortal(
+      // Outside the page, so it brings the design system with it.
       <div
+        className="dscord-ui"
         style={{
           position: "fixed",
           left: 56,
@@ -104,8 +107,9 @@ export function apply(ctx: PluginContext) {
           pointerEvents: "auto",
         }}
       >
+        <style>{base}</style>
         <Button
-          variant="outline"
+          variant="secondary"
           type="button"
           onClick={() => {
             face.actions.setSurface("agent");

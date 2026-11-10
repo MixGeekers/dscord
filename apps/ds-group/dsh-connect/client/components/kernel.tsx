@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
-import { Button, Input } from "@deepseek-ai/dsh-client-ui-primitives";
 import type { Connection } from "../connection";
 import type { MessageKey, Translate } from "../locale";
 import type { DecisionProvider, KernelState, KernelUpdates } from "../types";
+import { Button, Checkbox, Input, Radio } from "./controls";
 
 const message = (reason: unknown) => (reason as Error).message;
 
@@ -181,9 +181,8 @@ export function DecisionPanel({
         <span className="dc-hint">{t("decisionEndpointHelp")}</span>
       </div>
       <label className="dc-check">
-        <input
+        <Checkbox
           name="enabled"
-          type="checkbox"
           checked={enabled}
           onChange={(event) => setEnabled(event.target.checked)}
           disabled={busy}
@@ -193,7 +192,7 @@ export function DecisionPanel({
       <div className="dc-actions">
         <Button
           type="submit"
-          variant={working ? "outline" : "primary"}
+          variant={working ? "secondary" : "default"}
           disabled={busy}
         >
           {t(busy ? "decisionSaving" : "saveDecision")}
@@ -356,7 +355,7 @@ export function KernelUpdatePanel({
         </div>
         <div className="dc-actions">
           <Button
-            variant="outline"
+            variant="secondary"
             type="button"
             disabled={busy || installing}
             onClick={() => void run("kernel-update-check")}
@@ -368,7 +367,6 @@ export function KernelUpdatePanel({
             view.phase !== "installed" &&
             view.phase !== "restart-required" && (
               <Button
-                variant="primary"
                 type="button"
                 disabled={busy || installing}
                 onClick={() => void run("kernel-update-install")}
@@ -397,8 +395,7 @@ export function KernelUpdatePanel({
         >
           {POLICIES.map(([policy, key]) => (
             <label className="dc-option" key={policy}>
-              <input
-                type="radio"
+              <Radio
                 name="kernelUpdatePolicy"
                 value={policy}
                 checked={view.policy === policy}
@@ -411,8 +408,7 @@ export function KernelUpdatePanel({
             </label>
           ))}
           <label className="dc-option">
-            <input
-              type="checkbox"
+            <Checkbox
               checked={view.channel === "prerelease"}
               onChange={(event) =>
                 void run("kernel-update-policy", {
