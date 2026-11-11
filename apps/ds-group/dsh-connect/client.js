@@ -436,7 +436,7 @@ body[data-ds-dark-theme] .dscord-ui {
 .dscord-ui .ds-select-icon svg { width: var(--size-icon-sm); height: var(--size-icon-sm); }
 .dscord-ui .ds-select-trigger[data-popup-open] .ds-select-icon { transform: rotate(180deg); }
 .dscord-ui .ds-select-positioner { z-index: var(--z-ui-popover); outline: none; }
-.dscord-ui .ds-select-popup { min-width: var(--anchor-width); max-width: calc(100vw - var(--space-lg)); max-height: min(var(--available-height), calc(var(--size-control) * 8)); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-xs); border: 1px solid var(--color-border-normal); border-radius: var(--radius-md); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-suggestions); outline: none; scrollbar-width: thin; scrollbar-color: var(--color-scrollbar-thumb) transparent; }
+.dscord-ui .ds-select-popup { min-width: var(--anchor-width); max-width: calc(100vw - var(--space-lg)); max-height: min(var(--available-height), calc(var(--size-control) * 8)); overflow-y: auto; overscroll-behavior: contain; padding: var(--space-xs); border: 1px solid var(--color-border-normal); border-radius: var(--radius-md); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-suggestions); outline: none; }
 .dscord-ui .ds-select-item { display: grid; grid-template-columns: minmax(0, 1fr) var(--size-icon-sm); align-items: center; gap: var(--space-sm); min-height: var(--size-control-sm); padding: var(--space-xs) var(--space-sm); border-radius: var(--radius-sm); font: var(--text-body); cursor: pointer; outline: none; user-select: none; }
 .dscord-ui .ds-select-item[data-highlighted] { background: var(--color-bg-hover); color: var(--color-text-primary); }
 .dscord-ui .ds-select-item[data-selected] { color: var(--color-text-primary); }
@@ -459,6 +459,7 @@ body[data-ds-dark-theme] .dscord-ui {
 .dscord-ui .ds-color-input { width: calc(var(--size-control) * 1.4); min-height: var(--size-control); padding: var(--space-xs); border: 1px solid var(--color-border-normal); border-radius: var(--radius-md); background: var(--color-bg-input); cursor: pointer; }
 .dscord-ui .ds-color-input:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .dscord-ui .ds-field { display: grid; gap: var(--space-sm); min-width: 0; margin: 0; padding: 0; border: 0; }
+.dscord-ui .ds-field > legend { margin-bottom: var(--space-sm); padding: 0; }
 .dscord-ui .ds-field-label { display: flex; align-items: baseline; gap: var(--space-xs); font: var(--text-label); color: var(--color-text-secondary); }
 .dscord-ui .ds-field-optional { font: var(--text-caption); color: var(--color-text-muted); }
 .dscord-ui .ds-field-description { margin: 0; font: var(--text-caption); color: var(--color-text-muted); }
@@ -507,7 +508,13 @@ body[data-ds-dark-theme] .dscord-ui {
 .dscord-ui .ds-empty-title { margin: 0; font: var(--text-body-strong); color: var(--color-text-primary); }
 .dscord-ui .ds-empty-description { max-width: 60ch; margin: 0; font: var(--text-caption); color: var(--color-text-muted); }
 .dscord-ui .ds-empty-action { margin-top: var(--space-sm); }
-.dscord-ui .ds-scroll-area { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: var(--focus-ring); scrollbar-gutter: stable; scrollbar-width: thin; scrollbar-color: var(--color-scrollbar-thumb) transparent; }
+.dscord-ui .ds-scroll-area { min-width: 0; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: var(--space-md); scroll-padding-block: var(--space-md); scrollbar-gutter: stable; }
+.dscord-ui .ds-scroll-area::-webkit-scrollbar, .dscord-ui .ds-select-popup::-webkit-scrollbar { width: var(--space-sm); height: var(--space-sm); }
+.dscord-ui .ds-scroll-area::-webkit-scrollbar-track, .dscord-ui .ds-select-popup::-webkit-scrollbar-track { background: transparent; }
+.dscord-ui .ds-scroll-area::-webkit-scrollbar-thumb, .dscord-ui .ds-select-popup::-webkit-scrollbar-thumb { border: var(--space-2xs) solid transparent; border-radius: var(--radius-pill); background: var(--color-scrollbar-thumb); background-clip: padding-box; }
+.dscord-ui .ds-scroll-area::-webkit-scrollbar-thumb:hover, .dscord-ui .ds-select-popup::-webkit-scrollbar-thumb:hover { background-color: var(--color-bg-neutral-hover); }
+.dscord-ui .ds-scroll-area::-webkit-scrollbar-button, .dscord-ui .ds-select-popup::-webkit-scrollbar-button { display: none; }
+.dscord-ui .ds-scroll-area::-webkit-scrollbar-corner, .dscord-ui .ds-select-popup::-webkit-scrollbar-corner { background: transparent; }
 .dscord-ui .ds-popover-positioner { z-index: var(--z-ui-popover); max-width: calc(100vw - var(--space-lg)); }
 .dscord-ui .ds-popover-content { max-height: calc(100dvh - var(--space-2xl)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--color-border-normal); border-radius: var(--radius-lg); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-suggestions); }
 .dscord-ui .ds-dialog-backdrop { position: fixed; inset: 0; z-index: var(--z-ui-dialog-backdrop); background: var(--color-dialog-overlay); }

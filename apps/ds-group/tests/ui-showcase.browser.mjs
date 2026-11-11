@@ -40,6 +40,14 @@ try {
     const scroll = page.getByTestId("showcase-scroll");
     const gutter = await scroll.evaluate((element) => element.offsetWidth - element.clientWidth - element.clientLeft * 2);
     assert.ok(gutter > 0, "classic scrollbars take layout space in this browser");
+    // The scrollbar is the system's thin one, not the classic bar with arrow buttons (about 15px wide).
+    assert.ok(gutter <= 8, `the scroll area draws a thin scrollbar (${gutter}px)`);
+    // A fieldset's legend keeps its distance from the controls under it, focus ring included.
+    const legendGap = await scroll.evaluate((element) => {
+      const legend = element.querySelector("legend").getBoundingClientRect();
+      return element.querySelector(".showcase-swatch").getBoundingClientRect().top - legend.bottom;
+    });
+    assert.ok(legendGap >= 8, `the legend sits clear of the controls under it (${legendGap}px)`);
 
     // Nothing scrolls sideways: not the page, not the scroll area.
     assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "the page does not scroll sideways");

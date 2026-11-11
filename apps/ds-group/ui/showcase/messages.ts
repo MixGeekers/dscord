@@ -75,7 +75,7 @@ export const showcaseMessages = {
     emptyAction: "去聊天",
     scroll: "滚动区",
     scrollHelp:
-      "只纵向滚动，边缘留出焦点框的位置；Windows 经典滚动条出现时不挤压内容。",
+      "只纵向滚动，四边留白比焦点框宽，聚焦时整框滚进视野；滚动条是自己画的细条，没有 Windows 经典滚动条的上下箭头，出现时也不挤压内容。",
     themeColor: "主题颜色",
     notifications: "通知",
     deviceNameValue: "工作电脑",
@@ -161,7 +161,7 @@ export const showcaseMessages = {
     emptyAction: "Go to chat",
     scroll: "Scroll area",
     scrollHelp:
-      "Scrolls vertically only and keeps room for focus rings at its edges; a classic Windows scrollbar does not squeeze the content.",
+      "Scrolls vertically only, with padding wider than a focus ring, and scrolls a focused control fully into view; the scrollbar is our own thin bar without the arrow buttons of the classic Windows one, and it does not squeeze the content.",
     themeColor: "Theme colour",
     notifications: "Notifications",
     deviceNameValue: "Work laptop",

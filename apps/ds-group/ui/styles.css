@@ -98,8 +98,6 @@
   color: var(--color-text-normal);
   box-shadow: var(--shadow-suggestions);
   outline: none;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-scrollbar-thumb) transparent;
 }
 .ds-select-item {
   display: grid;
@@ -147,6 +145,8 @@
 
 /* Field: a label above its control, an optional description under it, and the error in its place. */
 .ds-field { display: grid; gap: var(--space-sm); min-width: 0; margin: 0; padding: 0; border: 0; }
+/* A legend is not a grid item of its fieldset, so it takes the gap itself. */
+.ds-field > legend { margin-bottom: var(--space-sm); padding: 0; }
 .ds-field-label { display: flex; align-items: baseline; gap: var(--space-xs); font: var(--text-label); color: var(--color-text-secondary); }
 .ds-field-optional { font: var(--text-caption); color: var(--color-text-muted); }
 .ds-field-description { margin: 0; font: var(--text-caption); color: var(--color-text-muted); }
@@ -227,19 +227,31 @@
 .ds-empty-description { max-width: 60ch; margin: 0; font: var(--text-caption); color: var(--color-text-muted); }
 .ds-empty-action { margin-top: var(--space-sm); }
 
-/* Scroll area: scrolls on one axis only, keeps room for focus rings at its edges, and draws a thin scrollbar
-   whose width does not shift the content when it appears (Windows shows classic scrollbars). */
+/* Scroll area: scrolls vertically only. Its padding is wider than a focus ring, so nothing inside is cut off at
+   its edges, and focusing a control scrolls it fully into view. The scrollbar is ours: a thin rounded thumb with
+   no arrow buttons, in place of the classic bar Windows draws, and its room is kept even while there is nothing
+   to scroll, so content does not jump when it appears. */
 .ds-scroll-area {
   min-width: 0;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--focus-ring);
+  padding: var(--space-md);
+  scroll-padding-block: var(--space-md);
   scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--color-scrollbar-thumb) transparent;
 }
+.ds-scroll-area::-webkit-scrollbar, .ds-select-popup::-webkit-scrollbar { width: var(--space-sm); height: var(--space-sm); }
+.ds-scroll-area::-webkit-scrollbar-track, .ds-select-popup::-webkit-scrollbar-track { background: transparent; }
+.ds-scroll-area::-webkit-scrollbar-thumb, .ds-select-popup::-webkit-scrollbar-thumb {
+  border: var(--space-2xs) solid transparent;
+  border-radius: var(--radius-pill);
+  background: var(--color-scrollbar-thumb);
+  background-clip: padding-box;
+}
+.ds-scroll-area::-webkit-scrollbar-thumb:hover, .ds-select-popup::-webkit-scrollbar-thumb:hover { background-color: var(--color-bg-neutral-hover); }
+.ds-scroll-area::-webkit-scrollbar-button, .ds-select-popup::-webkit-scrollbar-button { display: none; }
+.ds-scroll-area::-webkit-scrollbar-corner, .ds-select-popup::-webkit-scrollbar-corner { background: transparent; }
 
 /* Popover and dialog. */
 .ds-popover-positioner { z-index: var(--z-ui-popover); max-width: calc(100vw - var(--space-lg)); }
