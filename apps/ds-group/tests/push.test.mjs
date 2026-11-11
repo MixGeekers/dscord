@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createECDH, randomBytes } from 'node:crypto';
 import webPush from 'web-push';
-import { PushService } from '../src/push.mjs';
+import { PushService, previewText } from '../src/push.mjs';
 
 const setup = { homeserverUrl: 'https://matrix.example', roomId: '!group:test', participants: [
   { id: '@alice:test', kind: 'human', name: 'Alice', accessToken: 'synthetic-alice' },
@@ -95,9 +95,9 @@ test('synthetic push delivers to multiple devices, skips the author and deduplic
     const event = message('$group-1', '@bob:test');
     assert.equal((await f.service.notifyMessage(event, ['@alice:test', '@bob:test'])).queued, 2);
     assert.equal(f.sent.length, 2);
-    assert.ok(f.sent.every(item => item.payload.body.startsWith('Bob：')));
-    assert.ok(f.sent.every(item => item.payload.data.roomId === '!group:test'));
-    assert.equal(f.sent[0].payload.tag, f.sent[1].payload.tag);
+    assert.deepEqual(f.sent.map(item => item.payload.userId).sort(), ['@alice:test', '@alice:test']);
+    assert.ok(f.sent.every(item => item.payload.sender.name === 'Bob' && item.payload.text === '费用合计960元。'));
+    assert.ok(f.sent.every(item => item.payload.roomId === '!group:test' && item.payload.eventId === '$group-1'));
     assert.equal((await f.service.notifyMessage(event, ['@alice:test', '@bob:test'])).queued, 0);
     assert.equal(f.sent.length, 2);
     const listed = await f.service.subscriptions('@alice:test');
@@ -125,16 +125,49 @@ test('subscription changes follow the signed-in human and old pending deliveries
 });
 
 test('new subscriptions do not receive historical notifications and private titles use the sender', async () => {
-  const f = await fixture();
+  const f = await fixture({ isDirectRoom: roomId => roomId === '!private:test' });
   try {
     await f.service.subscribe('@alice:test', { subscription: subscription('phone') });
     assert.equal((await f.service.notifyMessage(message('$old', '@finance:test', '!private:test', 999), ['@alice:test'])).queued, 0);
     await f.service.notifyMessage(message('$private', '@finance:test', '!private:test'), ['@alice:test']);
     assert.equal(f.sent.length, 1);
-    assert.equal(f.sent[0].payload.title, '财务小雨');
-    assert.equal(f.sent[0].payload.body, '费用合计960元。');
-    assert.equal(f.sent[0].payload.data.url, '/?roomId=!private%3Atest&eventId=%24private');
+    assert.deepEqual(f.sent[0].payload, { type: 'message', userId: '@alice:test', roomId: '!private:test', eventId: '$private',
+      sentAt: 2000, room: { kind: 'direct', name: null }, sender: { id: '@finance:test', name: '财务小雨', kind: 'bot' },
+      text: '费用合计960元。' });
   } finally { await f.close(); }
+});
+
+test('group notifications name the room, sender picture and attachments, read Markdown as plain text and skip edits', async () => {
+  const people = { ...setup, participants: [...setup.participants.map(person => person.id === '@bob:test'
+    ? { ...person, globalId: 'g-bob', avatar: { id: 'a'.repeat(64), url: 'https://central.test/avatars/a/128.webp',
+      sizes: { 64: 'https://central.test/avatars/a/64.webp', 128: 'https://central.test/avatars/a/128.webp' } } } : person)] };
+  const f = await fixture({ setup: people });
+  try {
+    await f.service.subscribe('@alice:test', { subscription: subscription('phone') });
+    const group = { ...message('$md', '@bob:test'), room_name: '预算', content: { msgtype: 'm.text',
+      body: '## 结论\n**<@@alice:test>** 请看 [报表](https://x.test/r) 和 `total`\n- 第一项', 'org.ds_group': { to: [] } } };
+    await f.service.notifyMessage(group, ['@alice:test']);
+    assert.deepEqual(f.sent[0].payload.room, { kind: 'group', name: '预算' });
+    assert.deepEqual(f.sent[0].payload.sender, { id: '@bob:test', name: 'Bob', kind: 'human', globalId: 'g-bob',
+      avatar: 'https://central.test/avatars/a/128.webp' });
+    assert.equal(f.sent[0].payload.text, '结论 @Alice 请看 报表 和 total - 第一项');
+    const files = [{ name: 'a.png', mimeType: 'image/png' }, { name: 'b.jpg', mimeType: 'image/jpeg' }];
+    await f.service.notifyMessage({ ...message('$photos', '@bob:test'), content: { msgtype: 'm.image', body: 'a.png, b.jpg',
+      'org.ds_group': { to: [], attachments: files } } }, ['@alice:test']);
+    assert.equal(f.sent[1].payload.text, '');
+    assert.deepEqual(f.sent[1].payload.attachment, { kind: 'image', name: 'a.png', count: 2 });
+    await f.service.notifyMessage({ ...message('$edit', '@bob:test'), content: { msgtype: 'm.text', body: '* 改过',
+      'm.new_content': { msgtype: 'm.text', body: '改过' }, 'm.relates_to': { rel_type: 'm.replace', event_id: '$md' } } }, ['@alice:test']);
+    assert.equal(f.sent.length, 2);
+  } finally { await f.close(); }
+});
+
+test('previews read Markdown the way it renders', () => {
+  assert.equal(previewText('> 引用\n# 标题\n*斜体* _下划线_ ~~删~~ ||剧透||'), '引用 标题 斜体 下划线 删 剧透');
+  assert.equal(previewText('```js\nconst a = 1;\n```'), 'const a = 1;');
+  assert.equal(previewText('snake_case_name 和 2*3*4'), 'snake_case_name 和 2*3*4');
+  assert.equal(previewText('长'.repeat(200)).length, 180);
+  assert.ok(previewText('长'.repeat(200)).endsWith('…'));
 });
 
 test('expired push endpoints are removed and transient errors have a finite retry schedule', async () => {
@@ -196,7 +229,7 @@ test('per-human Matrix sync includes private rooms and replays do not resend', a
     await f.service.syncOnce('@alice:test');
     await f.service.syncOnce('@bob:test');
     assert.equal(f.sent.length, 2);
-    assert.equal(f.sent.find(item => item.endpoint.endsWith('alice')).payload.data.roomId, '!private:test');
+    assert.equal(f.sent.find(item => item.endpoint.endsWith('alice')).payload.roomId, '!private:test');
     await f.service.syncOnce('@alice:test');
     await f.service.syncOnce('@bob:test');
     assert.equal(f.sent.length, 2);
@@ -218,7 +251,7 @@ test('limited Matrix history is backfilled before advancing a notification curso
       } } },
     };
     await f.service.syncOnce('@alice:test');
-    assert.deepEqual(f.sent.map(item => item.payload.data.eventId), ['$known', '$gap', '$latest']);
+    assert.deepEqual(f.sent.map(item => item.payload.eventId), ['$known', '$gap', '$latest']);
     assert.equal(f.service.db.prepare("SELECT cursor FROM push_cursors WHERE user_id='@alice:test'").get().cursor, 'after');
   } finally { await f.close(); }
 });
@@ -231,8 +264,8 @@ test('test notification requires a current device and reports push-service accep
     const receipt = await f.service.sendTest('@alice:test');
     assert.equal(receipt.sent, 1);
     assert.equal(receipt.failed, 0);
-    assert.equal(f.sent[0].payload.body, '通知已启用');
-    assert.equal(f.sent[0].payload.data.test, true);
+    assert.equal(f.sent[0].payload.type, 'test');
+    assert.equal(f.sent[0].payload.userId, '@alice:test');
   } finally { await f.close(); }
 });
 

@@ -34,7 +34,7 @@ test('Push applies mention preferences while indexing muted messages for unread 
     await service.notifyMessage(message('$broad', '@everyone', { everyoneUsers: [alice, bob] }), [alice, bob]);
     await service.notifyMessage(message('$direct', `<@${bob}> review`, { users: [bob] }), [alice, bob]);
     assert.equal(sent.length, 1);
-    assert.match(sent[0].body, /@Bob review/);
+    assert.equal(sent[0].text, '@Bob review');
     assert.equal(chat.unreadFor(bob, roomId).unreadCount, 3);
     chat.savePreferences(bob, roomId, { muted: true });
     await service.notifyMessage(message('$muted', `<@${bob}> later`, { users: [bob] }), [alice, bob]);
