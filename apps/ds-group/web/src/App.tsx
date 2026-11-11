@@ -152,9 +152,7 @@ export default function App({
     at: number;
   } | null>(null);
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({});
-  const [roomDialog, setRoomDialog] = useState<"create" | "invite" | null>(
-    null,
-  );
+  const [roomDialog, setRoomDialog] = useState<"create" | "add" | null>(null);
   const [createBotOpen, setCreateBotOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [notificationRoom, setNotificationRoom] = useState<Room | null>(null);
@@ -1110,7 +1108,7 @@ export default function App({
         mentionCount={mentionCount}
         showTaskHistory={showTaskHistory}
         canCreateRoom={verified && homeSelected}
-        canInvite={
+        canAddMembers={
           verified &&
           homeSelected &&
           room?.kind === "group" &&
@@ -1156,7 +1154,7 @@ export default function App({
           if (session) setBotsOpen(true);
           else openLogin();
         }}
-        onInvite={() => (session ? setRoomDialog("invite") : openLogin())}
+        onAddMembers={() => (session ? setRoomDialog("add") : openLogin())}
         onInbox={() => (session ? setInboxOpen(true) : openLogin())}
         onNotifications={() =>
           session ? setNotificationRoom(room) : openLogin()
@@ -1308,14 +1306,12 @@ export default function App({
         session={session}
         room={room}
         participants={participants}
-        ownedBots={ownedBots}
         api={api}
         pendingStorageKey={
           session ? storageKey(config, "pending-room", session, serverName) : ""
         }
         onRoom={(next) => {
           navigate(next, matrixServer(session!.user_id));
-          refresh();
           if (next.status === "partially_joined") notify(t("joinPending"));
         }}
         onChanged={refresh}

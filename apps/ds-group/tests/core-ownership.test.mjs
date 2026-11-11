@@ -5,6 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { createCore } from '../src/core.mjs';
+import { Governance } from '../src/governance.mjs';
 
 const ids = {
   alice: '@alice:ds-group.test',
@@ -14,15 +15,19 @@ const ids = {
 };
 const sharedRoomId = '!shared:ds-group.test';
 
-async function fixture(t, { sharedMembers = Object.values(ids), extraRooms = [], failJoinsFor = [] } = {}) {
+async function fixture(t, { sharedMembers = Object.values(ids), extraRooms = [], failJoinsFor = [], policy } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'ds-group-ownership-'));
+  if (policy) {
+    const governance = new Governance({ dataRoot: directory, serverName: 'ds-group.test' });
+    await governance.save({ ...await governance.ensure(), ...policy });
+  }
   const participants = Object.entries(ids).map(([localpart, id]) => ({
     id, localpart, name: localpart, kind: ['alice', 'bob'].includes(localpart) ? 'human' : 'bot',
     accessToken: `synthetic-${localpart}-token`,
   }));
   const rooms = new Map([
     [sharedRoomId, { name: '共同群 · Matrix 实际名称', members: new Set(sharedMembers), invited: new Set() }],
-    ...extraRooms.map(room => [room.roomId, { name: room.name, members: new Set(room.members), invited: new Set(room.invited || []) }]),
+    ...extraRooms.map(room => [room.roomId, { name: room.name, members: new Set(room.members), invited: new Set(room.invited || []), powerLevels: room.powerLevels }]),
   ]);
   const calls = [];
   const joinFailures = new Map(failJoinsFor.map(id => [id, 1]));
@@ -44,6 +49,7 @@ async function fixture(t, { sharedMembers = Object.values(ids), extraRooms = [],
       if (request.method === 'GET' && pathname === '/_matrix/client/v3/joined_rooms') {
         return send(200, { joined_rooms: [...rooms].filter(([, room]) => room.members.has(actor)).map(([roomId]) => roomId) });
       }
+      if (request.method === 'GET' && pathname.startsWith('/_matrix/client/v3/directory/room/')) return send(404, { errcode: 'M_NOT_FOUND', error: 'No alias' });
       if (request.method === 'POST' && pathname === '/_matrix/client/v3/createRoom') {
         const roomId = `!created-${++createdRooms}:ds-group.test`;
         rooms.set(roomId, { name: body.name, members: new Set([actor]), invited: new Set(body.invite || []) });
@@ -70,6 +76,9 @@ async function fixture(t, { sharedMembers = Object.values(ids), extraRooms = [],
           return send(200, { joined: Object.fromEntries([...room.members].map(id => [id, { display_name: id }])) });
         }
         if (request.method === 'GET' && /^state\/m\.room\.name\/?$/.test(roomRoute[2])) return send(200, { name: room.name });
+        if (request.method === 'GET' && /^state\/m\.room\.power_levels\/?$/.test(roomRoute[2])) {
+          return room.powerLevels ? send(200, room.powerLevels) : send(404, { errcode: 'M_NOT_FOUND', error: 'No power levels' });
+        }
         const memberState = roomRoute[2].match(/^state\/m\.room\.member\/(.+)$/);
         if (request.method === 'GET' && memberState) {
           const target = decodeURIComponent(memberState[1]);
@@ -155,14 +164,98 @@ test('synthetic owner invites her Bot into an existing group and repeated invita
   const roomId = '!project:ds-group.test';
   const app = await fixture(t, { extraRooms: [{ roomId, name: '项目讨论', members: [ids.alice, ids.bob] }] });
   const pathname = `/api/rooms/${encodeURIComponent(roomId)}/invite`;
-  const first = await app.request('alice', 'POST', pathname, { participantId: ids.finance });
-  const repeated = await app.request('alice', 'POST', pathname, { participantId: ids.finance });
+  const first = await app.request('alice', 'POST', pathname, { participantIds: [ids.finance] });
+  const repeated = await app.request('alice', 'POST', pathname, { participantIds: [ids.finance] });
   assert.equal(first.status, 200);
   assert.equal(first.body.status, 'joined');
   assert.equal(repeated.status, 200, 'Inviting an already joined owned Bot should return its current joined state');
   assert.equal(repeated.body.status, 'joined');
   assert.equal(app.rooms.get(roomId).members.size, 3);
   assert.ok(app.rooms.get(roomId).members.has(ids.finance));
+});
+
+test('synthetic member adds another person and her Bot to an existing group in one request', async t => {
+  const roomId = '!project:ds-group.test';
+  const app = await fixture(t, { extraRooms: [{ roomId, name: '项目讨论', members: [ids.alice] }] });
+  const added = await app.request('alice', 'POST', `/api/rooms/${encodeURIComponent(roomId)}/invite`, { participantIds: [ids.bob, ids.hr] });
+  assert.equal(added.status, 200);
+  assert.equal(added.body.status, 'joined');
+  assert.deepEqual(added.body.participantIds.sort(), [ids.alice, ids.bob, ids.hr].sort());
+  assert.deepEqual([...app.rooms.get(roomId).members].sort(), [ids.alice, ids.bob, ids.hr].sort());
+  const joins = app.calls.filter(call => call.pathname.includes('/join/'));
+  assert.deepEqual(joins.map(call => call.actor).sort(), [ids.bob, ids.hr].sort(), 'Each member joins with their own Matrix account');
+  const listed = await app.request('bob', 'GET', '/api/rooms');
+  assert.ok(listed.body.rooms.some(room => room.roomId === roomId), 'The added person sees the group without a separate acceptance step');
+});
+
+test('synthetic member that could not join right away is retried without a second Matrix invitation', async t => {
+  const roomId = '!project:ds-group.test';
+  const app = await fixture(t, { extraRooms: [{ roomId, name: '项目讨论', members: [ids.alice] }], failJoinsFor: [ids.bob] });
+  const pathname = `/api/rooms/${encodeURIComponent(roomId)}/invite`;
+  const first = await app.request('alice', 'POST', pathname, { participantIds: [ids.bob] });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.status, 'partially_joined');
+  assert.equal(first.body.joinResults[0].status, 'pending');
+  const retried = await app.request('alice', 'POST', pathname, { participantIds: [ids.bob] });
+  assert.equal(retried.body.status, 'joined');
+  assert.equal(app.calls.filter(call => call.pathname.endsWith('/invite') && call.pathname.startsWith('/_matrix')).length, 1);
+});
+
+test('synthetic member of a partner server is invited to accept there only when the room is approved for them', async t => {
+  const carol = '@carol:partner.test';
+  const approved = '!approved:ds-group.test';
+  const unapproved = '!unapproved:ds-group.test';
+  const app = await fixture(t, {
+    extraRooms: [
+      { roomId: approved, name: '已批准', members: [ids.alice] },
+      { roomId: unapproved, name: '未批准', members: [ids.alice] },
+    ],
+    policy: {
+      partners: [{ serverName: 'partner.test', name: 'Partner', enabled: true }],
+      members: [{ id: carol, name: 'Carol', kind: 'human', enabled: true }],
+      rooms: [{ roomId: approved, authority: 'ds-group.test', name: '已批准', enabled: true, memberIds: [carol], tools: [], botIds: [] }],
+    },
+  });
+  const add = roomId => app.request('alice', 'POST', `/api/rooms/${encodeURIComponent(roomId)}/invite`, { participantIds: [carol, ids.bob] });
+  const blocked = await add(unapproved);
+  assert.equal(blocked.status, 200);
+  assert.deepEqual(blocked.body.joinResults, [
+    { participantId: carol, status: 'approval_required' },
+    { participantId: ids.bob, status: 'joined' },
+  ]);
+  assert.equal(app.rooms.get(unapproved).invited.has(carol), false);
+  const invited = await add(approved);
+  assert.equal(invited.body.status, 'partially_joined');
+  assert.equal(invited.body.joinResults[0].status, 'invited');
+  assert.ok(app.rooms.get(approved).invited.has(carol));
+});
+
+test('synthetic members are added to groups only, never to direct conversations or by Bots', async t => {
+  const roomId = '!project:ds-group.test';
+  const app = await fixture(t, { extraRooms: [{ roomId, name: '项目讨论', members: [ids.alice, ids.finance] }] });
+  const direct = await app.request('alice', 'POST', '/api/dm', { participantId: ids.bob });
+  assert.equal(direct.status, 200);
+  const intoDirect = await app.request('alice', 'POST', `/api/rooms/${encodeURIComponent(direct.body.roomId)}/invite`, { participantIds: [ids.hr] });
+  assert.equal(intoDirect.status, 400);
+  const byBot = await app.request('finance', 'POST', `/api/rooms/${encodeURIComponent(roomId)}/invite`, { participantIds: [ids.bob] });
+  assert.equal(byBot.status, 403);
+  const empty = await app.request('alice', 'POST', `/api/rooms/${encodeURIComponent(roomId)}/invite`, { participantIds: [] });
+  assert.equal(empty.status, 400);
+  assert.equal(app.rooms.get(roomId).members.size, 2);
+});
+
+test('synthetic room listing reports who may add members from Matrix power levels', async t => {
+  const open = '!open:ds-group.test';
+  const moderated = '!moderated:ds-group.test';
+  const app = await fixture(t, { extraRooms: [
+    { roomId: open, name: '开放群', members: [ids.alice, ids.bob] },
+    { roomId: moderated, name: '受控群', members: [ids.alice, ids.bob], powerLevels: { invite: 50, users: { [ids.alice]: 100 } } },
+  ] });
+  const permission = async (actor, roomId) =>
+    (await app.request(actor, 'GET', '/api/rooms')).body.rooms.find(room => room.roomId === roomId).permissions?.inviteMembers;
+  assert.equal(await permission('bob', open), true);
+  assert.equal(await permission('alice', moderated), true);
+  assert.equal(await permission('bob', moderated), false);
 });
 
 test('synthetic group request identity survives fixture restart, avoids duplicate creation and rejects conflicting input', async t => {
@@ -220,7 +313,7 @@ test('synthetic non-owner cannot create a group with or invite somebody else’s
   const roomId = '!project:ds-group.test';
   const app = await fixture(t, { extraRooms: [{ roomId, name: '项目讨论', members: [ids.alice, ids.bob] }] });
   const created = await app.request('bob', 'POST', '/api/rooms', { name: 'Bob 的项目', inviteIds: [ids.finance] });
-  const invited = await app.request('bob', 'POST', `/api/rooms/${encodeURIComponent(roomId)}/invite`, { participantId: ids.hr });
+  const invited = await app.request('bob', 'POST', `/api/rooms/${encodeURIComponent(roomId)}/invite`, { participantIds: [ids.hr] });
   assert.equal(created.status, 403);
   assert.equal(invited.status, 403);
   assert.equal(app.calls.filter(call => call.pathname.endsWith('/createRoom') || call.pathname.endsWith('/invite') || call.pathname.includes('/join/')).length, 0);
