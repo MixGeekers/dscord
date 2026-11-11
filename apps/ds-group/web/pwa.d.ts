@@ -14,3 +14,4 @@ export interface PwaOptions {
   }): void | Promise<void>;
 }
 export function initializePwa(options: PwaOptions): PwaHandle;
+export function showConversation(roomId: string | null): void;
