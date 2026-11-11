@@ -37,6 +37,8 @@ export function AvatarEditor({
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [reload, setReload] = useState(0);
+  const cropStage = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState(240);
   const fileInput = useRef<HTMLInputElement>(null);
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const isBot = member.kind === "bot";
@@ -98,6 +100,17 @@ export function AvatarEditor({
       });
     return () => controller.abort();
   }, [scope, reload]);
+
+  useEffect(() => {
+    if (!draft || !cropStage.current) return;
+    const element = cropStage.current;
+    const update = () =>
+      setViewport(element.getBoundingClientRect().width || 240);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, [draft]);
 
   async function choose(file?: File) {
     if (!file) return;
@@ -203,7 +216,7 @@ export function AvatarEditor({
   }
   if (!issuer || !token) return null;
   const edge = draft ? Math.min(draft.width, draft.height) / zoom : 1;
-  const scale = 240 / edge;
+  const scale = viewport / edge;
   const clamp = (value: number) => Math.min(1, Math.max(0, value));
   const imageStyle = draft
     ? {
@@ -277,6 +290,7 @@ export function AvatarEditor({
             <div className="avatar-crop-editor">
               <div
                 className="avatar-crop-stage"
+                ref={cropStage}
                 role="group"
                 aria-label={t("crop")}
                 onPointerDown={(event) => {
@@ -392,7 +406,7 @@ export function AvatarEditor({
                     style={Object.fromEntries(
                       Object.entries(imageStyle).map(([key, value]) => [
                         key,
-                        (Number(value) * 40) / 240,
+                        (Number(value) * 40) / viewport,
                       ]),
                     )}
                   />
