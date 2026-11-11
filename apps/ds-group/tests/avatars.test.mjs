@@ -133,3 +133,57 @@ test('crop coordinates follow EXIF orientation and published images contain only
   assert.ok(data[2] > 200 && data[0] < 30, `Expected the blue lower half after rotation, got ${[...data]}`);
   assert.equal((await sharp(image).metadata()).exif, undefined);
 });
+
+test('people and Bots rename themselves and change their own avatar, and chat servers follow the name', async t => {
+  const f = await fixture(t);
+  const alice = await f.register('alice');
+  const bot = (await f.request('/api/bots', { token: alice.token, method: 'POST', json: { username: 'helper', displayName: 'Helper' } })).body.bot;
+  // The Bot's own central session, approved by its owner with the code its device shows.
+  const { deviceCode, userCode } = (await f.request('/api/device', { method: 'POST', json: { label: 'DSH test' } })).body;
+  assert.equal((await f.request('/api/device/approve', { token: alice.token, method: 'POST', json: { userCode, botId: bot.id } })).response.status, 200);
+  const botToken = (await f.request('/api/device/token', { method: 'POST', json: { deviceCode } })).body.token;
+  const serverName = 'chat-a.test';
+  const calls = [];
+  const setup = { serverName, participants: [{ id: `@helper:${serverName}`, localpart: 'helper', name: 'Helper', kind: 'bot', ownerId: `@alice:${serverName}`, accessToken: 'fixture-bot-token' }] };
+  const accounts = await new AccountService({ setup, dataRoot: path.join(f.root, serverName), clientFactory: () => ({
+    uploadMedia: async () => ({ content_uri: `mxc://${serverName}/avatar` }),
+    request: async (method, target, body) => { calls.push([method, target, body]); },
+  }) }).initialize();
+  accounts.db.prepare('UPDATE accounts SET central_id=?,global_id=?').run(bot.id, bot.globalId);
+  const sync = new ProfileSync({ accounts, trust: { issuer: 'https://id.example.org', url: f.base }, intervalMs: 0 });
+  t.after(async () => { await sync.close(); accounts.close(); });
+  const profile = async () => (await f.request(`/api/profiles?ids=${encodeURIComponent(bot.globalId)}`)).body.profiles[0];
+
+  assert.equal((await f.request('/api/me', { method: 'PATCH', json: { displayName: 'x' } })).response.status, 401);
+  const renamed = await f.request('/api/me', { token: botToken, method: 'PATCH', json: { displayName: ' 小助手 ' } });
+  assert.equal(renamed.response.status, 200, JSON.stringify(renamed.body));
+  assert.equal(renamed.body.account.displayName, '小助手');
+  assert.equal(renamed.body.account.kind, 'bot');
+  assert.deepEqual([(await profile()).displayName, (await profile()).profileVersion], ['小助手', 1]);
+  await f.request('/api/me', { token: botToken, method: 'PATCH', json: { displayName: '小助手' } });
+  assert.equal((await profile()).profileVersion, 1, 'the same name is not a new profile version');
+  const invalid = await f.request('/api/me', { token: botToken, method: 'PATCH', json: { displayName: 'x'.repeat(81) } });
+  assert.deepEqual([invalid.response.status, invalid.body.code], [400, 'DISPLAY_NAME_INVALID']);
+
+  await sync.sync();
+  assert.equal(accounts.publicParticipants()[0].name, '小助手');
+  assert.deepEqual(calls.find(call => call[1].endsWith('/displayname'))?.[2], { displayname: '小助手' });
+
+  // The avatar route the web uses for a person serves a Bot's own session the same way.
+  const avatar = await f.request('/api/me/avatar?version=1', { token: botToken, method: 'PUT', bytes: f.image });
+  assert.equal(avatar.response.status, 200, JSON.stringify(avatar.body));
+  assert.equal(avatar.body.profile.profileVersion, 2);
+  assert.equal((await profile()).avatar.id, avatar.body.profile.avatar.id);
+  assert.equal((await profile()).displayName, '小助手', 'a new image keeps the name');
+
+  // The owner can still rename the Bot from its settings, and that reaches chat servers too.
+  await f.request(`/api/bots/${bot.id}`, { token: alice.token, method: 'PATCH', json: { displayName: 'Helper 2' } });
+  assert.equal((await profile()).profileVersion, 3);
+  await sync.sync();
+  assert.equal(accounts.publicParticipants()[0].name, 'Helper 2');
+  assert.equal(accounts.publicParticipants()[0].avatar.id, avatar.body.profile.avatar.id);
+
+  const person = await f.request('/api/me', { token: alice.token, method: 'PATCH', json: { displayName: '爱丽丝' } });
+  assert.equal(person.body.account.displayName, '爱丽丝');
+  assert.equal((await f.request('/api/me', { token: alice.token })).body.account.displayName, '爱丽丝');
+});

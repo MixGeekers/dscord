@@ -1,4 +1,4 @@
-/** Pull public identity images from our trusted central; Matrix replicas are an independently retried projection. */
+/** Pull public profiles (display name and image) from our trusted central; Matrix replicas are an independently retried projection. */
 export class ProfileSync {
   constructor({ accounts, trust, intervalMs = 5000, fetchImpl = globalThis.fetch }) {
     Object.assign(this, { accounts, trust, fetchImpl });
@@ -38,6 +38,7 @@ export class ProfileSync {
         if (!account || !Number.isSafeInteger(profile.profileVersion) || profile.profileVersion < 0) continue;
         const avatar = profile.avatar;
         if (avatar !== null && (!avatar || !/^[a-f0-9]{64}$/.test(avatar.id))) continue;
+        const name = typeof profile.displayName === 'string' && profile.displayName.trim() ? profile.displayName.trim().slice(0, 80) : account.name;
         // Build addresses from the trusted issuer and asset ID, never from caller-controlled URLs.
         const clean = { profileVersion: profile.profileVersion, avatar: avatar ? {
           id: avatar.id, url: `${this.trust.issuer}/avatars/${avatar.id}/128.webp`,
@@ -48,6 +49,8 @@ export class ProfileSync {
         if (!previous || previous.version < profile.profileVersion) {
           this.accounts.db.prepare(`INSERT INTO account_profiles (user_id,version,profile_json) VALUES (?,?,?)
             ON CONFLICT(user_id) DO UPDATE SET version=excluded.version,profile_json=excluded.profile_json,pending_uri=NULL`).run(account.user_id, profile.profileVersion, JSON.stringify(clean));
+          // The name is the account's own column, the same one the sign-in claims set.
+          this.accounts.db.prepare('UPDATE accounts SET name=?,updated_at=? WHERE user_id=?').run(name, Date.now(), account.user_id);
           this.accounts.refreshSetup();
         }
         const saved = this.accounts.db.prepare('SELECT * FROM account_profiles WHERE user_id=?').get(account.user_id);
@@ -57,14 +60,15 @@ export class ProfileSync {
           this.accounts.db.prepare('UPDATE account_profiles SET matrix_version=0 WHERE user_id=?').run(account.user_id);
           continue;
         }
-        try { await this.mirror(account, saved, clean); }
+        try { await this.mirror(account, saved, clean, name); }
         catch (error) { this.lastError = error.message; } // One unavailable account must not delay every other identity.
       }
     }
   }
-  async mirror(account, saved, profile) {
+  async mirror(account, saved, profile, name) {
     if (!account.service_token) return;
     const client = this.accounts.clientFactory(account.service_token);
+    await client.request('PUT', `/_matrix/client/v3/profile/${encodeURIComponent(account.user_id)}/displayname`, { displayname: name });
     let uri = saved.pending_uri;
     if (profile.avatar && !uri) {
       const url = new URL(`/avatars/${profile.avatar.id}/512.webp`, this.trust.url);

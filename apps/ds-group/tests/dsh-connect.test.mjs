@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile, readdir, stat } from 'node:fs/promises';
 import path from 'node:path';
+import sharp from 'sharp';
 import { connectKey } from '../dsh-connect/controller.mjs';
 import { CHAT, ELSEWHERE, TWO, centralUrl, connectFixture } from './fixtures/connect.mjs';
 
@@ -264,4 +265,29 @@ test('the connect page still reaches the decision model settings and plugin upgr
   for (const action of ['create-native', 'attach', 'connect', 'disconnect', 'add-server', 'remove-server', 'save-model', 'attention-update', 'kernel-update-everything']) {
     await assert.rejects(controller.handle({ action }), /未知连接操作/);
   }
+});
+
+test('a Bot edits its own profile with its own central session, and the local Bot takes the new name', async t => {
+  const { controller, login, createBot, managed, locals, api, alice } = await fixture(t);
+  const bot = await createBot({ displayName: 'Helper', servers: [CHAT] });
+  await login();
+  await assert.rejects(controller.editProfile('someone-else', { displayName: 'x' }), /不运行这个 Bot/);
+  const account = await controller.editProfile(bot.id, { displayName: '小助手' });
+  assert.deepEqual([account.displayName, account.kind, account.globalId], ['小助手', 'bot', bot.globalId]);
+  assert.equal((await managed(bot.id)).displayName, '小助手', 'the owner sees the name the Bot chose');
+  await controller.synchronize();
+  assert.equal(locals[0].name, '小助手');
+
+  const image = await sharp({ create: { width: 64, height: 48, channels: 3, background: '#3355aa' } }).png().toBuffer();
+  const withAvatar = await controller.editProfile(bot.id, { avatar: { bytes: image, type: 'image/png' } });
+  assert.equal(withAvatar.displayName, '小助手');
+  assert.ok(withAvatar.avatar?.id, 'the new image is on the Bot\'s profile');
+  const cleared = await controller.editProfile(bot.id, { avatar: null });
+  assert.equal(cleared.avatar, null);
+  await assert.rejects(controller.editProfile(bot.id, { displayName: 'x'.repeat(81) }), error => error.remoteCode === 'DISPLAY_NAME_INVALID');
+
+  // A Bot session the owner ended is replaced once, as when the Bot signs in to a chat server.
+  const [nodeRow] = (await api('GET', `/api/bots/${bot.id}/nodes`, { token: alice })).nodes;
+  await api('DELETE', `/api/bots/${bot.id}/nodes/${nodeRow.id}`, { token: alice });
+  assert.equal((await controller.editProfile(bot.id, { displayName: 'Helper' })).displayName, 'Helper');
 });

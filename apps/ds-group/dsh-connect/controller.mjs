@@ -82,10 +82,11 @@ export class ConnectController {
     await savePrivateJson(this.filename, state);
   }
 
-  async remote(base, pathname, { method = 'GET', token, body } = {}) {
+  /** A JSON request, or with `upload` ({bytes, type}) a request whose body is those bytes. */
+  async remote(base, pathname, { method = 'GET', token, body, upload } = {}) {
     const response = await this.request(`${base}${pathname}`, {
-      method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      ...(body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000),
+      method, headers: { 'Content-Type': upload ? upload.type : 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      ...(upload ? { body: upload.bytes } : body ? { body: JSON.stringify(body) } : {}), signal: AbortSignal.timeout(15000),
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
@@ -371,20 +372,46 @@ export class ConnectController {
     return token;
   }
 
-  /** The Bot's node configuration, fetched by the Bot itself after it signs in to the chat server. */
-  async botBundle(bot, server, native) {
-    let token = await this.botSession(bot);
-    let identityToken;
-    try { identityToken = await this.identityToken(token, server.audience); }
+  /** Work done at the central server as the Bot itself, with its own session. */
+  async asBot(bot, work) {
+    try { return await work(await this.botSession(bot)); }
     catch (error) {
       if (error.status !== 401) throw error;
       // The owner revoked this node: ask for a new one once.
       const { [bot.centralId]: _revoked, ...botSessions } = this.state.botSessions;
       this.state = { ...this.state, botSessions };
       await this.save();
-      token = await this.botSession(bot);
-      identityToken = await this.identityToken(token, server.audience);
+      return work(await this.botSession(bot));
     }
+  }
+
+  /**
+   * The Bot edits its own profile, the way a person does on the web: `displayName`, and `avatar` as image
+   * bytes ({bytes, type}) or null to clear it. Chat servers and this device pick the change up from the central server.
+   */
+  async editProfile(centralId, { displayName, avatar } = {}) {
+    const { centralUrl } = this.state;
+    if (!centralUrl || !this.state.bots.some(bot => bot.id === centralId)) throw new Error('这台设备现在不运行这个 Bot');
+    const result = await this.asBot({ centralId }, async token => {
+      let account;
+      if (displayName !== undefined) ({ account } = await this.remote(centralUrl, '/api/me', { method: 'PATCH', token, body: { displayName } }));
+      if (avatar !== undefined) {
+        const { profile } = await this.remote(centralUrl, '/api/me/avatar', { token });
+        const route = `/api/me/avatar?version=${profile.profileVersion}`;
+        await (avatar === null ? this.remote(centralUrl, route, { method: 'DELETE', token })
+          : this.remote(centralUrl, route, { method: 'PUT', token, upload: avatar }));
+        ({ account } = await this.remote(centralUrl, '/api/me', { token }));
+      }
+      return account;
+    });
+    // The local Bot takes the new name now rather than at the next report.
+    void this.synchronize().catch(() => {});
+    return result;
+  }
+
+  /** The Bot's node configuration, fetched by the Bot itself after it signs in to the chat server. */
+  async botBundle(bot, server, native) {
+    const identityToken = await this.asBot(bot, token => this.identityToken(token, server.audience));
     const session = await this.remote(server.url, server.sessionPath, { method: 'POST', body: { identityToken } });
     if (session.user_id !== bot.id) throw new Error('服务器返回的 Bot 身份不匹配');
     try {

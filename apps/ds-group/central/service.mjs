@@ -128,9 +128,15 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   });
   router.post('/api/logout', ({ request, send }) => { store.closeSession(signedIn(request).session); send(200, { loggedOut: true }); });
   router.get('/api/me', ({ request, send }) => send(200, { account: store.view(signedIn(request).account) }));
+  // People and Bots edit their own profile the same way; a Bot's owner can also rename it from the Bot's settings.
+  router.on('PATCH', '/api/me', async ({ request, body, send }) => {
+    const { account } = signedIn(request);
+    const input = await body();
+    send(200, { account: store.view(input.displayName === undefined ? account : store.rename(account, input.displayName)) });
+  });
   router.delete('/api/me', ({ request, send }) => { store.closeAccount(person(request).account); send(200, { closed: true }); });
 
-  // Avatars are public identity images; edits always require the person or the Bot's owner.
+  // Avatars are public identity images; edits require the account itself (a person or a Bot) or the Bot's owner.
   router.get('/api/profiles', ({ url, response, send }) => {
     response.setHeader('Access-Control-Allow-Origin', '*');
     const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean);
@@ -142,10 +148,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   });
   router.get(/^\/avatars\/([a-f0-9]{64})\/(\d+)\.webp$/, ({ response }, id, size) => avatars.serve(response, id, size));
   for (const route of ['/api/me/avatar', /^\/api\/bots\/([^/]+)\/avatar$/]) {
-    const target = (request, id) => {
-      const { account } = person(request);
-      return id ? store.ownedBot(account, id) : account;
-    };
+    const target = (request, id) => id ? store.ownedBot(person(request).account, id) : signedIn(request).account;
     router.get(route, ({ request, send }, id) => send(200, { profile: avatars.profile(target(request, id)), maxUploadBytes: avatars.options.maxUploadBytes }));
     router.on('PUT', route, async ({ request, url, send }, id) => {
       const account = target(request, id);

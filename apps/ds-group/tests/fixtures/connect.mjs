@@ -29,10 +29,10 @@ export async function connectFixture(options = {}) {
   const calls = [];
   const down = new Set();
   const request = async (url, init = {}) => {
-    const { origin, pathname } = new URL(url);
+    const { origin, pathname, search } = new URL(url);
     calls.push({ origin, pathname, init });
     if (down.has(origin)) throw new TypeError('fetch failed');
-    if (origin === centralUrl) return fetch(centralBase + pathname, init);
+    if (origin === centralUrl) return fetch(centralBase + pathname + search, init);
     const serverName = serverNames[origin];
     const body = init.body ? JSON.parse(init.body) : {};
     if (pathname === '/.well-known/dscord/client') return Response.json({ home: { serverName },

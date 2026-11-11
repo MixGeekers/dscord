@@ -15,7 +15,7 @@ export function avatarOptions(input = {}) {
   return result;
 }
 
-/** Identity images only. Original uploads and processing directories are never published. */
+/** Public profiles: the display name and identity image. Original uploads and processing directories are never published. */
 export class Avatars {
   constructor({ store, dataRoot, issuer, config }) {
     Object.assign(this, { store, issuer });
@@ -25,10 +25,13 @@ export class Avatars {
       account_id TEXT PRIMARY KEY REFERENCES accounts(id), version INTEGER NOT NULL,
       asset_id TEXT, updated_at INTEGER NOT NULL);`);
     store.profileOf = account => this.profile(account);
+    // A name change is a profile change too: the version moves on and the image stays.
+    store.profileChanged = account => this.store.db.prepare(`INSERT INTO account_profiles VALUES (?,1,NULL,?) ON CONFLICT(account_id)
+      DO UPDATE SET version=version+1,updated_at=excluded.updated_at`).run(account.id, this.store.now());
   }
   profile(account) {
     const row = this.store.db.prepare('SELECT * FROM account_profiles WHERE account_id=?').get(account.id);
-    return { id: account.id, globalId: this.store.globalId(account.username), profileVersion: row?.version ?? 0,
+    return { id: account.id, globalId: this.store.globalId(account.username), displayName: account.display_name, profileVersion: row?.version ?? 0,
       avatar: row?.asset_id ? { id: row.asset_id, url: `${this.issuer}/avatars/${row.asset_id}/128.webp`,
         sizes: Object.fromEntries(this.options.sizes.map(size => [size, `${this.issuer}/avatars/${row.asset_id}/${size}.webp`])) } : null };
   }

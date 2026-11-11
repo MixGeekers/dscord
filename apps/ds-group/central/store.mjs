@@ -181,9 +181,25 @@ export class CentralStore {
   /** The owner changes a Bot's name or setup; the device that runs it picks the change up the next time it reports. */
   updateBot(owner, bot, { displayName: name, ...input }, { serverOrigin } = {}) {
     const checked = this.checkedSettings(owner, input, serverOrigin);
-    if (name !== undefined) this.db.prepare('UPDATE accounts SET display_name=? WHERE id=?').run(displayName(name, bot.username), bot.id);
+    if (name !== undefined) this.rename(bot, name);
     this.writeSettings(bot, { ...this.settingsOf(bot), ...checked });
     return this.account(bot.id);
+  }
+
+  /**
+   * A new display name, set by the account itself (a person on the web, a Bot with its own tool) or by a Bot's
+   * owner. It is part of the public profile, so chat servers pick it up with the next profile version.
+   */
+  rename(account, name) {
+    const value = displayName(name, account.username);
+    if (value === this.account(account.id).display_name) return this.account(account.id);
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('UPDATE accounts SET display_name=? WHERE id=?').run(value, account.id);
+      this.profileChanged?.(account);
+      this.db.exec('COMMIT');
+    } catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    return this.account(account.id);
   }
 
   /** A Bot as its owner manages it: the account, its setup, and what its device last reported about it. */

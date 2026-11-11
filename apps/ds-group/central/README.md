@@ -39,7 +39,7 @@ npm run central
 
 ## 自定义头像
 
-用户可修改自己和名下 Bot 的头像，跨服务器同步，Bot 离线时也可设置。默认复用中央数据卷；入口、配置、备份和接口见[自定义头像](avatars.md)。
+用户可修改自己和名下 Bot 的头像和名称，Bot 也能改自己的，跨服务器同步，Bot 离线时也可设置。默认复用中央数据卷；入口、配置、备份和接口见[自定义头像](avatars.md)。
 
 ## 账号格式
 
@@ -61,7 +61,7 @@ npm run central
 | `GET /.well-known/jwks.json` | 聊天服务器 | 验证身份令牌的公钥 |
 | `POST /api/register` | 人 | `{username, password, displayName?}` 注册并登录（`registration: open` 时） |
 | `POST /api/login` / `POST /api/logout` | 人 | 密码登录 / 退出当前会话 |
-| `GET /api/me` / `DELETE /api/me` | 人、Bot 节点 / 人 | 查看自己 / 注销（名下还有 Bot 时要先注销 Bot） |
+| `GET /api/me` / `PATCH /api/me` / `DELETE /api/me` | 人、Bot 节点 / 人、Bot 节点 / 人 | 查看自己 / 改自己的显示名称 `{displayName}` / 注销（名下还有 Bot 时要先注销 Bot） |
 | `POST /api/identity-tokens` | 人、Bot 节点 | `{audience, allowNew?}` 为某台聊天服务器（HTTPS origin）签发 5 分钟有效的身份令牌；第一次去某台服务器时要带 `allowNew: true`，否则返回 `GRANT_REQUIRED` |
 | `GET /api/grants` / `DELETE /api/grants/:audience` | 人、Bot 节点 | 查看 / 撤销自己授权过的聊天服务器 |
 | `POST /api/connect-codes` | 人 | 生成 DSH 连接用的一次性代码（10 分钟有效）。聊天服务器网页把它和服务器地址一起编码成连接密钥 |
