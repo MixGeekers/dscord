@@ -74,6 +74,12 @@ const html = `<!doctype html>
         return React.createElement('main', { className: 'conversation', style: { height: '100dvh' } },
           React.createElement(Timeline, {
             key: room.roomId, events, participants: people, session, mentionables: roster, roles: roster.roles,
+            // One is opened with the greeting still unread; Two has read it already.
+            history: {
+              hasOlder: false, atStart: true, loadingOlder: false, loadOlder: async () => {}, seed: () => {},
+              unreadEventId: room.roomId === '!one:test' ? '$greeting' : null,
+              unreadCount: room.roomId === '!one:test' ? 1 : 0, dismissUnread: () => {},
+            },
             onMember: id => window.memberClicks.push(id),
             onReply: event => {
               setReply({ eventId: event.event_id, senderName: 'Bob', body: event.content.body });
@@ -178,6 +184,21 @@ try {
 
   const editor = page.locator('#message-input');
   await editor.click();
+  // The placeholder floats over the empty field, so the caret sits at its start, not after the hint.
+  const caret = await page.evaluate(() => {
+    const input = document.querySelector('#message-input');
+    const hint = getComputedStyle(input, '::before');
+    const marker = document.createElement('span');
+    marker.textContent = '\u200b';
+    input.append(marker);
+    const at = marker.getBoundingClientRect().left - input.getBoundingClientRect().left;
+    marker.remove();
+    return { position: hint.position, content: hint.content, at, padding: parseFloat(getComputedStyle(input).paddingLeft) };
+  });
+  assert.equal(caret.position, 'absolute');
+  assert.notEqual(caret.content, 'none');
+  assert.ok(Math.abs(caret.at - caret.padding) < 1, JSON.stringify(caret));
+  checks.push('emptyComposerCaretStartsBeforeThePlaceholder');
   await editor.pressSequentially('@Bo');
   await page.locator('.mention-suggestion').first().waitFor();
   await editor.press('Enter');
@@ -192,10 +213,13 @@ try {
   await editor.pressSequentially('draft-one');
   await page.evaluate(() => window.switchRoom(1));
   await page.waitForFunction(() => document.querySelector('#message-input').textContent === '');
+  // A mention already read looks like any other message.
+  assert.equal(await page.locator('.message.mentioned').count(), 0);
+  assert.equal(await page.locator('.message .mention-tag').count(), 1);
   await editor.pressSequentially('draft-two');
   await page.evaluate(() => window.switchRoom(0));
   await page.waitForFunction(() => document.querySelector('#message-input').textContent === 'draft-one');
-  checks.push('roomSwitchPreservesIndependentDrafts');
+  checks.push('roomSwitchPreservesIndependentDraftsAndReadMentionsAreNotHighlighted');
 
   await page.locator('.message').first().hover();
   await page.locator('.message-action').first().click();
