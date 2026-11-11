@@ -53,6 +53,7 @@ import {
 } from "./app/timeline-events";
 import { useWorkspaceSync } from "./app/useWorkspaceSync";
 import { useTimelineHistory } from "./app/useTimelineHistory";
+import { useAppViewport } from "./app/useAppViewport";
 import { newRequestId } from "./identifiers";
 import type { MentionValue } from "../mention-editor.js";
 import type {
@@ -80,6 +81,7 @@ export default function App({
   const [config] = useState(() => suppliedConfig ?? defaultConfig());
   const t = useTranslation(appMessages);
   const tAuth = useTranslation(authMessages);
+  useAppViewport();
   // An invitation link carries its code as ?invite=CODE for the sign-in form.
   const [invitation] = useState(
     () => new URL(location.href).searchParams.get("invite") ?? "",

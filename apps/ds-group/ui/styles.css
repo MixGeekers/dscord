@@ -73,7 +73,7 @@
 .ds-color-input:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .ds-popover-positioner { z-index: var(--z-ui-popover); max-width: calc(100vw - 16px); }
 .ds-popover-content {
-  max-height: min(760px, calc(100dvh - 24px));
+  max-height: min(760px, calc(var(--app-safe-height) - 24px));
   overflow-y: auto;
   overscroll-behavior: contain;
   border: 1px solid var(--color-border-normal);
@@ -85,9 +85,9 @@
 .ds-dialog-backdrop { position: fixed; inset: 0; z-index: var(--z-ui-dialog-backdrop); background: var(--color-dialog-overlay); }
 .ds-dialog-content {
   position: fixed;
-  top: 50%; left: 50%; z-index: var(--z-ui-dialog);
+  top: calc(var(--app-top) + var(--safe-top) + var(--app-safe-height) / 2); left: 50%; z-index: var(--z-ui-dialog);
   transform: translate(-50%, -50%);
-  max-height: calc(100dvh - 32px);
+  max-height: calc(var(--app-safe-height) - 32px);
   overflow: hidden;
   overscroll-behavior: contain;
   border: 1px solid var(--color-border-normal);
@@ -98,5 +98,5 @@
 }
 .ds-dialog-content[data-open] { display: flex; flex-direction: column; }
 @media (max-width: 480px) {
-  .ds-dialog-content { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .ds-dialog-content { width: calc(100vw - 16px); max-height: calc(var(--app-safe-height) - 16px); }
 }

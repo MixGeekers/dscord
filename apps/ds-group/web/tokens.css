@@ -143,6 +143,13 @@
   --shadow-navigation: 4px 0 20px #00000044;
   --shadow-dialog: 0 12px 48px #00000077;
   --shadow-toast: 0 3px 20px #00000066;
+  /* Screen area. --app-top/--app-bottom are written by useAppViewport while the on-screen keyboard hides part of the screen. */
+  --app-top: 0px;
+  --app-bottom: 0px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  /* What is left for dialogs and popovers below the status bar and above the home indicator. */
+  --app-safe-height: calc(100dvh - var(--app-top) - var(--app-bottom) - var(--safe-top) - var(--safe-bottom));
   --green: var(--color-accent);
   --muted: var(--color-text-muted);
   --line: var(--color-border-subtle);
@@ -244,3 +251,6 @@
 @media (prefers-reduced-motion: reduce) {
   :root { --motion-fast: 0ms; --motion-panel: 0ms; --motion-highlight: 0ms; }
 }
+
+/* The keyboard covers the home indicator, so nothing needs to stay clear of it. */
+:root[data-keyboard] { --safe-bottom: 0px; }
