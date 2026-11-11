@@ -1,3 +1,4 @@
+import { Avatar } from "./Avatar";
 import { Button } from "../../../ui/controls";
 import { useTranslation } from "../locale";
 import { shellMessages } from "../locales/shell";
@@ -118,7 +119,7 @@ export function GlobalBotsSidebar({
         aria-label={t("myBots")}
       >
         {bots.length ? (
-          bots.map((bot, index) => {
+          bots.map((bot) => {
             const direct = directRoom(rooms, bot.id);
             const selected =
               homeBotId === bot.id ||
@@ -138,12 +139,7 @@ export function GlobalBotsSidebar({
                 aria-busy={openingBotId === bot.id}
                 onClick={() => onSelect(bot.id)}
               >
-                <span
-                  className={`avatar avatar-bot${index % 2 ? " avatar-alternate" : ""}`}
-                  aria-hidden="true"
-                >
-                  {bot.name.slice(0, 1)}
-                </span>
+                <Avatar member={bot} />
                 <span className="global-bot-identity">
                   <strong>{bot.name}</strong>
                   <small

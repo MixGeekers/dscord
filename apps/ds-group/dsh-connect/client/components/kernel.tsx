@@ -2,8 +2,13 @@ import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import type { Connection } from "../connection";
 import type { MessageKey, Translate } from "../locale";
-import type { DecisionProvider, KernelState, KernelUpdates } from "../types";
-import { Button, Checkbox, Input, Radio } from "./controls";
+import type {
+  DecisionPreset,
+  DecisionProvider,
+  KernelState,
+  KernelUpdates,
+} from "../types";
+import { Button, Checkbox, Input, Radio, Select } from "./controls";
 
 const message = (reason: unknown) => (reason as Error).message;
 
@@ -50,9 +55,17 @@ const ERRORS: [RegExp, MessageKey][] = [
   [/^ATTENTION_HTTP_40[13]$/, "decisionErrorKey"],
   [/^ATTENTION_HTTP_404$/, "decisionErrorAddress"],
   [/^ATTENTION_HTTP_429$/, "decisionErrorLimit"],
-  [/^ATTENTION_(INVALID_RESPONSE|REFUSAL)$/, "decisionErrorProtocol"],
+  [
+    /^ATTENTION_(INVALID_RESPONSE|REFUSAL|SERVICE_ERROR)$/,
+    "decisionErrorProtocol",
+  ],
   [/^ATTENTION_(TIMEOUT|PROVIDER_ERROR)$/, "decisionErrorUnreachable"],
 ];
+
+const cloudflareEndpoint = (accountId: string, model: string) =>
+  /^[a-fA-F0-9]{32}$/.test(accountId)
+    ? `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/cloudflare/${model}`
+    : "";
 
 /**
  * The model that decides when Bots speak. Bots lose most of their conversational sense without it, so it has
@@ -74,12 +87,40 @@ export function DecisionPanel({
   const [saved, setSaved] = useState<DecisionState | null>(null);
   const [round, setRound] = useState(0);
   const [enabled, setEnabled] = useState(status?.enabled !== false);
+  const [preset, setPreset] = useState("openai-decisions");
+  const [model, setModel] = useState("");
+  const [endpoint, setEndpoint] = useState("");
+  const [accountId, setAccountId] = useState("");
+  const [hasKey, setHasKey] = useState(false);
+  function selectPreset(selected: DecisionPreset) {
+    setPreset(selected.id);
+    setModel(selected.model);
+    setEndpoint(selected.endpoint);
+    setAccountId(selected.accountId ?? "");
+    setHasKey(selected.hasKey);
+    setSaved(null);
+    setError(null);
+  }
+  function readForm(value: KernelState["decisionForm"]) {
+    setForm(value);
+    if (value) {
+      setEnabled(value.enabled);
+      selectPreset(
+        value.presets.find((item) => item.id === value.preset) ?? {
+          ...value,
+          id: value.preset,
+          name: "OpenAI Decisions",
+          models: [],
+        },
+      );
+    }
+  }
   useEffect(() => {
     const controller = new AbortController();
     void connection
       .kernel<KernelState>("kernel-state", {}, controller)
       .then((value) => {
-        if (!controller.signal.aborted) setForm(value.decisionForm);
+        if (!controller.signal.aborted) readForm(value.decisionForm);
       })
       .catch((reason) => {
         if (!controller.signal.aborted) setError(message(reason));
@@ -88,6 +129,18 @@ export function DecisionPanel({
   }, [connection]);
   const state = decisionState(status);
   const working = decisionWorks(status);
+  const selected = form?.presets.find((item) => item.id === preset);
+  const cloudflare = preset === "cloudflare-clef";
+  function changeModel(value: string) {
+    if (cloudflare && endpoint === cloudflareEndpoint(accountId, model))
+      setEndpoint(cloudflareEndpoint(accountId, value));
+    setModel(value);
+  }
+  function changeAccount(value: string) {
+    if (endpoint === cloudflareEndpoint(accountId, model))
+      setEndpoint(cloudflareEndpoint(value, model));
+    setAccountId(value);
+  }
   const reason = status?.error
     ? t(
         ERRORS.find(([pattern]) => pattern.test(status.error!))?.[1] ??
@@ -101,8 +154,6 @@ export function DecisionPanel({
     const fields = event.currentTarget.elements;
     const field = (name: string) => fields.namedItem(name) as HTMLInputElement;
     const apiKey = field("decisionApiKey").value.trim();
-    const model = field("decisionModel").value.trim();
-    const endpoint = field("decisionEndpoint").value.trim();
     setBusy(true);
     setError(null);
     setSaved(null);
@@ -111,16 +162,22 @@ export function DecisionPanel({
         "save-decision-provider",
         {
           enabled,
+          preset,
           ...(apiKey ? { apiKey } : {}),
           // Only a changed value is saved, so untouched defaults keep following the device's environment.
-          ...(model === (form?.model ?? "") ? {} : { model }),
-          ...(endpoint === (form?.endpoint ?? "") ? {} : { endpoint }),
+          ...(model === (selected?.model ?? "") ? {} : { model: model.trim() }),
+          ...(endpoint === (selected?.endpoint ?? "")
+            ? {}
+            : { endpoint: endpoint.trim() }),
+          ...(cloudflare && accountId !== (selected?.accountId ?? "")
+            ? { accountId: accountId.trim() }
+            : {}),
         },
       );
       const kernel = await connection.kernel<KernelState>("kernel-state");
       // The page's status, its guide and the report to the owner's web page follow the new state.
       await connection.refresh({ clearError: false });
-      setForm(kernel.decisionForm);
+      readForm(kernel.decisionForm);
       setSaved(decisionState(next));
       setRound((value) => value + 1);
     } catch (reason) {
@@ -134,9 +191,48 @@ export function DecisionPanel({
     <form
       className="dc-form"
       // After a save the fields start again from what the device now holds, and the typed key leaves the page.
-      key={`${form?.hasKey}\n${form?.model}\n${form?.endpoint}\n${round}`}
+      key={`${preset}\n${round}`}
       onSubmit={(event) => void submit(event)}
     >
+      <div className="dc-field">
+        <label htmlFor="decision-preset">{t("decisionService")}</label>
+        <Select
+          id="decision-preset"
+          name="decisionPreset"
+          value={preset}
+          disabled={busy || !form}
+          onChange={(event) => {
+            const next = form?.presets.find(
+              (item) => item.id === event.target.value,
+            );
+            if (next) selectPreset(next);
+          }}
+        >
+          {(form?.presets ?? []).map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+            </option>
+          ))}
+        </Select>
+        <span className="dc-hint">{t("decisionServiceHelp")}</span>
+      </div>
+      {cloudflare && (
+        <div className="dc-field">
+          <label className="dc-field">
+            {t("decisionAccount")}
+            <Input
+              name="decisionAccount"
+              value={accountId}
+              onChange={(event) => changeAccount(event.target.value.trim())}
+              required={enabled && !endpoint}
+              disabled={busy}
+              spellCheck={false}
+              autoCapitalize="none"
+            />
+          </label>
+          <span className="dc-hint">{t("decisionAccountHelp")}</span>
+        </div>
+      )}
       <div className="dc-field">
         <label className="dc-field">
           {t("decisionApiKey")}
@@ -144,27 +240,48 @@ export function DecisionPanel({
             name="decisionApiKey"
             type="password"
             autoComplete="new-password"
-            required={enabled && form?.hasKey === false}
+            required={enabled && !hasKey}
             disabled={busy}
             spellCheck={false}
             autoCapitalize="none"
           />
         </label>
         <span className="dc-hint">
-          {t(form?.hasKey ? "decisionKeyHelp" : "decisionKeyNeeded")}
+          {t(hasKey ? "decisionKeyHelp" : "decisionKeyNeeded")}
         </span>
       </div>
       <div className="dc-field">
-        <label className="dc-field">
-          {t("decisionModelName")}
-          <Input
+        <label htmlFor="decision-model">{t("decisionModelName")}</label>
+        {cloudflare ? (
+          <Select
+            id="decision-model"
             name="decisionModel"
-            defaultValue={form?.model ?? ""}
+            value={model}
+            onChange={(event) => changeModel(event.target.value)}
+            disabled={busy}
+          >
+            <option value="clef">Clef</option>
+            <option value="clef-flash">Clef Flash</option>
+          </Select>
+        ) : (
+          <Input
+            id="decision-model"
+            name="decisionModel"
+            value={model}
+            onChange={(event) => changeModel(event.target.value)}
+            list="decision-models"
             disabled={busy}
             spellCheck={false}
             autoCapitalize="none"
           />
-        </label>
+        )}
+        {!cloudflare && (
+          <datalist id="decision-models">
+            {selected?.models.map((value) => (
+              <option key={value} value={value} />
+            ))}
+          </datalist>
+        )}
         <span className="dc-hint">{t("decisionModelHelp")}</span>
       </div>
       <div className="dc-field">
@@ -172,7 +289,8 @@ export function DecisionPanel({
           {t("decisionEndpoint")}
           <Input
             name="decisionEndpoint"
-            defaultValue={form?.endpoint ?? ""}
+            value={endpoint}
+            onChange={(event) => setEndpoint(event.target.value)}
             disabled={busy}
             spellCheck={false}
             autoCapitalize="none"

@@ -82,6 +82,7 @@ export class CentralStore {
     if (!row) return undefined;
     const owner = row.owner_id ? this.db.prepare('SELECT username FROM accounts WHERE id=?').get(row.owner_id) : undefined;
     return { id: row.id, username: row.username, globalId: this.globalId(row.username), kind: row.kind, displayName: row.display_name,
+      ...(this.profileOf && this.profileOf(row).profileVersion > 0 ? this.profileOf(row) : {}),
       ...(owner ? { owner: this.globalId(owner.username) } : {}), status: row.status, createdAt: new Date(row.created_at).toISOString() };
   }
 

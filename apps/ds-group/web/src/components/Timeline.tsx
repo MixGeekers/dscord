@@ -1,3 +1,4 @@
+import { Avatar } from "./Avatar";
 import {
   Fragment,
   memo,
@@ -405,11 +406,7 @@ export function Timeline(props: TimelineProps) {
                     aria-label={t("profile", { name })}
                     onClick={() => props.onMember(event.sender)}
                   >
-                    <span
-                      className={`avatar avatar-${person?.kind === "bot" ? "bot" : "human"}${props.participants.findIndex((member) => member.id === event.sender) % 2 ? " avatar-alternate" : ""}`}
-                    >
-                      {[...name][0]}
-                    </span>
+                    <Avatar member={person ?? { id: event.sender, name }} />
                   </button>
                   <div className="message-content">
                     <div className="message-meta">

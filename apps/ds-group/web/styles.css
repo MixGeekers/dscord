@@ -658,3 +658,22 @@ legend { color: var(--color-text-secondary); font-weight: var(--font-weight-semi
 .message-editor-button:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: 1px; }
 .message-action.danger:hover { color: var(--color-text-danger); }
 .message-actions[hidden] { display: none; }
+
+/* Identity images share the existing avatar sizes, focus and theme tokens. */
+.avatar { overflow: hidden; }
+.avatar > img { width: 100%; height: 100%; object-fit: cover; }
+.avatar-editor { margin-block: var(--space-5); padding-block: var(--space-4); }
+.avatar-editor-identity { display: flex; align-items: center; gap: var(--space-5); }
+.avatar-editor-identity .avatar { width: 64px; height: 64px; }
+.avatar-editor-identity small { display: block; color: var(--color-text-muted); }
+.avatar-crop-editor { display: grid; grid-template-columns: minmax(0, 1fr); min-width: 0; width: 100%; gap: var(--space-4); max-width: 360px; }
+.avatar-crop-editor label { display: grid; gap: var(--space-2); }
+.avatar-crop-editor input[type=range] { width: 100%; accent-color: var(--color-accent); }
+.avatar-crop-stage { position: relative; width: 240px; height: auto; aspect-ratio: 1; max-width: 100%; overflow: hidden; touch-action: none; cursor: grab; background: var(--color-bg-canvas); border-radius: var(--radius-sm); }
+.avatar-crop-stage:active { cursor: grabbing; }
+.avatar-crop-stage img, .avatar-crop-preview img { position: absolute; max-width: none; pointer-events: none; user-select: none; }
+.avatar-crop-mask { position: absolute; inset: 0; border-radius: 50%; box-shadow: 0 0 0 100px color-mix(in srgb, var(--color-bg-canvas) 75%, transparent); outline: 1px solid var(--color-border-normal); pointer-events: none; }
+.avatar-crop-preview { display: flex; align-items: center; gap: var(--space-4); }
+.avatar-crop-preview > div { position: relative; width: 40px; height: 40px; border-radius: var(--radius-round); overflow: hidden; }
+.mention-suggestion-avatar { overflow: hidden; }
+.mention-suggestion-avatar > img { width: 100%; height: 100%; object-fit: cover; }

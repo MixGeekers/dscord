@@ -11,7 +11,7 @@ export const sourceRootFiles = [
 export const sourceDirectories = ['bin', 'src', 'central', 'memory', 'service', 'scripts', 'tests', 'web', 'admin', 'ui', 'deploy', 'dsh-plugin', 'dsh-connect', 'vendor'];
 const publicDocuments = new Set([
   ...sourceRootFiles.filter(name => name.endsWith('.md')),
-  'admin/README.md', 'central/README.md', 'dsh-plugin/README.md', 'dsh-connect/KERNEL.md',
+  'admin/README.md', 'central/README.md', 'central/avatars.md', 'dsh-plugin/README.md', 'dsh-connect/KERNEL.md',
   'memory/复用与运行.md', 'memory/当前上下文与回顾.md',
   'deploy/README.md', 'deploy/npm.md', 'deploy/api-only.md', 'deploy/kernel-runtime.md', 'deploy/releasing.md',
   'deploy/client/README.md', 'deploy/storage/README.md', 'deploy/systemd/README.md',

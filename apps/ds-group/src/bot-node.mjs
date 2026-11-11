@@ -16,7 +16,8 @@ import { createNodeWorkClient } from './node-work.mjs';
 import { conversationContext, messageSource, speakerOf, threadOf } from './message-context.mjs';
 import { normalizeAttentionConfig, attentionModeFor, attentionListens, sameAttention, reliableAttentionRoute, attentionMessage, attentionConflict,
   participationDelay, trailingBotTurns } from './attention.mjs';
-import { ATTENTION_POLICY_VERSION, DecisionError, validateDecision, createOpenAIDecisionProvider, turnQuestion } from './decision-provider.mjs';
+import { ATTENTION_POLICY_VERSION, DecisionError, validateDecision, createDecisionProvider, turnQuestion } from './decision-provider.mjs';
+import { decisionPresetConfiguration, decisionEnvironment } from './decision-presets.mjs';
 
 // A person often splits one thought over several quick messages. The decision
 // model judges whether they are done (WAIT or REPLY), and whether a message that
@@ -1487,10 +1488,9 @@ export async function runNode(argv = process.argv.slice(2)) {
   const nativeBinding = config.nativeBinding || participant.nativeBinding || nodeConfig.nativeBinding;
   const attentionMode = argument('--attention-mode') || process.env.DSCORD_ATTENTION_MODE || process.env.DS_GROUP_ATTENTION_MODE
     || nodeConfig.attention?.mode || config.attention?.mode || 'mention';
-  const decisionKey = process.env.DSCORD_DECISION_API_KEY || process.env.OPENAI_API_KEY;
+  const decisionOptions = decisionEnvironment();
   const decisionProvider = process.env.DSCORD_DECISION_ENABLED === 'false' ? undefined
-    : createOpenAIDecisionProvider({ apiKey: decisionKey,
-      model: process.env.DSCORD_DECISION_MODEL || undefined, endpoint: process.env.DSCORD_DECISION_ENDPOINT || undefined });
+    : createDecisionProvider({ ...decisionPresetConfiguration(decisionOptions), apiKey: decisionOptions.apiKey });
   // Learn the server's protocol before anything else; an incompatible kernel stops here with the upgrade it needs.
   const { KERNEL_VERSION, hello } = await import('./node-protocol.mjs');
   let session;

@@ -227,10 +227,16 @@ jobs:
   browser:
     name: Browser / Chromium
     runs-on: ubuntu-24.04
+    # Match @playwright/test in package-lock.json; browsers and system dependencies are preinstalled.
+    # https://playwright.dev/docs/docker
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+      options: --shm-size=1g --init
     timeout-minutes: 15
     defaults:
       run:
         working-directory: apps/ds-group
+        shell: bash
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -241,15 +247,17 @@ jobs:
           cache: npm
           cache-dependency-path: apps/ds-group/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install Chromium with bounded dependency downloads
-        timeout-minutes: 5
+      - name: Validate preinstalled Chromium
         run: |
-          printf '%s\n' \
-            'Acquire::Retries "2";' \
-            'Acquire::http::Timeout "30";' \
-            'Acquire::https::Timeout "30";' \
-            | sudo tee /etc/apt/apt.conf.d/80-dscord-ci-network-timeouts
-          npx playwright install --with-deps chromium
+          node --input-type=module <<'JS'
+          import { createRequire } from 'node:module';
+          import { chromium } from 'playwright';
+          const require = createRequire(import.meta.url);
+          if (require('@playwright/test/package.json').version !== '1.64.1') throw new Error('Update the pinned Playwright container to match the package');
+          const browser = await chromium.launch();
+          console.log('Preinstalled Chromium:', await browser.version());
+          await browser.close();
+          JS
       - name: Build chat and administration frontends required by the browser suite
         run: npm run build
       - name: Chat, unified client and administration browser checks
@@ -260,6 +268,8 @@ jobs:
           name: browser-checks
           path: |
             apps/ds-group/.local/*browser*.json
+            apps/ds-group/.local/avatar-validation/browser.json
+            apps/ds-group/.local/avatar-validation/*.png
             apps/ds-group/.local/governance/admin-browser.json
             apps/ds-group/.local/governance/admin-*.png
             apps/ds-group/.local/unified-client-browser/*.json

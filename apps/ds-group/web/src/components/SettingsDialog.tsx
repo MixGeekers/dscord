@@ -1,3 +1,4 @@
+import { AvatarEditor } from "./AvatarEditor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input } from "../../../ui/controls";
 import { Dialog, DialogContent, DialogTitle } from "../../../ui/overlays";
@@ -10,7 +11,13 @@ import { AppearanceControls } from "./AppearanceControls";
 import { ConnectDsh } from "./ConnectDsh";
 import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
-import type { Api, PwaHandle, Session, SettingsTab } from "../types";
+import type {
+  Api,
+  PwaHandle,
+  Session,
+  SettingsTab,
+  Participant,
+} from "../types";
 
 export interface SettingsDialogProps {
   tab: SettingsTab | null;
@@ -22,6 +29,8 @@ export interface SettingsDialogProps {
   onSwitchAccount(): void;
   onLogout(): void;
   logoutBusy: boolean;
+  currentUser?: Participant | null;
+  onProfileChanged?(): void;
   onOpenRoom(
     roomId: string,
     eventId?: string,
@@ -115,6 +124,21 @@ export function SettingsDialog(props: SettingsDialogProps) {
         <div className="dialog-scroll-region settings-panel-scroll">
           <section data-settings-panel="account" hidden={tab !== "account"}>
             <h3>{t("currentAccount")}</h3>
+            {tab === "account" && session && (
+              <AvatarEditor
+                key={session.user_id}
+                session={session}
+                member={
+                  props.currentUser ?? {
+                    id: session.user_id,
+                    globalId: session.identity?.globalId ?? undefined,
+                    name: session.user_id,
+                    kind: "human",
+                  }
+                }
+                onChanged={props.onProfileChanged}
+              />
+            )}
             <p id="settings-account" className="identity-value">
               {session?.user_id || t("signedOut")}
             </p>

@@ -207,6 +207,9 @@ try {
     const token = request.headers().authorization?.replace('Bearer ', '');
     if (url.pathname === '/.well-known/dscord/central') {
       body = { issuer: centralOrigin, domain: 'id.example', registration: 'open' };
+    } else if (url.pathname === '/api/me/avatar' && request.method() === 'GET') {
+      const username = token?.replace(/^central-(login|register)-/, '') || 'alice';
+      body = { profile: { id: 'central-' + username, globalId: username + '@id.example', profileVersion: 0, avatar: null }, maxUploadBytes: 5242880 };
     } else if (url.pathname === '/api/register') {
       const input = request.postDataJSON();
       registrationRequests.push(input);

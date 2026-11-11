@@ -87,6 +87,7 @@ try {
 
   await page.getByRole("button", { name: "查看服务器", exact: true }).click();
   await page.getByRole("tab", { name: /待审核/ }).waitFor();
+  await page.locator(".central-server-row").nth(1).waitFor();
   assert.equal(await page.locator(".central-server-row").count(), 2);
   await page.getByText("机器人社", { exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, "central-servers-pending-zh.png"), fullPage: true, animations: "disabled" });

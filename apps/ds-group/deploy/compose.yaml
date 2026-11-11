@@ -20,7 +20,7 @@ x-server-environment: &server-environment
   DS_GROUP_WEB_MODE: ${DS_GROUP_WEB_MODE:-}
 
 services:
-  # Accounts and identity tokens only; it stores no messages or files. A deployment that uses an
+  # Accounts, identity tokens and avatar images; it stores no chat messages or attachments. A deployment that uses an
   # existing central server can leave this service stopped and set DS_GROUP_CENTRAL_URL.
   central:
     <<: *app

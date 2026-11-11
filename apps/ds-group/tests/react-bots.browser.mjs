@@ -209,7 +209,7 @@ try {
   await row.getByRole('status').filter({ hasText: 'Saved.' }).waitFor();
   await until(() => f.locals[0].name === '诗雨' && f.locals[0].role === 'Keeps the garden plan' && f.locals[0].model === 'fixture/large', 'the device applies the new setup');
   await row.getByText('Running model · fixture/large', { exact: true }).waitFor();
-  await row.locator('strong', { hasText: '诗雨' }).waitFor();
+  await row.locator('header strong', { hasText: '诗雨' }).waitFor();
   checks.push('nameRoleAndModelAreChangedOnThePageAndTheDeviceAppliesThem');
   await shots('manage-setup');
   await row.locator('[data-bot-here]', { hasText: 'Remove from this server' }).click();

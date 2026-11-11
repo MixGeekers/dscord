@@ -1,3 +1,4 @@
+import { ProfileSync } from './profile-sync.mjs';
 import http from 'node:http';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { randomBytes } from 'node:crypto';
@@ -73,6 +74,7 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
     accounts.close();
     throw error;
   }
+  const profiles = new ProfileSync({ accounts, trust: identity.central });
   const governance = new Governance({ dataRoot, serverName: setup.serverName });
   const collaboration = new CollaborationService({ setup, governance, accounts });
   const invites = new InviteStore({ dataRoot });
@@ -202,7 +204,8 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
         ...(retryAfterMs === undefined ? {} : { retry_after_ms: retryAfterMs }) }));
     });
   });
-  return { server, budget, push, media, tasks, chatFeatures, accounts, identity, nodeCredentials, governance, collaboration, botWork, kernelControl, close: async () => {
+  return { server, profiles, budget, push, media, tasks, chatFeatures, accounts, identity, nodeCredentials, governance, collaboration, botWork, kernelControl, close: async () => {
+    await profiles.close();
     media.verified.stop();
     kernelControl.close();
     await new Promise(resolve => server.close(resolve));

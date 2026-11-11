@@ -1,3 +1,4 @@
+import { Avatars } from './avatars.mjs';
 import http from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { chmod, mkdir, readFile, writeFile } from 'node:fs/promises';
@@ -82,6 +83,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   const filename = path.join(dataRoot, 'central.sqlite');
   const store = new CentralStore({ filename, rule: options.rule, domain: options.domain, now });
   await chmod(filename, 0o600);
+  const avatars = new Avatars({ store, dataRoot, issuer: options.issuer, config: config.avatars });
   const directory = new ServerDirectory({ db: store.db, issuer: options.issuer, now, fetch, fetchVia: options.serverFetchUrls });
   const jwks = publicJwks(key);
   const settings = () => ({ registration: store.setting('registration', options.registration), listing: store.setting('listing', options.listing) });
@@ -109,6 +111,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     return signed;
   };
 
+  discovery.avatars = { maxUploadBytes: avatars.options.maxUploadBytes, sizes: avatars.options.sizes };
   router.get('/.well-known/dscord/central', ({ send }) => send(200, discovery));
   router.get('/.well-known/jwks.json', ({ send }) => send(200, jwks));
 
@@ -126,6 +129,36 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
   router.post('/api/logout', ({ request, send }) => { store.closeSession(signedIn(request).session); send(200, { loggedOut: true }); });
   router.get('/api/me', ({ request, send }) => send(200, { account: store.view(signedIn(request).account) }));
   router.delete('/api/me', ({ request, send }) => { store.closeAccount(person(request).account); send(200, { closed: true }); });
+
+  // Avatars are public identity images; edits always require the person or the Bot's owner.
+  router.get('/api/profiles', ({ url, response, send }) => {
+    response.setHeader('Access-Control-Allow-Origin', '*');
+    const ids = (url.searchParams.get('ids') || '').split(',').filter(Boolean);
+    if (ids.length > 100 || ids.some(id => id.length > 256)) throw failure(400, 'PROFILE_BATCH_LIMIT');
+    send(200, { profiles: [...new Set(ids)].flatMap(id => {
+      const account = store.account(id) || (id.endsWith(`@${options.domain}`) ? store.db.prepare('SELECT * FROM accounts WHERE username=?').get(id.slice(0, -(options.domain.length + 1))) : undefined);
+      return account?.status === 'active' ? [avatars.profile(account)] : [];
+    }) });
+  });
+  router.get(/^\/avatars\/([a-f0-9]{64})\/(\d+)\.webp$/, ({ response }, id, size) => avatars.serve(response, id, size));
+  for (const route of ['/api/me/avatar', /^\/api\/bots\/([^/]+)\/avatar$/]) {
+    const target = (request, id) => {
+      const { account } = person(request);
+      return id ? store.ownedBot(account, id) : account;
+    };
+    router.get(route, ({ request, send }, id) => send(200, { profile: avatars.profile(target(request, id)), maxUploadBytes: avatars.options.maxUploadBytes }));
+    router.on('PUT', route, async ({ request, url, send }, id) => {
+      const account = target(request, id);
+      const version = avatars.expected(account, url.searchParams.get('version'));
+      const asset = await avatars.upload(request, url.searchParams);
+      target(request, id); // Recheck authorization after decoding and writing.
+      send(200, { profile: avatars.commit(account, version, asset) });
+    });
+    router.delete(route, ({ request, url, send }, id) => {
+      const account = target(request, id);
+      send(200, { profile: avatars.commit(account, avatars.expected(account, url.searchParams.get('version')), null) });
+    });
+  }
 
   // A person's own DSH signs in with a connection key made on a chat server's page; the key carries one of these codes.
   router.post('/api/connect-codes', ({ request, send }) => send(201, store.startConnect(person(request).account)));
@@ -285,7 +318,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     response.setHeader('Access-Control-Allow-Origin', from);
     response.setHeader('Vary', 'Origin');
     response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type');
-    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PATCH, DELETE');
+    response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE');
   }
 
   async function dispatch(request, response) {
@@ -312,7 +345,7 @@ export async function createCentral({ dataRoot = localPath('central'), config, n
     refreshing = refreshing.then(() => directory.refreshAll()).catch(error => console.error(error));
   }, refreshIntervalMs) : undefined;
   timer?.unref();
-  return { server, store, directory, discovery, jwks, settings, close: async () => {
+  return { server, store, avatars, directory, discovery, jwks, settings, close: async () => {
     clearInterval(timer);
     await new Promise(resolve => server.close(resolve));
     await refreshing;

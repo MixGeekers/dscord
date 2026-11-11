@@ -23,6 +23,10 @@ export function validateDecision(value, actions = ATTENTION_ACTIONS) {
   if (!value || !actions.includes(value.action)) {
     throw new DecisionError('ATTENTION_INVALID_RESPONSE', 'Decision provider returned an invalid participation choice');
   }
+  if (value.confidence !== undefined && (typeof value.confidence !== 'number'
+    || !Number.isFinite(value.confidence) || value.confidence < 0 || value.confidence > 1)) {
+    throw new DecisionError('ATTENTION_INVALID_RESPONSE', 'Decision provider returned invalid confidence');
+  }
   if (value.probabilities !== undefined) {
     const probabilities = value.probabilities;
     if (!probabilities || Object.keys(probabilities).length !== actions.length
@@ -71,23 +75,22 @@ export const turnQuestion = Object.freeze({ type: 'choice', name: 'turn_taking',
     { value: 'REPLY', description: '消息已完整：before 时现在开始回答；during 时等当前回答结束后单独回答。' },
   ] });
 
-/** Official Decisions protocol; intentionally separate from DSH chat providers. */
-export function createOpenAIDecisionProvider({ apiKey, endpoint, model, fetchImpl = fetch, timeoutMs = 5000 } = {}) {
-  ({ endpoint, model } = decisionProviderConfiguration({ endpoint, model }));
+/** One bounded HTTP request for the dedicated decision protocols, without retries or chat Sessions. */
+function createHttpDecisionProvider({ id, apiKey, endpoint, model, encode, decode, fetchImpl = fetch, timeoutMs = 5000 }) {
   const key = typeof apiKey === 'string' ? apiKey.trim() : '';
-  let health = { health: key ? 'unknown' : 'unconfigured', lastErrorCode: null, lastSuccessAt: null };
+  const configured = Boolean(key && endpoint);
+  let health = { health: configured ? 'unknown' : 'unconfigured', lastErrorCode: null, lastSuccessAt: null };
   return {
-    id: 'openai-decisions', model, configured: Boolean(key),
+    id, model, configured,
     health: () => ({ ...health }),
     async decide(input, { signal, question = attentionQuestion } = {}) {
       const actions = question.choices.map(choice => choice.value);
-      if (!key) throw new DecisionError('ATTENTION_PROVIDER_UNCONFIGURED', 'Decision provider has no credential');
+      if (!configured) throw new DecisionError('ATTENTION_PROVIDER_UNCONFIGURED', 'Decision provider is not configured');
       const deadline = AbortSignal.timeout(timeoutMs);
       try {
         const response = await fetchImpl(endpoint, {
           method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify({ model, input: JSON.stringify(input), questions: [question],
-            prompt_cache_options: { mode: 'explicit' } }),
+          body: JSON.stringify(encode(input, question)),
           signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
         });
         // Do not forward service error text: a proxy may echo credentials.
@@ -95,18 +98,7 @@ export function createOpenAIDecisionProvider({ apiKey, endpoint, model, fetchImp
         let body;
         try { body = await response.json(); }
         catch { throw new DecisionError('ATTENTION_INVALID_RESPONSE', 'Decision service returned unreadable JSON'); }
-        const answer = body.answers?.find(answer => answer.name === question.name);
-        if (answer?.type === 'refusal') throw new DecisionError('ATTENTION_REFUSAL', 'Decision service declined this question');
-        if (body.model !== model || answer?.type !== 'choice'
-          || !Array.isArray(answer.probabilities) || answer.probabilities.length !== actions.length
-          || new Set(answer.probabilities.map(row => row.value)).size !== actions.length) {
-          throw new DecisionError('ATTENTION_INVALID_RESPONSE', 'Decision service returned an unexpected answer');
-        }
-        const result = validateDecision({ action: answer.choice,
-          probabilities: Object.fromEntries(answer.probabilities.map(row => [row.value, row.probability])),
-          confidence: answer.confidence, model: body.model,
-          usage: body.usage ? { input_tokens: body.usage.input_tokens, output_tokens: body.usage.output_tokens,
-            input_tokens_details: body.usage.input_tokens_details } : undefined }, actions);
+        const result = validateDecision(decode(body, question, actions), actions);
         health = { health: 'ok', lastErrorCode: null, lastSuccessAt: Date.now() };
         return result;
       } catch (error) {
@@ -118,6 +110,71 @@ export function createOpenAIDecisionProvider({ apiKey, endpoint, model, fetchImp
       }
     },
   };
+}
+
+const usageOf = body => body.usage && typeof body.usage === 'object' ? {
+  input_tokens: body.usage.input_tokens, output_tokens: body.usage.output_tokens,
+  ...(body.usage.input_tokens_details ? { input_tokens_details: body.usage.input_tokens_details } : {}),
+} : undefined;
+const invalidResponse = () => new DecisionError('ATTENTION_INVALID_RESPONSE', 'Decision service returned an unexpected answer');
+function checkAnswer(answer) {
+  if (answer?.type === 'refusal') throw new DecisionError('ATTENTION_REFUSAL', 'Decision service declined this question');
+  if (answer?.type !== 'choice') throw invalidResponse();
+}
+
+/** Official Decisions protocol; intentionally separate from DSH chat providers. */
+export function createOpenAIDecisionProvider({ endpoint, model, ...options } = {}) {
+  ({ endpoint, model } = decisionProviderConfiguration({ endpoint, model }));
+  return createHttpDecisionProvider({ ...options, id: 'openai-decisions', endpoint, model,
+    encode: (input, question) => ({ model, input: JSON.stringify(input), questions: [question], prompt_cache_options: { mode: 'explicit' } }),
+    decode(body, question, actions) {
+      if (!body || body.model !== model || !Array.isArray(body.answers)) throw invalidResponse();
+      const answers = body.answers.filter(answer => answer?.name === question.name);
+      if (answers.length !== 1) throw invalidResponse();
+      const [answer] = answers;
+      checkAnswer(answer);
+      if (!Array.isArray(answer.probabilities) || answer.probabilities.length !== actions.length
+        || new Set(answer.probabilities.map(row => row?.value)).size !== actions.length) throw invalidResponse();
+      return { action: answer.choice, probabilities: Object.fromEntries(answer.probabilities.map(row => [row.value, row.probability])),
+        confidence: answer.confidence, model: body.model, usage: usageOf(body) };
+    },
+  });
+}
+
+/** Jev and Clef share System One. Workers AI REST adds its success/result envelope. */
+export function createSystemOneDecisionProvider({ endpoint = 'https://api.typesafe.ai/v1/systemone', model = 'jev-1.14.0', cloudflare = false, ...options } = {}) {
+  if (endpoint) ({ endpoint, model } = decisionProviderConfiguration({ endpoint, model }));
+  return createHttpDecisionProvider({ ...options, id: cloudflare ? 'cloudflare-clef' : 'typesafe-jev', endpoint, model,
+    encode: (input, question) => ({ model, state: input, questions: {
+      [question.name]: { type: 'choice', instructions: question.instructions,
+        criteria: Object.fromEntries(question.choices.map(choice => [choice.value, choice.description])) },
+    } }),
+    decode(body, question) {
+      if (cloudflare) {
+        if (body?.success !== true || !body.result) throw new DecisionError('ATTENTION_SERVICE_ERROR', 'Workers AI did not return a successful result');
+        body = body.result;
+      }
+      const matchingModel = body?.model === model
+        || !cloudflare && ['jev-latest', 'jev-preview'].includes(model) && /^jev-\d+\.\d+\.\d+$/.test(body?.model)
+        || cloudflare && [`@cf/cloudflare/${model}`, `Cloudflare/${model}`].includes(body?.model);
+      if (!matchingModel || !body?.answers || Array.isArray(body.answers)
+        || !Object.hasOwn(body.answers, question.name)) throw invalidResponse();
+      const answer = body.answers[question.name];
+      checkAnswer(answer);
+      if (!answer.probabilities || Array.isArray(answer.probabilities)) throw invalidResponse();
+      return { action: answer.choice, probabilities: answer.probabilities, confidence: answer.confidence,
+        model: body.model, usage: usageOf(body) };
+    },
+  });
+}
+
+/** Options are resolved by decisionPresetConfiguration before reaching this small protocol switch. */
+export function createDecisionProvider({ preset = 'openai-decisions', accountId: ignored, ...options } = {}) {
+  if (preset === 'openai-decisions') return createOpenAIDecisionProvider(options);
+  if (preset === 'typesafe-jev' || preset === 'cloudflare-clef') {
+    return createSystemOneDecisionProvider({ ...options, cloudflare: preset === 'cloudflare-clef' });
+  }
+  throw new DecisionError('INVALID_DECISION_PRESET', 'Choose a supported decision service');
 }
 
 /** Explicit fixture provider: useful for replay/contracts, not semantic evidence. */

@@ -36,6 +36,23 @@ function Textarea({ className, ...props }) {
 		...props
 	});
 }
+function Select({ className, ...props }) {
+	return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("span", {
+		className: "ds-select-wrap",
+		children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("select", {
+			"data-slot": "select",
+			className: classes("ds-input ds-select", className),
+			...props
+		}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("svg", {
+			viewBox: "0 0 24 24",
+			fill: "none",
+			stroke: "currentColor",
+			strokeWidth: "2",
+			"aria-hidden": "true",
+			children: /* @__PURE__ */ (0, react_jsx_runtime.jsx)("path", { d: "m6 9 6 6 6-6" })
+		})]
+	});
+}
 /** A native checkbox, so it submits and resets with its form; styles.ts draws its checked state. */
 function Checkbox(props) {
 	return /* @__PURE__ */ (0, react_jsx_runtime.jsx)("input", {
@@ -667,9 +684,10 @@ var ERRORS = [
 	[/^ATTENTION_HTTP_40[13]$/, "decisionErrorKey"],
 	[/^ATTENTION_HTTP_404$/, "decisionErrorAddress"],
 	[/^ATTENTION_HTTP_429$/, "decisionErrorLimit"],
-	[/^ATTENTION_(INVALID_RESPONSE|REFUSAL)$/, "decisionErrorProtocol"],
+	[/^ATTENTION_(INVALID_RESPONSE|REFUSAL|SERVICE_ERROR)$/, "decisionErrorProtocol"],
 	[/^ATTENTION_(TIMEOUT|PROVIDER_ERROR)$/, "decisionErrorUnreachable"]
 ];
+var cloudflareEndpoint = (accountId, model) => /^[a-fA-F0-9]{32}$/.test(accountId) ? `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/cloudflare/${model}` : "";
 /**
 * The model that decides when Bots speak. Bots lose most of their conversational sense without it, so it has
 * its own panel: what it does, what is missing, and a form that checks the settings as it saves them.
@@ -681,10 +699,36 @@ function DecisionPanel({ connection, status, t }) {
 	const [saved, setSaved] = (0, react.useState)(null);
 	const [round, setRound] = (0, react.useState)(0);
 	const [enabled, setEnabled] = (0, react.useState)(status?.enabled !== false);
+	const [preset, setPreset] = (0, react.useState)("openai-decisions");
+	const [model, setModel] = (0, react.useState)("");
+	const [endpoint, setEndpoint] = (0, react.useState)("");
+	const [accountId, setAccountId] = (0, react.useState)("");
+	const [hasKey, setHasKey] = (0, react.useState)(false);
+	function selectPreset(selected) {
+		setPreset(selected.id);
+		setModel(selected.model);
+		setEndpoint(selected.endpoint);
+		setAccountId(selected.accountId ?? "");
+		setHasKey(selected.hasKey);
+		setSaved(null);
+		setError(null);
+	}
+	function readForm(value) {
+		setForm(value);
+		if (value) {
+			setEnabled(value.enabled);
+			selectPreset(value.presets.find((item) => item.id === value.preset) ?? {
+				...value,
+				id: value.preset,
+				name: "OpenAI Decisions",
+				models: []
+			});
+		}
+	}
 	(0, react.useEffect)(() => {
 		const controller = new AbortController();
 		connection.kernel("kernel-state", {}, controller).then((value) => {
-			if (!controller.signal.aborted) setForm(value.decisionForm);
+			if (!controller.signal.aborted) readForm(value.decisionForm);
 		}).catch((reason) => {
 			if (!controller.signal.aborted) setError(message(reason));
 		});
@@ -692,27 +736,37 @@ function DecisionPanel({ connection, status, t }) {
 	}, [connection]);
 	const state = decisionState(status);
 	const working = decisionWorks(status);
+	const selected = form?.presets.find((item) => item.id === preset);
+	const cloudflare = preset === "cloudflare-clef";
+	function changeModel(value) {
+		if (cloudflare && endpoint === cloudflareEndpoint(accountId, model)) setEndpoint(cloudflareEndpoint(accountId, value));
+		setModel(value);
+	}
+	function changeAccount(value) {
+		if (endpoint === cloudflareEndpoint(accountId, model)) setEndpoint(cloudflareEndpoint(value, model));
+		setAccountId(value);
+	}
 	const reason = status?.error ? t(ERRORS.find(([pattern]) => pattern.test(status.error))?.[1] ?? "decisionErrorOther", { code: status.error }) : null;
 	async function submit(event) {
 		event.preventDefault();
 		const fields = event.currentTarget.elements;
 		const field = (name) => fields.namedItem(name);
 		const apiKey = field("decisionApiKey").value.trim();
-		const model = field("decisionModel").value.trim();
-		const endpoint = field("decisionEndpoint").value.trim();
 		setBusy(true);
 		setError(null);
 		setSaved(null);
 		try {
 			const next = await connection.kernel("save-decision-provider", {
 				enabled,
+				preset,
 				...apiKey ? { apiKey } : {},
-				...model === (form?.model ?? "") ? {} : { model },
-				...endpoint === (form?.endpoint ?? "") ? {} : { endpoint }
+				...model === (selected?.model ?? "") ? {} : { model: model.trim() },
+				...endpoint === (selected?.endpoint ?? "") ? {} : { endpoint: endpoint.trim() },
+				...cloudflare && accountId !== (selected?.accountId ?? "") ? { accountId: accountId.trim() } : {}
 			});
 			const kernel = await connection.kernel("kernel-state");
 			await connection.refresh({ clearError: false });
-			setForm(kernel.decisionForm);
+			readForm(kernel.decisionForm);
 			setSaved(decisionState(next));
 			setRound((value) => value + 1);
 		} catch (reason) {
@@ -727,37 +781,106 @@ function DecisionPanel({ connection, status, t }) {
 		children: [
 			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: "dc-field",
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+						htmlFor: "decision-preset",
+						children: t("decisionService")
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)(Select, {
+						id: "decision-preset",
+						name: "decisionPreset",
+						value: preset,
+						disabled: busy || !form,
+						onChange: (event) => {
+							const next = form?.presets.find((item) => item.id === event.target.value);
+							if (next) selectPreset(next);
+						},
+						children: (form?.presets ?? []).map((item) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+							value: item.id,
+							children: item.name
+						}, item.id))
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: "dc-hint",
+						children: t("decisionServiceHelp")
+					})
+				]
+			}),
+			cloudflare && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: "dc-field",
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					className: "dc-field",
-					children: [t("decisionApiKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
-						name: "decisionApiKey",
-						type: "password",
-						autoComplete: "new-password",
-						required: enabled && form?.hasKey === false,
+					children: [t("decisionAccount"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
+						name: "decisionAccount",
+						value: accountId,
+						onChange: (event) => changeAccount(event.target.value.trim()),
+						required: enabled && !endpoint,
 						disabled: busy,
 						spellCheck: false,
 						autoCapitalize: "none"
 					})]
 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: "dc-hint",
-					children: t(form?.hasKey ? "decisionKeyHelp" : "decisionKeyNeeded")
+					children: t("decisionAccountHelp")
 				})]
 			}),
 			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: "dc-field",
 				children: [/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("label", {
 					className: "dc-field",
-					children: [t("decisionModelName"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
-						name: "decisionModel",
-						defaultValue: form?.model ?? "",
+					children: [t("decisionApiKey"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
+						name: "decisionApiKey",
+						type: "password",
+						autoComplete: "new-password",
+						required: enabled && !hasKey,
 						disabled: busy,
 						spellCheck: false,
 						autoCapitalize: "none"
 					})]
 				}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
 					className: "dc-hint",
-					children: t("decisionModelHelp")
+					children: t(hasKey ? "decisionKeyHelp" : "decisionKeyNeeded")
 				})]
+			}),
+			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
+				className: "dc-field",
+				children: [
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("label", {
+						htmlFor: "decision-model",
+						children: t("decisionModelName")
+					}),
+					cloudflare ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(Select, {
+						id: "decision-model",
+						name: "decisionModel",
+						value: model,
+						onChange: (event) => changeModel(event.target.value),
+						disabled: busy,
+						children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+							value: "clef",
+							children: "Clef"
+						}), /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", {
+							value: "clef-flash",
+							children: "Clef Flash"
+						})]
+					}) : /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
+						id: "decision-model",
+						name: "decisionModel",
+						value: model,
+						onChange: (event) => changeModel(event.target.value),
+						list: "decision-models",
+						disabled: busy,
+						spellCheck: false,
+						autoCapitalize: "none"
+					}),
+					!cloudflare && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("datalist", {
+						id: "decision-models",
+						children: selected?.models.map((value) => /* @__PURE__ */ (0, react_jsx_runtime.jsx)("option", { value }, value))
+					}),
+					/* @__PURE__ */ (0, react_jsx_runtime.jsx)("span", {
+						className: "dc-hint",
+						children: t("decisionModelHelp")
+					})
+				]
 			}),
 			/* @__PURE__ */ (0, react_jsx_runtime.jsxs)("div", {
 				className: "dc-field",
@@ -765,7 +888,8 @@ function DecisionPanel({ connection, status, t }) {
 					className: "dc-field",
 					children: [t("decisionEndpoint"), /* @__PURE__ */ (0, react_jsx_runtime.jsx)(Input, {
 						name: "decisionEndpoint",
-						defaultValue: form?.endpoint ?? "",
+						value: endpoint,
+						onChange: (event) => setEndpoint(event.target.value),
 						disabled: busy,
 						spellCheck: false,
 						autoCapitalize: "none"
@@ -794,7 +918,7 @@ function DecisionPanel({ connection, status, t }) {
 				})
 			})
 		]
-	}, `${form?.hasKey}\n${form?.model}\n${form?.endpoint}\n${round}`);
+	}, `${preset}\n${round}`);
 	return /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("section", {
 		className: "dc-panel dc-decision",
 		"aria-label": t("decisionTitle"),
@@ -1144,7 +1268,9 @@ var ERROR_KEYS = {
 	CONNECT_CODE_UNKNOWN: "connectKeyUnknown",
 	CONNECT_CODE_EXPIRED: "connectKeyExpired",
 	INVALID_DECISION_ENDPOINT: "decisionEndpointInvalid",
-	INVALID_DECISION_MODEL: "decisionModelInvalid"
+	INVALID_DECISION_MODEL: "decisionModelInvalid",
+	INVALID_DECISION_PRESET: "decisionPresetInvalid",
+	INVALID_DECISION_ACCOUNT: "decisionAccountInvalid"
 };
 /**
 * The page's one view of the DSH host route: it reads the connection status every five seconds while the page is
@@ -1330,6 +1456,10 @@ var localeNamespace = "dscord.connection";
 var zh = {
 	unknown: "未知",
 	decisionTitle: "决策模型",
+	decisionService: "服务预设",
+	decisionServiceHelp: "选择服务后自动填写默认模型和地址。每个服务分别保存凭据。",
+	decisionAccount: "Cloudflare 账户 ID",
+	decisionAccountHelp: "在 Cloudflare 的 Workers AI 页面复制账户 ID，服务地址会自动生成。",
 	decisionHelp: "Bot 靠它判断什么时候该开口。它和 Bot 回答用的模型是两回事，只保存在这台设备上，这台设备运行的 Bot 共用。",
 	decisionDoesJoin: "设为「自然参与」的 Bot 没被 @ 时，靠它判断该接话、等一等，还是继续听。",
 	decisionDoesTurns: "对方连发几条消息时，靠它判断是等对方说完、并进正在写的回答，还是分开回答。",
@@ -1339,16 +1469,16 @@ var zh = {
 	decisionFailed: "验证失败",
 	decisionUnchecked: "已配置，尚未验证",
 	decisionReady: "运行正常",
-	decisionSetup1: "准备一把决策服务的 API key，默认是 OpenAI 的 key。",
-	decisionSetup2: "填在下面。模型和服务地址已填好默认值，用别的服务时再改。",
-	decisionSetup3: "点「保存并验证」，这里会立刻问服务一次，告诉你能不能用。",
+	decisionSetup1: "选择服务，准备它的 API key；Cloudflare 使用 Workers AI API token。",
+	decisionSetup2: "填写凭据。默认模型和地址已填好，Cloudflare 还需要账户 ID。",
+	decisionSetup3: "点「保存并验证」，用两个合成小问题检查参与判断与接话接口，会产生模型请求。",
 	decisionApiKey: "决策模型 API key",
 	decisionKeyNeeded: "必填。只保存在这台设备，保存后不会再显示。",
-	decisionKeyHelp: "已保存一把 key，不会再显示。留空则继续用它，填写则替换。",
+	decisionKeyHelp: "这个服务已有凭据，不会再显示。留空保留，填写则替换。",
 	decisionModelName: "决策模型名",
 	decisionModelHelp: "决策服务里的模型名。清空后恢复默认。",
 	decisionEndpoint: "服务地址",
-	decisionEndpointHelp: "Decisions 接口的完整地址。清空后恢复默认。",
+	decisionEndpointHelp: "所选服务的完整接口地址。清空后恢复默认，Cloudflare 根据账户生成。",
 	enableDecision: "启用决策模型",
 	saveDecision: "保存并验证",
 	decisionSaving: "正在验证…",
@@ -1360,11 +1490,13 @@ var zh = {
 	decisionErrorKey: "服务拒绝了这把 key（{code}）。检查 key 有没有填对、能不能用这个模型。",
 	decisionErrorAddress: "服务地址不对，或服务里没有这个模型（{code}）。",
 	decisionErrorLimit: "服务说请求太多或额度用完了（{code}）。稍后再点一次「保存并验证」。",
-	decisionErrorProtocol: "服务有回应，但不是决策模型该有的回答（{code}）。检查地址是不是 Decisions 接口、模型名是否一致。",
+	decisionErrorProtocol: "服务有回应，但格式或模型与所选服务不符（{code}）。检查服务预设、地址和模型名。",
 	decisionErrorUnreachable: "连不上服务或等待超时（{code}）。检查网络和服务地址。",
 	decisionErrorOther: "服务没有正常回答（{code}）。",
 	decisionEndpointInvalid: "服务地址要以 http:// 或 https:// 开头，不能带账号密码或 # 片段。",
 	decisionModelInvalid: "模型名不能为空，也不能有空格。",
+	decisionPresetInvalid: "请选择支持的决策服务。",
+	decisionAccountInvalid: "Cloudflare 账户 ID 应为 32 位十六进制字符，也可以填写完整的 Workers AI 服务地址。",
 	kernelConflict: "这台设备正在运行旧的 Bot 内核。请先停用旧插件，按迁移说明启用 DSCord。",
 	model: "模型",
 	title: "DSCord",
@@ -1443,6 +1575,10 @@ var zh = {
 var en = {
 	unknown: "Unknown",
 	decisionTitle: "Decision model",
+	decisionService: "Service preset",
+	decisionServiceHelp: "Choosing a service fills in its default model and address. Credentials are saved separately for each service.",
+	decisionAccount: "Cloudflare Account ID",
+	decisionAccountHelp: "Copy your Account ID from Workers AI in Cloudflare. The service address is filled in automatically.",
 	decisionHelp: "Bots use it to judge when to speak. It is separate from the model a Bot answers with, is kept only on this device, and is shared by the Bots this device runs.",
 	decisionDoesJoin: "A Bot set to “Join naturally” uses it, when nobody mentions the Bot, to decide whether to join in, wait, or keep listening.",
 	decisionDoesTurns: "When someone sends several messages in a row, it decides whether to wait for the rest, fold them into the answer being written, or answer each one.",
@@ -1452,16 +1588,16 @@ var en = {
 	decisionFailed: "Check failed",
 	decisionUnchecked: "Set up, not checked yet",
 	decisionReady: "Working",
-	decisionSetup1: "Get an API key for the decision service. By default that is an OpenAI key.",
-	decisionSetup2: "Enter it below. The model and address are filled in with the defaults; change them only for another service.",
-	decisionSetup3: "Choose “Save and check”. The service is asked once right away, and this panel says whether it works.",
+	decisionSetup1: "Choose a service and get its API key. Cloudflare uses a Workers AI API token.",
+	decisionSetup2: "Enter the credential below. The default model and address are filled in; Cloudflare also needs an Account ID.",
+	decisionSetup3: "Choose “Save and check”. Two small synthetic questions check participation and turn-taking. This sends model requests.",
 	decisionApiKey: "Decision model API key",
 	decisionKeyNeeded: "Required. Stored only on this device and never shown again.",
-	decisionKeyHelp: "A key is saved and is never shown again. Leave this blank to keep it, or enter a new one to replace it.",
+	decisionKeyHelp: "This service has a saved credential, which is never shown again. Leave this blank to keep it, or enter a replacement.",
 	decisionModelName: "Decision model name",
 	decisionModelHelp: "The model’s name at the decision service. Clear it to return to the default.",
 	decisionEndpoint: "Service address",
-	decisionEndpointHelp: "The full address of the Decisions endpoint. Clear it to return to the default.",
+	decisionEndpointHelp: "The full endpoint for the selected service. Clear it to use the default; Cloudflare builds it from your account.",
 	enableDecision: "Use the decision model",
 	saveDecision: "Save and check",
 	decisionSaving: "Checking…",
@@ -1473,11 +1609,13 @@ var en = {
 	decisionErrorKey: "The service refused this key ({code}). Check the key and that it may use this model.",
 	decisionErrorAddress: "The address is wrong, or the service does not have this model ({code}).",
 	decisionErrorLimit: "The service says there are too many requests or the quota is used up ({code}). Choose “Save and check” again later.",
-	decisionErrorProtocol: "The service answered, but not the way a decision model does ({code}). Check that the address is a Decisions endpoint and the model name matches.",
+	decisionErrorProtocol: "The service answered, but its format or model does not match the selected service ({code}). Check the preset, address, and model.",
 	decisionErrorUnreachable: "The service could not be reached or took too long ({code}). Check the network and the address.",
 	decisionErrorOther: "The service did not answer properly ({code}).",
 	decisionEndpointInvalid: "The address must start with http:// or https:// and carry no credentials or # fragment.",
 	decisionModelInvalid: "The model name cannot be empty or contain spaces.",
+	decisionPresetInvalid: "Choose a supported decision service.",
+	decisionAccountInvalid: "Use a 32-character hexadecimal Cloudflare Account ID, or enter a complete Workers AI endpoint.",
 	kernelConflict: "An older Bot kernel is running on this device. Stop its plugin and follow the migration instructions to enable DSCord.",
 	model: "Model",
 	title: "DSCord",

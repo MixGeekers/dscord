@@ -56,7 +56,7 @@ export class NativeConnections {
     return this.decisionSettings?.publicStatus() || { configured: false, available: false, enabled: true, model: 'gpt-6-luna', health: 'unconfigured' };
   }
 
-  /** Saving asks the service one question, so the answer says whether the settings work. */
+  /** Saving checks both participation and turn-taking before reporting the service's health. */
   async saveDecisionProvider(settings) {
     if (!this.decisionSettings) throw new Error('DECISION_SETTINGS_UNAVAILABLE');
     await this.decisionSettings.save(settings);
