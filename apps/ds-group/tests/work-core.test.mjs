@@ -157,11 +157,15 @@ test('slots queue extra work, cancel stops a worker without a result message, an
   assert.deepEqual([view.workers[0].doing.tool, view.workers[0].doing.target], ['bash', 'ls outputs']); assert.deepEqual(view.queue, []);
 });
 
-test('timeouts stop the worker and report failure; restarts turn open work into unknown results', async t => {
+test('timeouts stop the worker and report failure; restarts turn open work into unknown results', { timeout: 10_000 }, async t => {
   const f = await fixture(t, { timeoutMs: 20 });
+  const delivered = Promise.withResolvers();
+  const seat = f.core.seat(f.id);
+  const recordResult = seat.onResult;
+  seat.onResult = async (...args) => { await recordResult(...args); delivered.resolve(); };
   await f.core.serveFront(f.agentFor('front'));
   await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: 'slow', brief: 's' });
-  await new Promise(resolve => setTimeout(resolve, 60));
+  await delivered.promise;
   assert.equal(f.results[0].task.status, 'failed'); assert.equal(f.agentFor('worker-1').cancelled, 1);
   const directory = path.join(f.directory, 'restarted');
   await mkdir(directory);
