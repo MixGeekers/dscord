@@ -14,6 +14,7 @@ import {
   AlertCircle,
   CheckCircle2,
   Globe,
+  Download,
 } from "lucide-react";
 import { useLocale } from "./locale";
 import { Button, Input, NativeSelect } from "../../ui/controls";
@@ -32,6 +33,7 @@ import { useAdmin } from "./useAdmin";
 import type { AdminState } from "./useAdmin";
 import type { Application, ManagementSession, Policy } from "./types";
 import { Loading } from "../../ui/loading";
+import UpdatesPanel from "./UpdatesPanel";
 
 const sections = [
   "overview",
@@ -42,6 +44,7 @@ const sections = [
   "directory",
   "storage",
   "deployment",
+  "serverUpdates",
   "administrators",
   "audit",
 ] as const;
@@ -55,6 +58,7 @@ const icons = {
   directory: Globe,
   storage: HardDrive,
   deployment: Settings,
+  serverUpdates: Download,
   administrators: ShieldCheck,
   audit: ScrollText,
 };
@@ -412,6 +416,7 @@ function Workspace({ admin }: { admin: AdminState }) {
         {section === "directory" && <DirectoryPanel admin={admin} />}
         {section === "storage" && <StoragePanel admin={admin} />}
         {section === "deployment" && <DeploymentPanel admin={admin} />}
+        {section === "serverUpdates" && <UpdatesPanel admin={admin} />}
         {section === "administrators" && <AdministratorsPanel admin={admin} />}
         {section === "audit" && <AuditPanel admin={admin} />}
       </main>

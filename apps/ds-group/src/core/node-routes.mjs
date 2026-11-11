@@ -44,10 +44,13 @@ export function nodeRoutes(router, app) {
       engine: input.engine || 'DSCord node', heartbeatAt: Date.now(), kernel: publicKernelSummary(input.kernel),
       protocol: typeof input.protocol === 'string' ? input.protocol : null,
       kernelVersion: typeof input.kernelVersion === 'string' ? input.kernelVersion.slice(0, 64) : null,
+      maintenanceId: typeof input.maintenanceId === 'string' ? input.maintenanceId.slice(0, 64) : null,
+      maintenanceBusy: input.maintenanceBusy !== false,
+      pendingUpdates: Number.isSafeInteger(input.pendingUpdates) ? input.pendingUpdates : 0,
       kernelControl: input.kernelControl?.version === 1 ? { version: 1 } : null });
     kernelControl.observeNode(input.botId);
     chatFeatures.touchPresence(input.botId, { status: input.status === 'offline' ? 'offline' : 'online' });
-    send(200, { accepted: true });
+    send(200, { accepted: true, maintenance: await app.updateMaintenance?.() || null });
   });
 }
 
