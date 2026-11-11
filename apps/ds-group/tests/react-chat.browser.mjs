@@ -56,6 +56,10 @@ const html = `<!doctype html>
           setLimits(value);
           return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
         };
+        window.replyTo = target => {
+          setReply(target);
+          setReplyMention(true);
+        };
         window.switchRoom = index => {
           setReply(null);
           setPending(null);
@@ -316,6 +320,69 @@ try {
     element.scrollHeight <= element.clientHeight + 1), true);
   await page.locator('#composer-box').screenshot({ path: path.join(screenshotDirectory, 'upload-long-mobile-dark-zh.png') });
   checks.push('uploadCardsShowIndeterminateProgressRetryCancelReadyRemoveAndMobileLongName');
+
+  const removeAttachment = page.getByRole('button', { name: /^移除附件 / });
+  while (await removeAttachment.count()) await removeAttachment.first().click();
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.evaluate(() => window.replyTo({
+    eventId: '$long-reply',
+    senderName: '雨雨大肥鱼',
+    body: '哦——原来是给我自己控制的啊。那我可就自己扛着它、自己溜上岸去看你们了，到时候可别嫌我敲你家门敲得太勤，**我会带鱼干**。',
+  }));
+  await page.locator('#reply-preview-name').filter({ hasText: '雨雨大肥鱼' }).waitFor();
+  const replyBar = page.locator('#reply-preview');
+  const oneLine = async () => replyBar.evaluate(bar => {
+    const label = bar.querySelector('.reply-label').getBoundingClientRect();
+    const body = bar.querySelector('#reply-preview-body');
+    return {
+      barHeight: bar.getBoundingClientRect().height,
+      labelOneLine: label.height < 24 && label.width > label.height * 2,
+      bodyTruncated: body.scrollWidth > body.clientWidth,
+      sameRow: [...bar.querySelectorAll('.reply-label, #reply-preview-name, #reply-mention-toggle, #clear-reply')]
+        .map(element => element.getBoundingClientRect())
+        .every((rect, _, all) => Math.abs((rect.top + rect.bottom) / 2 - (all[0].top + all[0].bottom) / 2) < 2),
+    };
+  });
+  const shot = async name => {
+    await page.mouse.move(0, 0);
+    await page.waitForTimeout(250);
+    const box = await page.locator('.composer-area').boundingBox();
+    await page.screenshot({
+      path: path.join(replyShots, name),
+      clip: { x: 0, y: Math.max(0, box.y - 72), width: page.viewportSize().width, height: box.height + 72 },
+    });
+  };
+  const replyShots = path.join(packageRoot, '.local', 'reply-bar');
+  await mkdir(replyShots, { recursive: true });
+  for (const theme of ['dark', 'light']) {
+    await page.evaluate(value => window.DSGroupTheme.setPreference(value), theme);
+    await page.locator('#reply-mention-toggle').filter({ hasText: '@ 开启' }).waitFor();
+    const layout = await oneLine();
+    assert.ok(layout.barHeight <= 40, `reply bar height ${layout.barHeight}`);
+    assert.deepEqual([layout.labelOneLine, layout.bodyTruncated, layout.sameRow], [true, true, true]);
+    await shot(`reply-${theme}-zh.png`);
+  }
+  await page.locator('#reply-mention-toggle').click();
+  await page.locator('#reply-mention-toggle').filter({ hasText: '@ 关闭' }).waitFor();
+  assert.equal(await page.locator('#reply-mention-toggle').getAttribute('title'), '不会提醒 雨雨大肥鱼，点击开启');
+  await shot('reply-mention-off-light-zh.png');
+  await page.setViewportSize({ width: 390, height: 844 });
+  const mobile = await oneLine();
+  assert.ok(mobile.barHeight <= 40, `mobile reply bar height ${mobile.barHeight}`);
+  assert.deepEqual([mobile.labelOneLine, mobile.sameRow], [true, true]);
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await shot('reply-mobile-light-zh.png');
+  await page.evaluate(async () => {
+    (await import('/i18n.js')).setLocalePreference('en');
+    window.DSGroupTheme.setPreference('dark');
+  });
+  await page.setViewportSize({ width: 900, height: 720 });
+  await page.locator('.reply-label').filter({ hasText: 'Replying to' }).waitFor();
+  assert.deepEqual(await oneLine().then(value => value.sameRow), true);
+  await shot('reply-mention-off-dark-en.png');
+  await page.locator('#clear-reply').click();
+  await replyBar.waitFor({ state: 'hidden' });
+  checks.push('replyBarStaysOneLineWithMentionToggleAndClose');
 
   assert.deepEqual(pageErrors, []);
   assert.deepEqual(await page.evaluate(() => window.errors), []);
