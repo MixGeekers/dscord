@@ -105,6 +105,7 @@ try {
     await page.keyboard.press("ArrowDown");
     await popup.waitFor();
     await popup.locator('.ds-select-item[data-highlighted][data-value="deepseek-chat"]').waitFor();
+    await page.waitForFunction(() => document.activeElement?.getAttribute("data-value") === "deepseek-chat");
     await page.keyboard.press("ArrowDown");
     await popup.locator('.ds-select-item[data-highlighted][data-value="deepseek-reasoner"]').waitFor();
     await page.keyboard.press("Enter");
