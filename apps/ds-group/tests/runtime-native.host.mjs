@@ -30,8 +30,13 @@ const provider = createServer(async (request, response) => {
     assert.equal(request.url, '/v1/chat/completions'); assert.equal(input.model, 'chat');
     const memory = JSON.stringify(input.messages).includes('Maintain this Bot\u0027s durable source-aware memories');
     providerCalls.push({ kind: memory ? 'memory' : 'generation', tools: input.tools?.map(tool => tool.function.name) || [] });
-    if (!memory) for (const tool of ['create_bot', 'message_bot', 'remember', 'recall']) {
-      assert.ok(providerCalls.at(-1).tools.includes(tool), `Native tool ${tool} was filtered out`);
+    if (!memory) {
+      for (const tool of ['dispatch_work', 'ask_bot', 'read_room', 'remember', 'recall']) {
+        assert.ok(providerCalls.at(-1).tools.includes(tool), `Front tool ${tool} was filtered out`);
+      }
+      for (const tool of ['create_bot', 'message_bot', 'read_group_chat', 'read_own_chat']) {
+        assert.ok(!providerCalls.at(-1).tools.includes(tool), `Native team tool ${tool} leaked into the DSCord front`);
+      }
     }
     const text = memory ? '{"changes":[]}' : 'Native response from the owned kernel.';
     const chunk = delta => ({ id: `scripted-${providerCalls.length}`, object: 'chat.completion.chunk', created: 1, model: input.model,
@@ -120,7 +125,7 @@ try {
   const input = turnInput(one.botId, 'native-once'), receipt = await finish(input);
   assert.equal(receipt.text, 'Native response from the owned kernel.'); assert.equal(receipt.mode, 'native');
   assert.equal(receipt.usage.complete, false); assert.equal(ledgerCalls.length, 0);
-  report.checks.push('nativeRequestRunsWithOriginalToolsAndIndependentUsage');
+  report.checks.push('nativeFrontUsesCollaborationAndMemoryToolsWithIndependentUsage');
   assert.equal(receipt.calls.length, 1); assert.equal(receipt.usage.observedCalls, 1);
   for (let n = 0; n < 80 && !providerCalls.some(call => call.kind === 'memory'); n++) await sleep(100);
   assert.ok(providerCalls.some(call => call.kind === 'memory'), 'Native automatic memory review did not reach its provider');
