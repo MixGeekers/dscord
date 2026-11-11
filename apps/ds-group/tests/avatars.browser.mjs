@@ -101,6 +101,16 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   await page.screenshot({ path: path.join(output, 'crop-mobile.png'), fullPage: true });
   check('light mode and mobile crop fit the viewport');
+  await page.locator('main').evaluate(element => { element.style.padding = '80px'; });
+  const narrow = await stage.boundingBox();
+  assert.ok(narrow.width < 240 && Math.abs(narrow.width - narrow.height) < 1, JSON.stringify(narrow));
+  await page.waitForFunction(() => {
+    const stage = document.querySelector('.avatar-crop-stage');
+    const picture = stage.querySelector('img');
+    return Math.abs(parseFloat(picture.style.height) - stage.clientWidth) < 1;
+  });
+  check('nested narrow containers keep the crop square and scale the image to the actual viewport');
+  await page.locator('main').evaluate(element => { element.style.padding = '24px'; });
   await page.evaluate(() => { localStorage.setItem('ds-group.language', 'zh-CN'); window.dispatchEvent(new StorageEvent('storage', { key: 'ds-group.language', newValue: 'zh-CN' })); });
   await page.getByRole('button', { name: '保存头像', exact: true }).waitFor();
   check('Chinese labels follow the account language');
