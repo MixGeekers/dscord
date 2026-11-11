@@ -1,24 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { nativeMessage } from '../src/message-context.mjs';
 import { projectNativeRequestMessage, withoutNativeMemoryViews } from '../src/native-request.mjs';
 import { legacyNativeRequest, requestEnvelope } from './fixtures/legacy-native-request.mjs';
 
-test('new native requests keep human wording and attention controls while current views stay outside the envelope', () => {
-  const old = legacyNativeRequest({ body: 'Please preserve my literal "memoryView": {"note":"human text"}.' });
-  const envelope = requestEnvelope(old);
-  const input = { requestId: envelope.requestId, botId: envelope.self.matrixId, event: envelope.currentMessage,
-    context: envelope.context, history: envelope.recentRoomHistory, memoryView: envelope.memoryView };
-  const bytes = JSON.stringify(input);
-  const text = nativeMessage({ input, bot: { id: 'a', name: 'Bot' }, files: { workdir: '/synthetic/attachments', files: [] } });
-  const result = JSON.parse(text.split('\n').at(-1));
-  assert.equal(Object.hasOwn(result, 'memoryView'), false); assert.equal(Object.hasOwn(result.context.attention, 'memoryView'), false);
-  assert.equal(result.context.attention.participationOnly, false);
-  assert.deepEqual(result.currentMessage, envelope.currentMessage); assert.deepEqual(result.recentRoomHistory, envelope.recentRoomHistory);
-  assert.deepEqual(result.context.source, envelope.context.source); assert.deepEqual(result.replyRoute, envelope.replyRoute);
-  assert.equal(JSON.stringify(input), bytes);
-});
-
+// What a front turn reads today is covered by front-prompt.test.mjs; these are the envelopes older Sessions still hold.
 test('a verified historical envelope projects only its derived views, preserving message ID, source, files and human body', () => {
   const original = legacyNativeRequest({ body: 'A quoted DSCORD_REQUEST=x and "memoryView": {"keep":true} are my own words.' });
   original.content.push({ type: 'text', text: 'Separate content block.' });
@@ -42,20 +27,4 @@ test('markers, quoted envelopes and mismatched source identities never authorize
     m => { m.content[0].text = 'Human quotation:\n' + m.content[0].text; },
     m => { const envelope = requestEnvelope(m); envelope.replyRoute.roomId = '!different:test'; m.content[0].text = m.content[0].text.split('\n').slice(0,-1).join('\n') + '\n' + JSON.stringify(envelope); },
   ]) { const message = structuredClone(original); mutate(message); assert.equal(projectNativeRequestMessage(message), message); }
-});
-
-test('a turn on another Bot\'s result is told its reply goes to the original requester, not to that Bot', () => {
-  const input = { requestId: 'req-g21', botId: '@publicity:b.test', context: undefined, history: [],
-    event: { eventId: '$planner-result', roomId: '!direct:b.test', senderId: '@planner:a.test', senderName: '策划', senderKind: 'bot',
-      kind: 'task.result', body: '（策划 交回的结果）角色名需要林确认。', originSenderId: '@tang:b.test', originRoomId: '!r2:b.test', originEventId: '$g21' } };
-  const text = nativeMessage({ input, bot: { id: 'a', name: '宣发' }, files: { workdir: '/synthetic/attachments', files: [] } });
-  const envelope = JSON.parse(text.split('\n').at(-1));
-  assert.deepEqual(envelope.replyGoesTo, { senderId: '@tang:b.test', roomId: '!r2:b.test', eventId: '$g21' });
-  assert.equal(envelope.replyRoute.eventId, '$planner-result');
-  assert.match(text, /不对交回结果的 Bot 道谢/);
-  assert.doesNotMatch(text, /直接回答当前发送者/);
-  const human = nativeMessage({ input: { ...input, event: { ...input.event, senderKind: 'human', kind: undefined, originEventId: undefined } },
-    bot: { id: 'a', name: '宣发' }, files: { workdir: '/synthetic/attachments', files: [] } });
-  assert.match(human, /直接回答当前发送者/);
-  assert.equal(Object.hasOwn(JSON.parse(human.split('\n').at(-1)), 'replyGoesTo'), false);
 });

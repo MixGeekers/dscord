@@ -2,6 +2,7 @@ import path from 'node:path';
 import { mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { MAX_ASK_DEPTH } from '../src/contact-book.mjs';
+import { FRONT_RULES } from '../src/front-prompt.mjs';
 import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
 import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-plugin/work-files.mjs';
 
@@ -84,6 +85,8 @@ const internalsIn = text => INTERNALS.filter(([, pattern]) => pattern.test(text)
 const OMISSION = /取舍|没有?写[入进]|未写[入进]|(?:删掉|删去|去掉|省略|筛掉|过滤掉|略去)了|不对外/;
 const TEXT_FILE = /\.(?:md|txt|log|csv|json|html?)$/i;
 const coreOf = matrixId => [...cores.values()].find(core => core.seats.has(matrixId));
+/** How a Bot this DSH serves to DSCord works, in place of the native team rules: its own Sessions are its front. */
+export const frontRules = nativeBotId => cores.has(nativeBotId) ? FRONT_RULES : undefined;
 /** A Bot in this DSH by any of its chat-server accounts, with its name. */
 export const localBot = matrixId => {
   const core = coreOf(matrixId);
@@ -156,6 +159,13 @@ export class WorkCore {
     await this.save();
     this.disposeGuard = this.ctx.tools?.guard?.(exec => this.guard(exec));
     this.disposeEvents = this.ctx.on?.('session/event', (session, event) => this.event(session, event));
+    // A Session is shown only the tools it may use: the schema of a tool it would be refused is sent with every
+    // model call, and costs a step each time the model tries it. The rewritten request starts over, ahead of the
+    // usage observers, so each call is still counted once.
+    this.disposeTools = this.ctx.on?.('llm/stream', (options, next) => {
+      const tools = options.tools?.filter(tool => !this.refusal(options.sessionId, tool.name));
+      return tools && tools.length < options.tools.length ? this.ctx.llm.stream({ ...options, tools }) : next();
+    }, { prepend: true });
     cores.set(this.nativeBotId, this);
     return this;
   }
@@ -189,14 +199,22 @@ export class WorkCore {
   /** Whether a session is one of this Bot's running workers, whose events the core handles. */
   ownsSession(sessionId) { return Boolean(this.workerTask(sessionId)); }
 
-  guard(exec) {
-    const id = exec.agent?.session?.id ?? exec.agent?.id;
-    const served = this.frontSessions.has(id) || this.workerTask(id);
-    if (served && CARD_TOOLS.has(exec.name)) return CARD_REFUSAL;
-    if (served && NATIVE_TEAM_TOOLS.has(exec.name)) return NATIVE_TEAM_REFUSAL;
-    if (this.frontSessions.has(id) && !FRONT_TOOLS.has(exec.name)) return FRONT_REFUSAL;
-    if (this.workerTask(id) && WORKER_DENY.has(exec.name)) return '工作者只做事并用 work_report 汇报，不直接对外说话或改团队设置。';
+  /** Why this Bot's front or one of its workers may not use a tool; nothing for a tool it may use, or for any other Session. */
+  refusal(sessionId, name) {
+    if (!sessionId) return undefined;
+    const front = this.frontSessions.has(sessionId);
+    const worker = !front && this.ownsSession(sessionId);
+    if (!front && !worker) return undefined;
+    if (CARD_TOOLS.has(name)) return CARD_REFUSAL;
+    if (NATIVE_TEAM_TOOLS.has(name)) return NATIVE_TEAM_REFUSAL;
+    if (front && !FRONT_TOOLS.has(name)) return FRONT_REFUSAL;
+    if (worker && WORKER_DENY.has(name)) return '工作者只做事并用 work_report 汇报，不直接对外说话或改团队设置。';
     return undefined;
+  }
+
+  /** The model is not shown a refused tool, but an earlier turn may have used its name: a call is still refused. */
+  guard(exec) {
+    return this.refusal(exec.agent?.session?.id ?? exec.agent?.id, exec.name);
   }
 
   /** Make the Bot's current native Session a front: front tools in, work tools out. */
@@ -691,6 +709,28 @@ export class WorkCore {
     return this.save();
   }
 
+  /**
+   * What the front Session has read: its code for each person and, per room, the messages it was shown. One
+   * record for the Bot, whichever chat server a turn came from: a code names the same account in all of them.
+   */
+  readingOf(sessionId) {
+    return this.state.reading?.sessionId === sessionId ? this.state.reading : undefined;
+  }
+
+  /** The Session holds a turn: what that turn showed it is read. */
+  read(reading) {
+    this.state.reading = reading;
+    return this.save();
+  }
+
+  /** A condensed Session no longer holds its room messages word for word: it reads each room again. People keep their codes. */
+  async condensed(sessionId) {
+    const reading = this.readingOf(sessionId);
+    if (!reading) return;
+    reading.rooms = {};
+    await this.save();
+  }
+
   /** Delivered results the front has not seen yet; they are cleared once a turn carries them. */
   takeNotes() {
     const notes = this.state.frontNotes;
@@ -703,6 +743,7 @@ export class WorkCore {
     this.timers.clear();
     this.disposeGuard?.();
     this.disposeEvents?.();
+    this.disposeTools?.();
     if (cores.get(this.nativeBotId) === this) cores.delete(this.nativeBotId);
   }
 }

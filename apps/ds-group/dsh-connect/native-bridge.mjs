@@ -4,7 +4,8 @@ import { mkdir } from 'node:fs/promises';
 import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
 import { prepareWorkFiles } from '../dsh-plugin/work-files.mjs';
 import { WorkCore } from './work-core.mjs';
-import { nativeMessage, observedMemoryInput } from '../src/message-context.mjs';
+import { observedMemoryInput } from '../src/message-context.mjs';
+import { frontMessage, requestMarker } from '../src/front-prompt.mjs';
 import { HANDOFF_ACK } from '../vendor/ds-bot/src/host/constants.js';
 import { isModelQuotaFailure } from '../src/model-failure.mjs';
 
@@ -28,8 +29,8 @@ async function interruptible(operation, signal) {
 
 /** The Matrix binding and its native kernel Bot share one durable identity. */
 export class NativeBridge {
-  constructor({ ctx, native, node, botDirectory, timeoutMs = 0 }) {
-    Object.assign(this, { ctx, native, node, botDirectory, timeoutMs });
+  constructor({ ctx, native, node, botDirectory, timeoutMs = 0, historyTokens }) {
+    Object.assign(this, { ctx, native, node, botDirectory, timeoutMs, historyTokens });
     this.filename = path.join(node.directory, 'native-bridge.json');
     this.pending = new Map();
     this.jobs = new Map();
@@ -161,6 +162,12 @@ export class NativeBridge {
 
   async event(session, event) {
     if (this.core.ownsSession(session.id)) return;
+    // A Session the host has condensed no longer holds the room messages it was shown word for word:
+    // its next turn in each room reads the recent messages again.
+    if (event.type === 'compaction/summary') {
+      if (this.run?.reading?.sessionId === session.id) this.run.reading.rooms = {};
+      await this.core.condensed(session.id).catch(() => {});
+    }
     const run = this.run;
     if (!run) return;
     const message = event.data?.message || event.data;
@@ -174,12 +181,15 @@ export class NativeBridge {
     }
     if (event.type === 'turn/start') run.currentTurn = event.data.turn;
     if (event.type === 'user/message') {
-      if (textOf(message).startsWith(`${run.marker}\n`)
-        || run.partContinuation && source?.handoff === true && source.resume === true) {
+      const own = textOf(message).startsWith(`${run.marker}\n`);
+      if (own || run.partContinuation && source?.handoff === true && source.resume === true) {
         run.seen = true;
         run.turn = run.currentTurn;
         run.partContinuation = false;
       }
+      // The Session now holds this turn. A turn that moved on to another part was written for the part before it,
+      // so that part's reading is not this one's.
+      if (own && run.reading?.sessionId === session.id) await this.core.read(run.reading).catch(() => {});
     }
     if (!run.seen) return;
     if (event.data?.turn !== undefined && event.data.turn !== run.turn) return;
@@ -347,7 +357,7 @@ export class NativeBridge {
         files: files.files.map(file => file.path) };
       let resolve;
       const done = new Promise(done => { resolve = done; });
-      const marker = `DSCORD_REQUEST=${input.requestId}`;
+      const marker = requestMarker(input.requestId);
       const run = this.run = { marker, resolve, record, text: '', sender: input.event.senderName || input.event.senderId };
       Object.assign(record, { status: 'running', stage: 'working', sessionId: bot.sessionId, model: bot.model,
         contextKey: input.context?.key, source: input.context?.source,
@@ -357,15 +367,15 @@ export class NativeBridge {
       if (this.timeoutMs > 0) timer = setTimeout(() => { run.error = 'NATIVE_TASK_TIMEOUT'; resolve(); }, this.timeoutMs);
       abort = () => { run.error = interruption(signal).code; resolve(); };
       signal?.addEventListener('abort', abort, { once: true });
+      // The memory keeps the whole request; the Session reads the front's view of it.
       if (!workerTask) await interruptible(() => this.native.call('observe', { botId: bot.id, inputs: [input] }), signal);
-      const memoryView = await interruptible(() => this.native.call('attention-view', { botId: bot.id,
-        options: { sessionId: bot.sessionId, roomId: input.event.roomId,
-          context: { roomId: input.event.roomId, authorId: input.event.senderId },
-          eventIds: [input.event.eventId], query: input.event.body, budgetChars: 8000 } }), signal);
       check();
       const workResults = this.core.takeNotes();
-      const text = nativeMessage({ input: { ...input, memoryView, workResults }, bot, files });
-      await this.native.call('send', { sessionId: bot.id, requestId: input.requestId, text,
+      const front = frontMessage({ input: { ...input, workResults }, bot, files, reading: this.core.readingOf(bot.sessionId),
+        ...(this.historyTokens ? { historyTokens: this.historyTokens } : {}) });
+      record.prompt = front.size;
+      run.reading = { sessionId: bot.sessionId, ...front.reading };
+      await this.native.call('send', { sessionId: bot.id, requestId: input.requestId, text: front.text,
         source: input.context?.source || { sender: { id: input.event.senderId,
           name: input.event.senderName || input.event.senderId, kind: input.event.senderKind || 'human' },
           roomId: input.event.roomId, eventId: input.event.eventId }, memoryContext: input })

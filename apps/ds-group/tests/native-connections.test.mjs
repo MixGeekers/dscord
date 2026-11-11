@@ -67,7 +67,8 @@ test('native connection processes Matrix traffic in the original Bot and disconn
     assert.equal(endpoint, 'send');
     streamCalls++;
     const input = JSON.parse(text.split('\n').at(-1));
-    assert.equal(input.context.room.name, '测试群'); assert.equal(input.context.source.sender.id, human.id);
+    assert.equal(input.room.name, '测试群'); assert.equal(input.people[input.msg.from].id, human.id);
+    assert.equal(input.msg.text, '请回复当前群');
     const event = async (type, data) => { for (const handler of handlers.get('session/event') || []) await handler({ id: 'original' }, { type, data }); };
     await event('turn/start', { turn: 1 });
     await event('user/message', { content: [{ type: 'text', text }], source: { kind: 'user' } });
