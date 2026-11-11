@@ -228,9 +228,15 @@ jobs:
     name: Browser / Chromium
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    # Includes the browsers and system dependencies for the exact locked Playwright version.
+    # https://playwright.dev/docs/docker
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+      options: --shm-size=1g
     defaults:
       run:
         working-directory: apps/ds-group
+        shell: bash
     steps:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
@@ -241,21 +247,9 @@ jobs:
           cache: npm
           cache-dependency-path: apps/ds-group/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install Chromium with bounded dependency downloads
-        timeout-minutes: 5
+      - name: Check the bundled Chromium can launch
         run: |
-          printf '%s\n' \
-            'Acquire::Retries "2";' \
-            'Acquire::http::Timeout "30";' \
-            'Acquire::https::Timeout "30";' \
-            | sudo tee /etc/apt/apt.conf.d/80-dscord-ci-network-timeouts
-          # The runner's Azure mirror has repeatedly failed DNS before tests can start.
-          # Keep Ubuntu's signed sources and use its official primary archive hosts.
-          printf '%s\n' \
-            'https://archive.ubuntu.com/ubuntu' \
-            'https://security.ubuntu.com/ubuntu' \
-            | sudo tee /etc/apt/apt-mirrors.txt
-          npx playwright install --with-deps chromium
+          node --input-type=module -e 'import { chromium } from "@playwright/test"; const browser = await chromium.launch(); console.log(browser.version()); await browser.close();'
       - name: Build chat and administration frontends required by the browser suite
         run: npm run build
       - name: Chat, unified client and administration browser checks
