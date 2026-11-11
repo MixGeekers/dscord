@@ -145,6 +145,11 @@ export const design = `
   --shadow-navigation: 4px 0 20px #00000022;
   --shadow-dialog: 0 12px 48px #00000033;
   --shadow-toast: 0 3px 20px #00000033;
+  --app-top: 0px;
+  --app-bottom: 0px;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --app-safe-height: calc(100dvh - var(--app-top) - var(--app-bottom) - var(--safe-top) - var(--safe-bottom));
   --green: var(--color-accent);
   --muted: var(--color-text-muted);
   --line: var(--color-border-subtle);
@@ -256,11 +261,11 @@ body[data-ds-dark-theme] .dscord-ui {
 .dscord-ui .ds-color-input { width: 54px; min-height: 38px; padding: 3px; border: 1px solid var(--color-border-normal); border-radius: var(--radius-md); background: var(--color-bg-input); cursor: pointer; }
 .dscord-ui .ds-color-input:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .dscord-ui .ds-popover-positioner { z-index: var(--z-ui-popover); max-width: calc(100vw - 16px); }
-.dscord-ui .ds-popover-content { max-height: min(760px, calc(100dvh - 24px)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--color-border-normal); border-radius: var(--radius-xl); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-suggestions); }
+.dscord-ui .ds-popover-content { max-height: min(760px, calc(var(--app-safe-height) - 24px)); overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--color-border-normal); border-radius: var(--radius-xl); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-suggestions); }
 .dscord-ui .ds-dialog-backdrop { position: fixed; inset: 0; z-index: var(--z-ui-dialog-backdrop); background: var(--color-dialog-overlay); }
-.dscord-ui .ds-dialog-content { position: fixed; top: 50%; left: 50%; z-index: var(--z-ui-dialog); transform: translate(-50%, -50%); max-height: calc(100dvh - 32px); overflow: hidden; overscroll-behavior: contain; border: 1px solid var(--color-border-normal); border-radius: var(--radius-xl); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-dialog); }
+.dscord-ui .ds-dialog-content { position: fixed; top: calc(var(--app-top) + var(--safe-top) + var(--app-safe-height) / 2); left: 50%; z-index: var(--z-ui-dialog); transform: translate(-50%, -50%); max-height: calc(var(--app-safe-height) - 32px); overflow: hidden; overscroll-behavior: contain; border: 1px solid var(--color-border-normal); border-radius: var(--radius-xl); background: var(--color-bg-primary); color: var(--color-text-normal); box-shadow: var(--shadow-dialog); }
 .dscord-ui .ds-dialog-content[data-open] { display: flex; flex-direction: column; }
 @media (max-width: 480px) {
-  .dscord-ui .ds-dialog-content { width: calc(100vw - 16px); max-height: calc(100dvh - 16px); }
+  .dscord-ui .ds-dialog-content { width: calc(100vw - 16px); max-height: calc(var(--app-safe-height) - 16px); }
 }
 `;
