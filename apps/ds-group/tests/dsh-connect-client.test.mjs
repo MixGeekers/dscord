@@ -109,6 +109,9 @@ function render(element) {
   return { ...element, children: element.children.map(render) };
 }
 
+const deepText = element => !element ? '' : typeof element !== 'object' ? String(element)
+  : (element.children || []).map(deepText).join('');
+
 function find(element, predicate) {
   if (!element || typeof element !== 'object') return undefined;
   if (predicate(element)) return element;
@@ -232,10 +235,18 @@ test('the decision model has its own panel: what is missing, why it matters, and
   value = { ...loggedIn, decision: { ...working, available: false, error: 'ATTENTION_HTTP_401' } };
   section = await panel();
   assert.equal(section.props['data-state'], 'failed');
-  assert.equal(text(section, 'dc-status'), '验证失败');
-  assert.ok(find(section, node => node.props.role === 'alert' && /拒绝了这把 key（ATTENTION_HTTP_401）/.test(node.children.join(''))));
+  assert.equal(text(section, 'dc-status'), '请求失败');
+  assert.ok(find(section, node => node.props.role === 'alert' && /拒绝了这把 key（ATTENTION_HTTP_401）/.test(deepText(node))));
   assert.equal(find(section, node => node.type === 'ol'), undefined, 'the steps are for a first setup');
   assert.equal(open(section), true);
+
+  // The service's own reason is shown under the code, and an over-long conversation is named as such.
+  value = { ...loggedIn, decision: { ...working, available: false, error: 'ATTENTION_HTTP_400',
+    errorDetail: 'max_tokens_exceeded: Request is 41210 tokens; jev-1.14.0 reads 32768.' } };
+  section = await panel();
+  const alert = deepText(find(section, node => node.props.role === 'alert'));
+  assert.match(alert, /超出了模型一次能读的长度（ATTENTION_HTTP_400）/);
+  assert.match(alert, /服务返回：max_tokens_exceeded: Request is 41210 tokens/);
 
   value = { ...loggedIn, decision: { ...working, enabled: false, available: false } };
   section = await panel();

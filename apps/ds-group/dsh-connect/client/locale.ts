@@ -20,7 +20,7 @@ export const zh = {
     "没有它，Bot 只在被 @ 或私聊时回答，「自然参与」不起作用；连发的消息只能按固定时间等一下再答，分不清你有没有说完。",
   decisionMissing: "未配置",
   decisionDisabled: "已停用",
-  decisionFailed: "验证失败",
+  decisionFailed: "请求失败",
   decisionUnchecked: "已配置，尚未验证",
   decisionReady: "运行正常",
   decisionSetup1:
@@ -54,6 +54,9 @@ export const zh = {
   decisionErrorUnreachable:
     "连不上服务或等待超时（{code}）。检查网络和服务地址。",
   decisionErrorOther: "服务没有正常回答（{code}）。",
+  decisionErrorTooLong:
+    "这次要判断的群聊内容超出了模型一次能读的长度（{code}）。",
+  decisionErrorDetail: "服务返回：{detail}",
   decisionEndpointInvalid:
     "服务地址要以 http:// 或 https:// 开头，不能带账号密码或 # 片段。",
   decisionModelInvalid: "模型名不能为空，也不能有空格。",
@@ -159,7 +162,7 @@ export const en: Record<keyof typeof zh, string> = {
     "Without it, Bots answer only when mentioned or messaged directly and “Join naturally” does nothing; messages sent in a row are answered after a fixed pause, with no sense of whether you have finished.",
   decisionMissing: "Not set up",
   decisionDisabled: "Turned off",
-  decisionFailed: "Check failed",
+  decisionFailed: "Request failed",
   decisionUnchecked: "Set up, not checked yet",
   decisionReady: "Working",
   decisionSetup1:
@@ -199,6 +202,9 @@ export const en: Record<keyof typeof zh, string> = {
   decisionErrorUnreachable:
     "The service could not be reached or took too long ({code}). Check the network and the address.",
   decisionErrorOther: "The service did not answer properly ({code}).",
+  decisionErrorTooLong:
+    "The conversation to judge was longer than the model can read at once ({code}).",
+  decisionErrorDetail: "The service said: {detail}",
   decisionEndpointInvalid:
     "The address must start with http:// or https:// and carry no credentials or # fragment.",
   decisionModelInvalid: "The model name cannot be empty or contain spaces.",

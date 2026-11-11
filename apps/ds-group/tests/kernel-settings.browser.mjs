@@ -226,12 +226,17 @@ try {
   await mkdir(path.join(temporary, 'decision'), { recursive: true });
   // A synthetic decision service: it refuses every key but one, and answers as the model it was asked for.
   const decisionCalls = [];
+  let refuseNext = false;
   const decisionFetch = async (url, options) => {
     const body = JSON.parse(options.body); decisionCalls.push({ url, model: body.model });
     const systemone = !Array.isArray(body.questions);
     const cf = url.includes('api.cloudflare.com');
     const expectedKey = cf ? 'synthetic-cloudflare-key' : systemone ? 'synthetic-jev-key' : 'synthetic-decision-key';
     if (options.headers.Authorization !== `Bearer ${expectedKey}`) return new Response('{}', { status: 401 });
+    if (refuseNext) {
+      refuseNext = false;
+      return Response.json({ detail: { type: 'max_tokens_exceeded', message: `Request is 41210 tokens; jev-1.14.0 reads 32768. ${expectedKey}` } }, { status: 400 });
+    }
     const name = systemone ? Object.keys(body.questions)[0] : body.questions[0].name;
     const choice = name === 'participation' ? 'SPEAK' : 'REPLY';
     const choices = systemone ? Object.keys(body.questions[name].criteria) : body.questions[0].choices.map(item => item.value);
@@ -332,7 +337,7 @@ try {
   await save.click();
   await decision.getByRole('alert').filter({ hasText: 'The service refused this key (ATTENTION_HTTP_401)' }).waitFor();
   assert.equal(await decision.getAttribute('data-state'), 'failed');
-  assert.match(await decision.locator('.dc-status').innerText(), /Check failed/);
+  assert.match(await decision.locator('.dc-status').innerText(), /Request failed/);
   assert.equal(await keyField.inputValue(), '');
   assert.equal(await step(), 'Set up the decision model');
   checks.push('aRefusedDecisionKeyIsReportedAtOnceWithWhatToCheck');
@@ -394,7 +399,23 @@ try {
   await revealDecision();
   await page.getByLabel('服务预设', { exact: true }).waitFor();
   await decisionShot('decision-jev-light-zh.png');
+  // Later a real room question is refused. The note from the save no longer stands, and the service's reason shows.
+  refuseNext = true;
+  await assert.rejects(decisionSettings.provider.decide({ self: { id: '@helper:chat.example', name: '毛毛' }, currentMessages: [{ body: '你俩刚刚怎么晕了啊' }] }), { code: 'ATTENTION_HTTP_400' });
+  const live = page.locator('.dc-decision');
+  await live.getByRole('alert').filter({ hasText: '服务返回：max_tokens_exceeded: Request is 41210 tokens' }).waitFor();
+  assert.equal(await live.locator('.dc-status').innerText(), '请求失败');
+  assert.match(await live.getByRole('alert').innerText(), /超出了模型一次能读的长度（ATTENTION_HTTP_400）/);
+  assert.equal(await live.getByText('已保存，决策模型可以用了。').count(), 0, 'a save note never contradicts the live state');
+  assert.equal((await live.innerText()).includes('synthetic-jev-key'), false, 'an echoed key is removed');
+  await decisionShot('decision-refused-light-zh.png');
   await page.evaluate(() => { window.fixture.locale('en'); document.body.setAttribute('data-ds-dark-theme', ''); });
+  await decision.getByRole('alert').filter({ hasText: 'The service said: max_tokens_exceeded' }).waitFor();
+  await decisionShot('decision-refused-dark-en.png');
+  // The next question that is answered puts it right again.
+  await decisionSettings.provider.decide({ self: { id: '@helper:chat.example', name: '毛毛' }, currentMessages: [{ body: '好了吗' }] });
+  await decision.locator('[data-status="online"]').waitFor();
+  checks.push('aRefusedRoomQuestionShowsTheServiceReasonAndReplacesTheSaveNote');
   await revealDecision();
   await decision.getByLabel('Service preset', { exact: true }).selectOption('cloudflare-clef');
   assert.equal(await keyField.getAttribute('required'), '');

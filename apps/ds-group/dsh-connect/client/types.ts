@@ -79,4 +79,6 @@ export interface DecisionProvider {
   model?: string | null;
   /** The code of the last failed question. */
   error?: string;
+  /** What the service said about that failure, with credentials removed. */
+  errorDetail?: string;
 }
