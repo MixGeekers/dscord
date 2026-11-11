@@ -31,6 +31,7 @@ const people = [
   { id: "@bob:home.test", name: "Bob Home", kind: "human" },
   { id: "@bob:a.test", name: "Bob", kind: "human" },
   { id: "@bob:b.test", name: "Bob", kind: "human" },
+  { id: "@carol:home.test", name: "Carol Home", kind: "human" },
   { id: botId, name: "Helper", kind: "bot", ownerId: homeUser },
   { id: secondBotId, name: "Helper", kind: "bot", ownerId: homeUser },
   { id: otherOwnersBotId, name: "Helper", kind: "bot", ownerId: "@bob:a.test" },
@@ -40,7 +41,7 @@ const room = (roomId, name) => ({
   name,
   kind: "group",
   participantIds: people
-    .filter((person) => person.kind === "human" ||
+    .filter((person) => (person.kind === "human" && person.id !== "@carol:home.test") ||
       (roomId === homeRoom && person.id === botId) ||
       (roomId === aRoom && person.id === secondBotId))
     .map((person) => person.id),
@@ -92,6 +93,7 @@ const state = {
   logout: [],
   grantDoc: { revision: 0, grants: [] },
   grantWrites: [],
+  memberAdditions: [],
   grantFailure: null,
   configMode: "split",
   holdMessage: false,
@@ -377,6 +379,17 @@ async function apiHandler(request, response, origin = homeOrigin) {
       return json(response, 503, { error: "Receipt lost after saving" });
     }
     return json(response, 200, state.grantDoc);
+  }
+  const addition = url.pathname.match(/^\/api\/rooms\/([^/]+)\/invite$/);
+  if (addition && request.method === "POST") {
+    const input = JSON.parse(await readBody(request));
+    const roomId = decodeURIComponent(addition[1]);
+    state.memberAdditions.push({ roomId, ...input });
+    return json(response, 200, {
+      roomId,
+      status: "joined",
+      joinResults: input.participantIds.map((id) => ({ participantId: id, status: "joined" })),
+    });
   }
   if (url.pathname === "/api/rooms")
     return json(response, 200, {
@@ -739,7 +752,7 @@ try {
   await page.locator("#room-dialog[open]").waitFor();
   assert.deepEqual(
     await page.locator("#room-choices .room-choice-identity .member-full-id").allTextContents(),
-    ["@bob:home.test", "@bob:a.test", "@bob:b.test", botId, secondBotId],
+    ["@bob:home.test", "@bob:a.test", "@bob:b.test", "@carol:home.test", botId, secondBotId],
   );
   await page.screenshot({ path: path.join(output, "forms-create-room-desktop.png"), animations: "disabled" });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -831,6 +844,30 @@ try {
   await page.locator("#close-settings").click();
   await page.locator("#settings-dialog").waitFor({ state: "hidden" });
   assert.equal(await page.evaluate(() => document.activeElement.id), "identity-button");
+  assert.equal(await page.locator("#add-member-button").getAttribute("title"), "添加成员");
+  await page.screenshot({ path: path.join(output, "add-member-entry-light-zh.png"), animations: "disabled" });
+  await page.locator("#add-member-button").click();
+  await page.locator("#room-dialog[open]").waitFor();
+  assert.equal(await page.locator("#room-dialog-title").textContent(), "添加成员");
+  assert.equal(await page.locator("#room-name-field").isHidden(), true);
+  assert.deepEqual(
+    await page.locator("#room-choices .room-choice-identity .member-full-id").allTextContents(),
+    ["@carol:home.test", secondBotId],
+    "Adding offers people and your own Bots who are not in the group yet",
+  );
+  await page.locator("#room-choices .room-choice").filter({ hasText: "Carol Home" }).click();
+  await page.screenshot({ path: path.join(output, "add-member-light-zh.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.equal(await page.locator("#room-dialog").evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth), true);
+  await page.screenshot({ path: path.join(output, "add-member-mobile-light-zh.png"), animations: "disabled" });
+  await page.setViewportSize({ width: 1440, height: 1000 });
+  await page.locator("#room-choices .room-choice").filter({ hasText: secondBotId }).click();
+  await page.locator("#room-submit").click();
+  await page.locator("#room-dialog").waitFor({ state: "hidden" });
+  assert.deepEqual(state.memberAdditions, [
+    { roomId: homeRoom, participantIds: [secondBotId, "@carol:home.test"] },
+  ]);
+  checks.push("existingGroupAddsPeopleAndOwnBotsInOneRequest");
   await page.reload();
   await page.locator("#room-title").filter({ hasText: "General" }).waitFor();
   await page.locator("#identity-button").click();
@@ -870,7 +907,7 @@ try {
   await page.getByText("A channel message", { exact: true }).waitFor();
   await page.locator('.message .attachment-card[data-attachment-id="same-file"]').waitFor();
   await page.screenshot({ path: path.join(output, "attachment-chat-context-desktop-dark-en.png"), animations: "disabled" });
-  assert.equal(await page.locator("#invite-bot-button").isHidden(), true);
+  assert.equal(await page.locator("#add-member-button").isHidden(), true);
   assert.equal(await page.locator("#create-room-button").isHidden(), true);
   await page
     .locator('.attachment-card button[aria-label="Preview same.txt"]')
@@ -1182,6 +1219,7 @@ try {
   await page.locator("#additional-rooms .room-item").filter({ hasText: "Project" }).click();
   await page.locator("#room-title").filter({ hasText: "Project" }).waitFor();
   assert.equal(new URL(page.url()).searchParams.get("roomId"), secondHomeRoom);
+  assert.equal(await page.locator("#add-member-button").isHidden(), true, "Only members Matrix lets invite see the entry");
   await page.setViewportSize({ width: 986, height: 822 });
   await page.locator("#global-bots-button").click();
   assert.equal(await page.locator("#panel-backdrop").isHidden(), true);

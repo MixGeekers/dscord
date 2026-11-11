@@ -44,6 +44,29 @@ export function roomRoutes(router, app) {
   const person = id => app.publicParticipants().find(p => p.id === id);
   const joinedMembers = async (client, roomId) =>
     (await client.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/joined_members`)).joined || {};
+  const isDirectRoom = roomId => Boolean(chat.prepare('SELECT 1 FROM direct_rooms WHERE room_id=?').get(roomId));
+  // People, and the caller's own Bots, wherever their home server is.
+  const addable = (userId, id) => {
+    const target = person(id);
+    return Boolean(target && id !== userId && (target.kind === 'human' || target.ownerId === userId));
+  };
+  // Core joins a member of this server with that member's own Matrix account; a member of another server accepts there.
+  async function admit(roomId, id) {
+    const account = setup.participants.find(p => p.id === id);
+    if (!account?.accessToken) return { participantId: id, status: 'invited' };
+    try {
+      await matrixAs(account.accessToken).join(roomId);
+      return { participantId: id, status: 'joined' };
+    } catch (error) {
+      return { participantId: id, status: 'pending', reason: error.errcode || 'JOIN_UNCONFIRMED' };
+    }
+  }
+  // Matrix defaults: without a power-levels event everyone may invite (invite level 0).
+  const mayInvite = (levels, userId) => (levels.users?.[userId] ?? levels.users_default ?? 0) >= (levels.invite ?? 0);
+  const joinOutcome = (userId, results) => ({
+    status: results.every(item => item.status === 'joined') ? 'joined' : 'partially_joined', joinResults: results,
+    participantIds: [userId, ...results.filter(item => item.status === 'joined').map(item => item.participantId)],
+  });
 
   async function directRoomFor(client, userId, target) {
     const ids = [userId, target.id].sort();
@@ -144,11 +167,14 @@ export function roomRoutes(router, app) {
     }
     const known = new Set(rooms.map(room => room.roomId));
     rooms.push(...await Promise.all(joined.filter(roomId => !known.has(roomId)).map(async roomId => {
-      const [roomName, members] = await Promise.all([
-        matrix.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.name/`).catch(() => ({ name: '群聊' })),
+      const state = type => matrix.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/${type}/`);
+      const [roomName, levels, members] = await Promise.all([
+        state('m.room.name').catch(() => ({ name: '群聊' })),
+        state('m.room.power_levels').catch(() => ({})),
         joinedMembers(matrix, roomId),
       ]);
-      return { roomId, name: roomId === setup.roomId ? '初次协作' : roomName.name || '群聊', kind: 'group', participantIds: Object.keys(members) };
+      return { roomId, name: roomId === setup.roomId ? '初次协作' : roomName.name || '群聊', kind: 'group', participantIds: Object.keys(members),
+        permissions: { inviteMembers: mayInvite(levels, userId) } };
     })));
     send(200, { rooms: rooms.map(room => ({ ...room, ...chatFeatures.unreadFor(userId, room.roomId) })) });
   });
@@ -158,10 +184,7 @@ export function roomRoutes(router, app) {
     if (typeof input.name !== 'string' || !input.name.trim() || input.name.length > 80 || !Array.isArray(input.inviteIds)) return send(400, { error: 'A group name and member list are required' });
     const name = input.name.trim();
     const invited = [...new Set(input.inviteIds)].filter(id => id !== userId);
-    for (const id of invited) {
-      const target = person(id);
-      if (!target || (target.kind === 'bot' && target.ownerId !== userId)) return send(403, { error: 'Only your own Bots can be invited' });
-    }
+    if (!invited.every(id => addable(userId, id))) return send(403, { error: 'Choose people or your own Bots' });
     const requestId = input.requestId || randomBytes(16).toString('hex');
     if (typeof requestId !== 'string' || !REQUEST_ID.test(requestId)) return send(400, { error: 'Invalid group request ID' });
     const requestKey = `${userId}/${requestId}`;
@@ -180,36 +203,38 @@ export function roomRoutes(router, app) {
         return send(409, { error: 'Group creation result is unknown; check your room list before creating another group', requestId });
       }
     }
-    const joinResults = await Promise.all(invited.map(async id => {
-      try {
-        await matrixAs(setup.participants.find(p => p.id === id).accessToken).join(roomId);
-        return { participantId: id, status: 'joined' };
-      } catch (error) {
-        return { participantId: id, status: 'pending', reason: error.errcode || 'JOIN_UNCONFIRMED' };
-      }
-    }));
-    send(200, { roomId, requestId, name, kind: 'group',
-      status: joinResults.every(item => item.status === 'joined') ? 'joined' : 'partially_joined', joinResults,
-      participantIds: [userId, ...joinResults.filter(item => item.status === 'joined').map(item => item.participantId)] });
+    const joinResults = await Promise.all(invited.map(id => admit(roomId, id)));
+    send(200, { roomId, requestId, name, kind: 'group', ...joinOutcome(userId, joinResults) });
   });
 
+  // A person in a group adds other people and their own Bots to it; a member of another server needs this room approved for them first.
   router.post(/^\/api\/rooms\/([^/]+)\/invite$/, async ({ userId, client, body, policy, send }, roomId) => {
     const input = await body();
+    const ids = Array.isArray(input.participantIds) ? [...new Set(input.participantIds)] : [];
+    if (!ids.length || ids.some(id => typeof id !== 'string' || id === userId)) return send(400, { error: 'Choose at least one other member' });
+    if (isDirectRoom(roomId)) return send(400, { error: 'Members are added to groups, not direct conversations' });
+    accounts.human(userId);
+    if (!ids.every(id => addable(userId, id))) return send(403, { error: 'Choose people or your own Bots' });
     const matrix = client();
-    if (serverOf(input.participantId) && serverOf(input.participantId) !== setup.serverName) {
-      if (!roomAllows(await policy(), roomId, input.participantId)) return send(403, { error: 'Approve the external member and this room first' });
-      accounts.human(userId);
-      if ((await joinedMembers(matrix, roomId))[input.participantId]) return send(200, { roomId, participantId: input.participantId, status: 'joined' });
-      await matrix.request('POST', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`, { user_id: input.participantId });
-      return send(200, { roomId, participantId: input.participantId, status: 'invited' });
+    const joined = await joinedMembers(matrix, roomId);
+    const joinResults = [];
+    let rules;
+    for (const id of ids) {
+      if (joined[id]) {
+        joinResults.push({ participantId: id, status: 'joined' });
+        continue;
+      }
+      if (serverOf(id) !== setup.serverName && !roomAllows(rules ??= await policy(), roomId, id)) {
+        joinResults.push({ participantId: id, status: 'approval_required' });
+        continue;
+      }
+      const { membership } = await matrix.request('GET', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/state/m.room.member/${encodeURIComponent(id)}`)
+        .catch(error => { if (error.errcode === 'M_NOT_FOUND' || error.status === 404) return {}; throw error; });
+      if (membership !== 'invite') await matrix.request('POST', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`, { user_id: id });
+      joinResults.push(await admit(roomId, id));
     }
-    const participant = setup.participants.find(p => p.id === input.participantId && p.kind === 'bot');
-    if (!participant || person(input.participantId)?.ownerId !== userId) return send(403, { error: 'Choose one of your own Bots' });
-    if (!(await joinedMembers(matrix, roomId))[participant.id]) {
-      await matrix.request('POST', `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/invite`, { user_id: participant.id });
-    }
-    await matrixAs(participant.accessToken).join(roomId);
-    send(200, { roomId, participantId: participant.id, status: 'joined' });
+    const outcome = joinOutcome(userId, joinResults);
+    send(200, { roomId, ...outcome, participantIds: [...new Set([...Object.keys(joined), ...outcome.participantIds])] });
   });
 
   router.post('/api/dm', async ({ userId, client, body, send }) => {

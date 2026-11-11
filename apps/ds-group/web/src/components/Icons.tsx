@@ -27,6 +27,7 @@ import {
   Send,
   Server,
   Settings,
+  UserPlus,
   UserRound,
   Users,
   Brain,
@@ -67,6 +68,7 @@ const iconComponents = {
   send: Send,
   server: Server,
   user: UserRound,
+  userPlus: UserPlus,
   work: Briefcase,
 };
 

@@ -30,7 +30,7 @@ export interface ShellProps {
   currentUser?: Participant | null;
   connection?: "connecting" | "connected" | "offline";
   canCreateRoom?: boolean;
-  canInvite?: boolean;
+  canAddMembers?: boolean;
   ownedBots: Participant[];
   ownedBotsKnown: boolean;
   openingDirectId: string | null;
@@ -55,7 +55,7 @@ export interface ShellProps {
   onLogin(): void;
   onCreateRoom(): void;
   onCreateBot(): void;
-  onInvite(): void;
+  onAddMembers(): void;
   onInbox(): void;
   onNotifications(): void;
   onToggleTasks(): void;
@@ -596,19 +596,15 @@ export function Shell(props: ShellProps) {
                 <Icon name="bell" />
               </button>
               <button
-                id="invite-bot-button"
+                id="add-member-button"
                 className="icon-button"
                 type="button"
-                aria-label={t("inviteBots")}
-                title={t("inviteBots")}
-                hidden={
-                  props.view !== "chat" ||
-                  props.room?.kind !== "group" ||
-                  props.canInvite === false
-                }
-                onClick={props.onInvite}
+                aria-label={t("addMembers")}
+                title={t("addMembers")}
+                hidden={props.view !== "chat" || !props.canAddMembers}
+                onClick={props.onAddMembers}
               >
-                <Icon name="plus" />
+                <Icon name="userPlus" />
               </button>
               <button
                 id="details-button"
