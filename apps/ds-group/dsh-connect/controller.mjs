@@ -77,9 +77,14 @@ export class ConnectController {
     return work;
   }
 
-  async save(state = this.state) {
-    await mkdir(this.directory, { recursive: true, mode: 0o700 });
-    await savePrivateJson(this.filename, state);
+  /** Writes go one after another: the background report and a Bot's own profile edit can both save at once. */
+  save(state = this.state) {
+    const write = (this.writes || Promise.resolve()).catch(() => {}).then(async () => {
+      await mkdir(this.directory, { recursive: true, mode: 0o700 });
+      await savePrivateJson(this.filename, state);
+    });
+    this.writes = write;
+    return write;
   }
 
   /** A JSON request, or with `upload` ({bytes, type}) a request whose body is those bytes. */
