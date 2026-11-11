@@ -42,7 +42,8 @@ const provider = createServer(async (request, response) => {
     calls.push({ index: calls.length + 1, checkpoint, steward, snapshots, messageCount: input.messages.length,
       toolResults: input.messages.filter(message => message.role === 'tool').map(textOf),
       hasHumanOne: text.includes('human-one-history'), hasPeer: text.includes('peer-relay-history'), hasHumanTwo: text.includes('human-two-tool'),
-      toolNames: input.tools?.map(tool => tool.function.name) ?? [] });
+      toolNames: input.tools?.map(tool => tool.function.name) ?? [],
+      teamRules: text.includes('## How your Bot team works'), frontRules: text.includes('## 你在 DSCord 里的工作方式') });
     const chunk = delta => ({ id: `snapshot-${calls.length}`, object: 'chat.completion.chunk', created: 1, model: 'chat', choices: [{ index: 0, delta, finish_reason: null }] });
     response.writeHead(200, { 'content-type': 'text/event-stream' });
     const delta = useTool ? { role: 'assistant', tool_calls: [{ index: 0, id: 'snapshot-file-read', type: 'function',
@@ -213,11 +214,20 @@ export const inject=plugin.inject; export const apply=plugin.apply;
   assert.equal(sourceOf(state).recentSources.find(source => source.eventId === '$held-across-parts').body, 'Exact original Matrix body held across native parts.');
   report.checks.push('explicitPartTransferAndColdRestoreKeepHeldOriginalBodyAuthorAndRoom');
   state = await api('bridge-turn', { botId: bot.id }); oneFrame(state);
-  const bridgeEnvelope = state.requestEnvelopes.find(row => row.requestId === 'normal-bridge-request');
-  assert.equal(Object.hasOwn(bridgeEnvelope, 'memoryView'), false); assert.equal(Object.hasOwn(bridgeEnvelope.context.attention, 'memoryView'), false);
-  assert.equal(bridgeEnvelope.currentMessage.body, 'Keep the human literal "memoryView": {"keep":true}.');
+  const bridgeEnvelope = state.requestEnvelopes.find(row => row.msg?.text === 'Keep the human literal "memoryView": {"keep":true}.');
+  assert.ok(bridgeEnvelope); assert.equal(Object.hasOwn(bridgeEnvelope, 'memoryView'), false);
+  assert.ok(!JSON.stringify(bridgeEnvelope).includes('obsolete-derived-view-'));
   assert.equal(state.receipt.status, 'completed');
   report.checks.push('normalNativeBridgePublishesOnlyTheRuntimeFrameAndPreservesLiteralHumanText');
+  // While DSCord serves the Bot, the real prompt and tool list are the front's; before, they were the native team's.
+  const served = calls.at(-1), native = calls[0];
+  assert.ok(native.teamRules && !native.frontRules); assert.ok(native.toolNames.includes('message_bot'));
+  assert.ok(served.frontRules && !served.teamRules, 'A served Bot must read the front rules in place of the native team rules');
+  assert.ok(served.toolNames.includes('dispatch_work') && served.toolNames.includes('recall'));
+  assert.deepEqual(served.toolNames.filter(name => ['bash', 'message_bot', 'update_bot', 'ask_user', 'show_view', 'create_group'].includes(name)), [],
+    'The front must be offered only the tools it may use');
+  assert.equal(state.receipt.calls.length, 1, 'A request that starts over without the refused tools is still one call');
+  report.checks.push('servedBotReadsFrontRulesAndIsOfferedOnlyFrontTools');
   report.status = 'passed';
 } catch (error) { report.error = error.stack; report.diagnosticDirectory = directory; process.exitCode = 1; }
 finally {

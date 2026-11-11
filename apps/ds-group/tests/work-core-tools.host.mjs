@@ -24,7 +24,7 @@ test('front and worker tools register as object JSON Schemas under the pinned DS
   await core.serveFront(agent('front'));
   core.origin = { roomId: '!room', eventId: '$ask', senderId: '@ann' };
   await core.dispatch({ title: 'x', brief: 'y' });
-  const names = ['dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot', 'work_report', 'work_ask'];
+  const names = ['dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot', 'update_profile', 'work_report', 'work_ask'];
   assert.deepEqual([...registered.keys()].sort(), [...names].sort());
   for (const name of names) {
     const schema = projectToolSchema(registered.get(name), true).parameters;

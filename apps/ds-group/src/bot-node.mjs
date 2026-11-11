@@ -783,6 +783,7 @@ export class BotNode {
         source: messageSource(previous, this.participants, this.store.roomContextForEvent(previous)),
         senderId: previous.sender, senderName: this.senderName(previous.sender, this.store.roomContextForEvent(previous)), senderKind: this.participants.find(person => person.id === previous.sender)?.kind,
         body: previous.content['m.new_content']?.body ?? previous.content.body, attachments: eventAttachments(previous), taskId: metadataOf(previous).taskId,
+        to: Array.isArray(metadataOf(previous).to) ? metadataOf(previous).to : [],
         kind: metadataOf(previous).kind, originSenderId: metadataOf(previous).originSenderId, fileBatch: metadataOf(previous).fileBatch })),
     };
   }

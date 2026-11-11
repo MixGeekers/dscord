@@ -5,6 +5,7 @@ import { homedir } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { packageRoot } from '../src/paths.mjs';
 import { claimKernelHome, detectLegacyRuntime, kernelConflict, KERNEL_API } from './kernel-runtime.mjs';
+import { frontRules } from './work-core.mjs';
 
 /** DSCord owns its runtime. Existing Bot homes are adopted under one lease. */
 export async function startNativeTeam(ctx, config = {}) {
@@ -36,6 +37,8 @@ export async function startNativeTeam(ctx, config = {}) {
       scope.inject(['web'], search => { if (!search.web.searchProviders.has('auto')) applySearch(search); });
       runtime = createRuntime(scope, { ...config, home: lease.home, homeLock: lease.lock, releaseHomeLock: false, apiRoute: KERNEL_API,
         autoBootstrap: false, structuredSources: true, preserveNativeTools: true, memoryBackend: installNativeMemory, updateCheck: false,
+        // A Bot connected to DSCord works by the front's rules: the native team rules name tools it is refused there.
+        botRules: frontRules,
         runtimeInfo: lease.info, resumeInterrupted: !lease.adopted });
       await runtime.load();
       if (runtime.readOnly()) throw kernelConflict(runtime.readOnly(), { home: lease.home });

@@ -73,6 +73,10 @@
     {
       "file": "src/host/learning.js",
       "purpose": "Join learning work whose source-aware memory calls are canceled during runtime shutdown"
+    },
+    {
+      "file": "src/host/prompt.js",
+      "purpose": "Let the host give a Bot its own rules in place of the native team rules (DSCord front rules for the Bots it serves)"
     }
   ],
   "previousBase": {

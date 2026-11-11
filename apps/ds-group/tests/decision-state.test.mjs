@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { decisionState, clipText, DECISION_STATE_CHARS } from '../src/decision-state.mjs';
+import { decisionState, DECISION_STATE_CHARS } from '../src/decision-state.mjs';
+import { clipText } from '../src/conversation-view.mjs';
 import { attentionMessage } from '../src/attention.mjs';
 import { messageSource } from '../src/message-context.mjs';
 

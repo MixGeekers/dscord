@@ -4,7 +4,8 @@ import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { WorkCore, CARD_REFUSAL, CARD_TOOLS, FRONT_REFUSAL, FRONT_TOOLS, NATIVE_TEAM_REFUSAL, NATIVE_TEAM_TOOLS, WORKER_DENY, localBot } from '../dsh-connect/work-core.mjs';
+import { WorkCore, CARD_REFUSAL, CARD_TOOLS, FRONT_REFUSAL, FRONT_TOOLS, NATIVE_TEAM_REFUSAL, NATIVE_TEAM_TOOLS, WORKER_DENY, frontRules, localBot } from '../dsh-connect/work-core.mjs';
+import { FRONT_RULES } from '../src/front-prompt.mjs';
 import { ContactBook } from '../src/contact-book.mjs';
 
 async function fixture(t, options = {}) {
@@ -16,7 +17,11 @@ async function fixture(t, options = {}) {
     ctx: { tools: { register(def) { sessions.get(id).tools.set(def.name, def); }, restrict({ deny }) { sessions.get(id).restricted.push(...deny); },
       schemas: () => ['bash', 'write', 'recall', 'message_bot'].map(name => ({ name })) } } }).get(id);
   const policies = [];
+  // The model stream as the host runs it: the core's listener may pass a call on or start it over with other options.
+  const streams = []; const restarted = [];
   const ctx = {
+    on(name, listener) { if (name === 'llm/stream') streams.push(listener); return () => streams.splice(streams.indexOf(listener), 1); },
+    llm: { stream: options => { restarted.push(options); return 'restarted'; } },
     get: name => name === 'approval' ? { setPolicy: (agent, policy) => policies.push([agent.session.id, policy]) } : undefined,
     tools: { guard(fn) { guard = fn; return () => { guard = undefined; }; } },
     sessionController: {
@@ -41,7 +46,8 @@ async function fixture(t, options = {}) {
   const results = [];
   seat.onResult = async (task, message, text) => { results.push({ task: structuredClone(task), message, text }); };
   t.after(() => core.dispose());
-  return { core, state: core.state, prompts, results, policies, agentFor, guard: exec => guard(exec), directory, id };
+  return { core, state: core.state, prompts, results, policies, agentFor, guard: exec => guard(exec), directory, id,
+    stream: options => streams.length ? streams[0](options, () => 'passed') : 'passed', restarted };
 }
 
 const run = (f, sessionId, name, args = {}) => f.agentFor(sessionId).tools.get(name).execute(args, { agent: f.agentFor(sessionId) });
@@ -407,4 +413,42 @@ test('update_profile changes the Bot\'s own name and avatar through its connecti
   f.core.origin = null;
   assert.match(await run(f, 'front', 'update_profile', { clear_avatar: true }), /头像已去掉/);
   assert.equal(edits.at(-1).avatar, null);
+});
+
+test('a Bot with a core works by the front rules, and its Session has one reading record across restarts', async t => {
+  const f = await fixture(t, { nativeBotId: 'reader' });
+  assert.equal(frontRules('reader'), FRONT_RULES); assert.equal(frontRules('not-served'), undefined);
+  assert.equal(f.core.readingOf('front'), undefined);
+  await f.core.read({ sessionId: 'front', people: { '@ann:dsh.test': 1 }, rooms: { '!room': { refs: ['abc123'] } } });
+  assert.equal(f.core.readingOf('next-part'), undefined, 'a new part of the Session has read nothing');
+  f.core.dispose();
+  assert.equal(frontRules('reader'), undefined, 'a Bot DSCord no longer serves is back on the native rules');
+  const again = await fixture(t, { nativeBotId: 'reader', directory: f.directory });
+  assert.deepEqual(again.core.readingOf('front').rooms, { '!room': { refs: ['abc123'] } });
+  // A condensed Session reads its rooms again; the people in it keep their codes.
+  await again.core.condensed('front');
+  assert.deepEqual(again.core.readingOf('front'), { sessionId: 'front', people: { '@ann:dsh.test': 1 }, rooms: {} });
+});
+
+test('a Session is shown only the tools it may use, and a call it starts is counted once', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  const tools = ['dispatch_work', 'recall', 'bash', 'message_bot', 'ask_user', 'update_profile', 'work_report'].map(name => ({ name }));
+  assert.equal(f.stream({ sessionId: 'front', tools, messages: ['kept'] }), 'restarted');
+  assert.deepEqual(f.restarted.at(-1).tools.map(tool => tool.name), ['dispatch_work', 'recall', 'update_profile']);
+  assert.deepEqual(f.restarted.at(-1).messages, ['kept']);
+  for (const tool of tools) assert.equal(f.restarted.at(-1).tools.includes(tool), f.guard({ agent: f.agentFor('front'), name: tool.name }) === undefined, tool.name);
+  // The request that starts over passes through, as does a call without tools, or one from a Session that is not this Bot's.
+  assert.equal(f.stream(f.restarted.at(-1)), 'passed');
+  assert.equal(f.stream({ sessionId: 'front', messages: [] }), 'passed');
+  assert.equal(f.stream({ sessionId: 'someone-else', tools }), 'passed');
+  assert.equal(f.stream({ tools }), 'passed');
+  // A worker keeps the tools it works with and is not shown what only the front may do.
+  await run(f, 'front', 'dispatch_work', { audience: '提出请求的人', title: '整理表格', brief: '把 a.xlsx 转成 CSV' });
+  const offered = ['recall', 'bash', 'message_bot', 'ask_user', 'remember', 'dispatch_work', 'work_report'].map(name => ({ name }));
+  assert.equal(f.stream({ sessionId: 'worker-1', tools: offered }), 'restarted');
+  assert.deepEqual(f.restarted.at(-1).tools.map(tool => tool.name), ['recall', 'bash', 'work_report']);
+  assert.equal(f.stream({ tools }), 'passed', 'a call of no Session is not mistaken for a worker that has not started');
+  f.core.dispose();
+  assert.equal(f.stream({ sessionId: 'front', tools }), 'passed');
 });

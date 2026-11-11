@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { NodeStore } from '../src/node-store.mjs';
 import { BotNode } from '../src/bot-node.mjs';
-import { nativeMessage, speakerOf } from '../src/message-context.mjs';
+import { speakerOf } from '../src/message-context.mjs';
+import { frontMessage } from '../src/front-prompt.mjs';
 const bot = { id: '@bot:home.test', name: '小雨', kind: 'bot' };
 const alice = { id: '@alice:home.test', name: '小雨', kind: 'human' };
 const other = { id: '@alice:other.test', name: '小雨', kind: 'human' };
@@ -15,7 +16,7 @@ test('same-name people/Bot, different rooms and old quoted messages retain disti
   try {
     const node = new BotNode({ participant: bot, participants: people, roomId: '!a', store, matrix: {}, bridge: {} });
     store.noteRoomState('!a', [{ type: 'm.room.name', content: { name: '项目群' } }, { type: 'm.room.topic', content: { topic: '预算' } },
-      { type: 'm.room.create', sender: alice.id }, ...people.map(person => ({ type: 'm.room.member', state_key: person.id, content: { membership: 'join' } }))]);
+      { type: 'm.room.create', sender: alice.id }, ...people.map(person => ({ type: 'm.room.member', state_key: person.id, content: { membership: 'join', displayname: person.name } }))]);
     store.ingest([event('$quote','!a', alice.id,'预算 300'), event('$foreign','!b',other.id,'预算 900'),
       ...Array.from({ length: 41 }, (_, i) => event(`$${i}`, '!a', bot.id, 'Progress')),
       event('$current','!a',other.id,'引用的预算是谁说的？', { replyTo: '$quote' })]);
@@ -27,9 +28,15 @@ test('same-name people/Bot, different rooms and old quoted messages retain disti
     assert.ok(request.history.every(item => item.roomId === '!a')); assert.ok(!JSON.stringify(request.history).includes('预算 900'));
     assert.equal(request.context.members[0].kind, 'bot'); assert.equal(request.context.members[1].kind, 'human');
     assert.equal(speakerOf('@unlisted:other.test', people).kind, 'unknown');
-    const prompt = nativeMessage({ input: { ...request, authorization: { tools: ['read'] } }, bot: { id: 'native', name: bot.name }, files: { workdir: '/native/attachments', files: [] } });
-    assert.ok(!prompt.includes('"authorization"')); assert.ok(!prompt.includes('"tools":["read"]'));
-    assert.match(prompt, /记忆/); assert.match(prompt, /转述/);
+    // What the front reads of this request: three accounts with one display name stay three people.
+    const { text } = frontMessage({ input: { ...request, authorization: { tools: ['read'] } }, bot: { id: 'native', name: bot.name } });
+    assert.ok(!text.includes('authorization')); assert.ok(!text.includes('"tools"'));
+    const turn = JSON.parse(text.split('\n')[1]);
+    assert.deepEqual(Object.values(turn.people).map(person => [person.name, person.id]), [['小雨', bot.id], ['小雨', alice.id], ['小雨', other.id]]);
+    assert.equal(turn.people.P1.self, true); assert.equal(turn.people[turn.msg.from].id, other.id);
+    assert.equal(turn.people[turn.quoted.from].id, alice.id); assert.equal(turn.quoted.text, '预算 300');
+    assert.deepEqual(turn.room, { name: '项目群', kind: 'group', topic: '预算', creator: turn.quoted.from });
+    assert.equal(turn.history.length, 40); assert.equal(turn.earlierOmitted, 2);
   } finally { store.close(); }
 });
 

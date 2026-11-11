@@ -5,44 +5,21 @@
  * go, so a long or busy conversation cannot push a request past the service's context limit (TypeSafe Jev reads at
  * most 32k tokens per question by default).
  */
+import { bodyOf, clipText, conversationView, eventIdOf, list, TEXT_CHARS } from './conversation-view.mjs';
+
 export const DECISION_STATE_CHARS = 20_000;
-const TEXT_CHARS = 1200;
 const SHORT_TEXT_CHARS = 300;
-const QUOTE_CHARS = 300;
 const SUMMARY_CHARS = 200;
 const INSTRUCTION_CHARS = 2000;
 
-/** Cut at a code point boundary and say how long the original was. */
-export function clipText(value, max) {
-  const text = typeof value === 'string' ? value : '';
-  if (text.length <= max) return text;
-  const end = /[\ud800-\udbff]/.test(text[max - 1]) ? max - 1 : max;
-  return `${text.slice(0, end)}…（原文 ${text.length} 字，已截断）`;
-}
-
-const list = value => Array.isArray(value) ? value : [];
-const bodyOf = message => message?.body ?? message?.text ?? message?.content?.body ?? '';
-const eventIdOf = message => message?.eventId || message?.source?.eventId || null;
-
 export function decisionState(input = {}, { maxChars = DECISION_STATE_CHARS } = {}) {
-  const people = new Map();
   const selfId = input.self?.id || null;
-  const person = (id, name, kind) => {
-    const key = id || name;
-    if (!key) return undefined;
-    let entry = people.get(key);
-    if (!entry) {
-      entry = { ref: `P${people.size + 1}`, name: name || id, ...(key === selfId ? { self: true } : {}) };
-      people.set(key, entry);
-    } else if (name && entry.name === key) entry.name = name;
-    if (kind && kind !== 'unknown' && !entry.kind) entry.kind = kind;
-    return entry.ref;
-  };
+  const view = conversationView({ selfId });
+  const { person } = view;
   // Current names first: a message keeps the label its sender had then, the roster says who they are now.
   person(selfId, input.self?.name, 'bot');
   for (const member of list(input.context?.members)) person(member?.id, member?.name, member?.kind);
 
-  const refs = new Map();
   const ordered = [...list(input.recentMessages)];
   const current = new Set(list(input.currentMessages).map(eventIdOf).filter(Boolean));
   for (const message of list(input.currentMessages)) {
@@ -50,35 +27,20 @@ export function decisionState(input = {}, { maxChars = DECISION_STATE_CHARS } = 
     if (!id || !ordered.some(item => eventIdOf(item) === id)) ordered.push(message);
   }
   const all = [...ordered, ...list(input.pending), ...(input.newMessage ? [input.newMessage] : [])];
-  for (const message of all) {
-    const id = eventIdOf(message);
-    if (id && !refs.has(id)) refs.set(id, `M${refs.size + 1}`);
-  }
+  for (const message of all) view.number(message);
   const latest = Math.max(0, ...all.map(message => message?.source?.timestamp ?? message?.timestamp ?? 0).filter(Number.isFinite));
   const originals = new WeakMap();
   const compact = (message, isCurrent = false) => {
-    const sender = message?.source?.sender || {};
-    const replyTo = message?.source?.replyTo || message?.replyTo;
     const at = message?.source?.timestamp ?? message?.timestamp;
-    const attachments = list(message?.attachments).map(file => file?.name || file?.filename || 'file');
-    const to = list(message?.to).map(id => person(id)).filter(Boolean);
-    const from = person(sender.id || message?.senderId, message?.senderName || sender.name, sender.kind || message?.senderKind);
-    const result = { ...(refs.has(eventIdOf(message)) ? { ref: refs.get(eventIdOf(message)) } : {}),
-      ...(from ? { from } : {}),
-      text: clipText(bodyOf(message), TEXT_CHARS),
+    const { ref, from, text, ...rest } = view.message(message);
+    const result = { ...(ref ? { ref } : {}), ...(from ? { from } : {}), text,
       ...(latest && Number.isFinite(at) && at > 0 ? { secondsBeforeLatest: Math.max(0, Math.round((latest - at) / 1000)) } : {}),
-      ...(replyTo ? { replyTo: refs.get(replyTo) || 'earlier' } : {}),
-      ...(to.length ? { to } : {}),
-      ...(attachments.length ? { attachments } : {}),
-      ...(message?.withdrawn ? { withdrawn: true } : {}),
-      ...(message?.kind ? { kind: message.kind } : {}),
+      ...rest,
       ...(isCurrent ? { new: true } : {}) };
     originals.set(result, bodyOf(message));
     return result;
   };
-  const quote = value => value?.body !== undefined && !refs.has(value.source?.eventId)
-    ? { from: person(value.source?.sender?.id, value.source?.sender?.name, value.source?.sender?.kind), text: clipText(value.body, QUOTE_CHARS) }
-    : undefined;
+  const quote = view.quote;
 
   const currentObjects = new Set(list(input.currentMessages));
   const messages = ordered.map(message => compact(message, currentObjects.has(message) || current.has(eventIdOf(message))));
@@ -118,7 +80,7 @@ export function decisionState(input = {}, { maxChars = DECISION_STATE_CHARS } = 
     ...(memoryView?.memory !== undefined ? { memory: memoryView.memory } : {}),
     ...(input.trigger?.reason ? { trigger: input.trigger.reason } : {}),
   };
-  const fill = () => { state.people = Object.fromEntries([...people.values()].map(({ ref, ...entry }) => [ref, entry])); };
+  const fill = () => { state.people = view.table(); };
   const size = () => { fill(); return JSON.stringify(state).length; };
   // Oldest history goes first; the messages being decided on always stay.
   let omitted = 0;

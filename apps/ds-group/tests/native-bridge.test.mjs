@@ -7,35 +7,38 @@ import { NativeBridge } from '../dsh-connect/native-bridge.mjs';
 import { NativeBots } from '../dsh-connect/native-bots.mjs';
 import { parseBotOutput } from '../src/bot-node.mjs';
 import { ContactBook } from '../src/contact-book.mjs';
+import { messageRef, requestMarker } from '../src/front-prompt.mjs';
 import { DatabaseSync } from 'node:sqlite';
 
-async function fixture(t, { idle = Promise.resolve(), send, cwd, beforeObserve, beforeView } = {}) {
+async function fixture(t, { idle = Promise.resolve(), send, cwd, beforeObserve } = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'native-bridge-'));
-  const handlers = new Map(); let cancelled = 0; let turn = 0;
+  const handlers = new Map(); let cancelled = 0; let turn = 0; let part = 'native-one';
   const ctx = { get(name) { return name === 'workingDirectory' && cwd ? { get: () => cwd } : undefined; }, on(name, handler) { if (!handlers.has(name)) handlers.set(name, new Set()); handlers.get(name).add(handler); return () => handlers.get(name).delete(handler); } };
   const native = new NativeBots(ctx);
-  native.bot = async () => ({ id: 'native-one', name: 'Original', role: 'Research', sessionId: 'native-one', model: 'dsh/model' });
+  native.bot = async () => ({ id: 'native-one', name: 'Original', role: 'Research', sessionId: part, model: 'dsh/model' });
   native.agent = async () => ({ whenIdle: () => idle, cancel: () => cancelled++, ctx: { tools: { schemas: () => ['create_bot','remember','bash'].map(name => ({ name })) } } });
   const calls = [];
-  const event = async (type, data, sessionId = 'native-one') => { for (const handler of handlers.get('session/event') || []) await handler({ id: sessionId }, { type, data }); };
+  const event = async (type, data, sessionId = part) => { for (const handler of handlers.get('session/event') || []) await handler({ id: sessionId }, { type, data }); };
   native.call = async (endpoint, payload) => {
     if (endpoint === 'observe') { await beforeObserve?.(); return { accepted: payload.inputs.length }; }
-    if (endpoint === 'attention-view') { await beforeView?.(); return { schema: 2, currentClaims: [], recentSources: [], historyGaps: [] }; }
+    // A front turn asks the memory for no view of its own: the per-step snapshot is the Session's view of the moment.
     assert.equal(endpoint, 'send');
-    assert.equal(payload.requestId, JSON.parse(payload.text.split('\n').at(-1)).requestId);
-    calls.push(JSON.parse(payload.text.split('\n').at(-1))); turn++;
+    const [marker, envelope, ...more] = payload.text.split('\n');
+    assert.equal(marker, requestMarker(payload.requestId)); assert.deepEqual(more, []);
+    calls.push(JSON.parse(envelope)); turn++;
     await event('turn/start', { turn });
     await event('user/message', { content: [{ type: 'text', text: payload.text }], source: payload.source });
     if (send) return send({ event, turn, payload });
-    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: calls.at(-1).currentMessage.body }] } });
+    await event('assistant/message', { turn, message: { content: [{ type: 'text', text: calls.at(-1).msg.text }] } });
     await event('turn/end', { turn, reason: { kind: 'completed' } });
   };
   const node = { id: '@native:home.test', nativeBotId: 'native-one', directory };
   const bridge = await new NativeBridge({ ctx, native, node, timeoutMs: 2000 }).initialize();
   t.after(async () => { await bridge.detach(); await rm(directory, { recursive: true, force: true }); });
-  const request = (id, room = '!a:home.test') => ({ requestId: id, botId: node.id,
-    event: { roomId: room, eventId: `$${id}`, senderId: '@same:home.test', senderName: 'Same', senderKind: 'human', body: `Reply for ${room}` } });
-  return { bridge, native, node, calls, event, handlers, request, cancelled: () => cancelled };
+  const request = (id, room = '!a:home.test', history = []) => ({ requestId: id, botId: node.id,
+    event: { roomId: room, eventId: `$${id}`, senderId: '@same:home.test', senderName: 'Same', senderKind: 'human', body: `Reply for ${room}` },
+    history: history.map(([eventId, senderId, body]) => ({ eventId, roomId: room, senderId, senderKind: senderId === node.id ? 'bot' : 'human', body })) });
+  return { bridge, native, node, calls, event, handlers, request, cancelled: () => cancelled, newPart: id => { part = id; } };
 }
 
 test('native inputs keep original tools, distinguish interleaved rooms and persist retries without generation', async t => {
@@ -45,8 +48,9 @@ test('native inputs keep original tools, distinguish interleaved rooms and persi
   const [first, second] = await Promise.all([f.bridge.turn(a), f.bridge.turn(b)]);
   assert.equal(first.text, 'Reply for !a:home.test'); assert.equal(second.text, 'Reply for !b:other.test');
   assert.equal(first.sessionId, second.sessionId);
-  assert.notEqual(f.calls[0].context.key, f.calls[1].context.key);
-  assert.equal(f.calls[1].replyRoute.eventId, '$two');
+  assert.deepEqual(f.calls.map(call => call.room.name), ['!a:home.test', '!b:other.test']);
+  assert.equal(f.calls[1].msg.ref, messageRef('$two'));
+  assert.ok(first.prompt.chars < 400, 'a turn carries the message and who is involved, not the rules or the bookkeeping');
   await f.bridge.turn(a); assert.equal(f.calls.length, 2);
   await f.bridge.detach();
   const restarted = await new NativeBridge({ ctx: { on: () => () => {} }, native: f.native, node: f.node }).initialize();
@@ -58,7 +62,7 @@ test('native inputs keep original tools, distinguish interleaved rooms and persi
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done; }); return { promise, resolve }; };
 const deadline = promise => Promise.race([promise, new Promise((_, reject) => { const timer = setTimeout(() => reject(new Error('Cancellation did not settle')), 1500); timer.unref(); })]);
 
-for (const stage of ['beforeObserve', 'beforeView']) {
+for (const stage of ['beforeObserve']) {
   test(`cancellation during ${stage} never sends the task or cancels unrelated native work`, async t => {
     const entered = deferred(), gate = deferred();
     const f = await fixture(t, { [stage]: async () => { entered.resolve(); await gate.promise; } });
@@ -303,4 +307,59 @@ test('requests made with ask_bot go out with the reply of the turn that made the
   assert.equal(result.text, '我去请 QA 看日志。');
   assert.deepEqual(result.asks, [{ to: '@qa:other.test', body: '看看这份 crash.log' }]);
   assert.deepEqual(f.bridge.core.takeAsks('asks'), []);
+});
+
+const ann = '@ann:home.test';
+const texts = call => (call.history || []).map(line => line.text);
+const codeOf = (call, id) => Object.keys(call.people).find(code => call.people[code].id === id);
+
+test('a Session reads a room message once, and a person keeps one code in every room and turn', async t => {
+  const f = await fixture(t);
+  const before = [['$m1', ann, 'first'], ['$m2', f.node.id, 'mine']];
+  await f.bridge.turn(f.request('r1', '!a:home.test', before));
+  await f.bridge.turn(f.request('r2', '!a:home.test', [...before, ['$r1', '@same:home.test', 'Reply for !a:home.test'], ['$own', f.node.id, 'my reply'], ['$m3', ann, 'new']]));
+  await f.bridge.turn(f.request('r3', '!b:other.test', [['$m4', ann, 'elsewhere']]));
+  const [first, second, other] = f.calls;
+  assert.deepEqual(texts(first), ['first', 'mine']); assert.equal(first.seenBefore, undefined);
+  // What it was shown, what it answered and what it said itself are in the Session already.
+  assert.deepEqual(texts(second), ['new']); assert.equal(second.seenBefore, true);
+  assert.deepEqual(texts(other), ['elsewhere']); assert.equal(other.seenBefore, undefined);
+  assert.equal(codeOf(first, f.node.id), 'P1'); assert.equal(first.people.P1.self, true);
+  assert.deepEqual([codeOf(second, ann), codeOf(other, ann)], [codeOf(first, ann), codeOf(first, ann)]);
+  assert.equal(codeOf(other, '@same:home.test'), codeOf(first, '@same:home.test'));
+  // The record is the Bot's, kept by its core for every chat server it is connected to.
+  assert.deepEqual(Object.keys(f.bridge.core.state.reading.rooms), ['!a:home.test', '!b:other.test']);
+});
+
+test('a new part of the conversation reads the room again', async t => {
+  const f = await fixture(t);
+  const history = [['$m1', ann, 'first']];
+  await f.bridge.turn(f.request('r1', '!a:home.test', history));
+  f.newPart('native-next');
+  await f.bridge.turn(f.request('r2', '!a:home.test', [...history, ['$r1', '@same:home.test', 'Reply for !a:home.test']]));
+  assert.deepEqual(texts(f.calls[1]), ['first', 'Reply for !a:home.test']); assert.equal(f.calls[1].seenBefore, undefined);
+  assert.equal(f.bridge.core.state.reading.sessionId, 'native-next');
+});
+
+test('a condensed Session reads its rooms again and people keep their codes', async t => {
+  const f = await fixture(t);
+  const history = [['$m1', ann, 'first']];
+  await f.bridge.turn(f.request('r1', '!a:home.test', history));
+  await f.event('compaction/summary', { summary: [] });
+  assert.deepEqual(f.bridge.core.state.reading.rooms, {});
+  await f.bridge.turn(f.request('r2', '!a:home.test', [...history, ['$m2', ann, 'second']]));
+  assert.deepEqual(texts(f.calls[1]), ['first', 'second']); assert.equal(f.calls[1].seenBefore, undefined);
+  assert.equal(codeOf(f.calls[1], ann), codeOf(f.calls[0], ann));
+});
+
+test('a turn the Session never took showed it nothing', async t => {
+  const f = await fixture(t), call = f.native.call;
+  let lost = true;
+  f.native.call = async (endpoint, payload) => { if (endpoint === 'send' && lost) throw new Error('synthetic admission failure'); return call(endpoint, payload); };
+  const history = [['$m1', ann, 'first']];
+  assert.equal((await f.bridge.turn(f.request('lost', '!a:home.test', history))).status, 'failed');
+  assert.equal(f.bridge.core.state.reading, undefined);
+  lost = false;
+  await f.bridge.turn(f.request('taken', '!a:home.test', history));
+  assert.deepEqual(texts(f.calls[0]), ['first']); assert.equal(f.calls[0].seenBefore, undefined);
 });

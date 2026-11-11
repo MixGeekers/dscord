@@ -1,3 +1,4 @@
+// Modified by DSCord, 2026-11-11: the host can give a Bot its own rules in place of the team rules. See ../../UPSTREAM.json.
 // Prompt: one section whose text depends only on the rendering Session's own Bot
 // record, so the prefix stays byte-stable across turns and roster changes.
 
@@ -50,7 +51,9 @@ export function install(rt) {
         `You are ${bot.name}, a Bot on the user's team in DS Bot.${bot.role ? ` Your role: ${bot.role}.` : ''}`,
         bot.instructions ? `\n${bot.instructions}` : '',
         '',
-        rt.isMain(self) ? `${MAIN_RULES}\n\n${TEAM_RULES}` : TEAM_RULES,
+        // A host that serves this Bot elsewhere (config.botRules) says how it works there: the native team,
+        // its groups and its Bot-to-Bot channel are not how that Bot works, so their rules are not its rules.
+        rt.config?.botRules?.(self) ?? (rt.isMain(self) ? `${MAIN_RULES}\n\n${TEAM_RULES}` : TEAM_RULES),
       ].join('\n')
     }
     const room = rt.roomOf(id)
