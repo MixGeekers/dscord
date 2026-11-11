@@ -36,7 +36,7 @@ jobs:
 
   verify:
     needs: metadata
-    uses: ./.github/workflows/ds-group-ci.yml
+    uses: ./.github/workflows/ds-group-full.yml
     permissions:
       contents: read
 

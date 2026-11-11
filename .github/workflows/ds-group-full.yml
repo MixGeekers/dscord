@@ -1,0 +1,269 @@
+name: DS-Group Full Verification
+
+# Release-grade suites: source package, Docker deployment, DSH runtime and browser checks.
+# Runs before every release and on demand; pull requests only run ds-group-ci.yml.
+on:
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ds-group-full-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+jobs:
+  source:
+    name: Source package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/ds-group
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: apps/ds-group/package-lock.json
+      - name: Install exact dependencies
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Syntax and zero-model module tests
+        run: npm run check
+      - name: TypeScript 7 and React production build
+        run: npm run build
+      - name: Assemble npm runtime with central initialization and management frontend
+        run: node scripts/npm-pack.mjs
+      - name: Build and verify source release
+        run: |
+          node scripts/release-pack.mjs
+          node scripts/release-verify.mjs --extract .local/release-unpacked
+      - name: Clean-install and test extracted release
+        run: |
+          npm ci --prefix .local/release-unpacked --ignore-scripts --no-audit --no-fund
+          node .local/release-unpacked/scripts/check.mjs
+          npm --prefix .local/release-unpacked run build
+      - name: Upload verified source release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ds-group-source
+          path: apps/ds-group/.local/release/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+
+  container:
+    name: Deploy / Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            arch: amd64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+    defaults:
+      run:
+        working-directory: apps/ds-group
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+      - name: Prepare standalone source
+        run: |
+          node scripts/release-pack.mjs
+          node scripts/release-verify.mjs --extract .local/release-unpacked
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - name: Build native image from release archive
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: apps/ds-group/.local/release-unpacked
+          platforms: linux/${{ matrix.arch }}
+          load: true
+          tags: ds-group:ci-${{ matrix.arch }}
+          cache-from: type=gha,scope=ds-group-${{ matrix.arch }}
+          cache-to: type=gha,mode=min,scope=ds-group-${{ matrix.arch }}
+      - name: Validate deployment configurations
+        run: |
+          docker compose -f .local/release-unpacked/deploy/compose.yaml config --quiet
+          DS_GROUP_DOMAIN=chat.example.com docker compose -f .local/release-unpacked/deploy/compose.yaml -f .local/release-unpacked/deploy/compose.https.yaml config --quiet
+      - name: Fresh deployment, messaging and restart persistence
+        run: node .local/release-unpacked/scripts/deploy-smoke.mjs
+        env:
+          DS_GROUP_IMAGE: ds-group:ci-${{ matrix.arch }}
+          DS_GROUP_PLATFORM: linux/${{ matrix.arch }}
+          DS_GROUP_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/deploy-smoke.json
+      - name: API-only central identity and separate administration survive recreation
+        run: node .local/release-unpacked/scripts/platform-deploy-smoke.mjs
+        env:
+          DS_GROUP_IMAGE: ds-group:ci-${{ matrix.arch }}
+          DS_GROUP_PLATFORM: linux/${{ matrix.arch }}
+          DS_GROUP_PLATFORM_SMOKE_PORT_BASE: '24220'
+          DS_GROUP_PLATFORM_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/platform-deploy-smoke.json
+      - name: Panel update, cold backup, rollback and interrupted update recovery
+        run: node .local/release-unpacked/scripts/server-update-smoke.mjs
+        env:
+          DS_GROUP_IMAGE: ds-group:ci-${{ matrix.arch }}
+          DS_GROUP_UPDATE_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/server-update-smoke.json
+      - name: Upload deployment result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: deploy-${{ matrix.arch }}
+          path: |
+            apps/ds-group/.local/deploy-smoke.json
+            apps/ds-group/.local/platform-deploy-smoke.json
+            apps/ds-group/.local/server-update-smoke.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  runtime:
+    name: DSH runtime
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: apps/ds-group
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+      - name: Install official standalone DSH
+        run: |
+          DSH_VERSION="$(node --input-type=module -e 'import {DSH_VERSION} from "./scripts/runtime-config.mjs"; process.stdout.write(DSH_VERSION);')"
+          npm install --prefix .local/dsh-install --no-audit --no-fund "@deepseek-ai/dsh@$DSH_VERSION"
+      - name: Prepare verified standalone source
+        run: |
+          node scripts/release-pack.mjs
+          node scripts/release-verify.mjs --extract .local/release-unpacked
+      - name: Kernel and memory tool contracts use the official pinned SDK
+        run: npm --prefix .local/release-unpacked run test:kernel-host
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+      - name: Owned kernel has one lifecycle and a pure zero-model health API
+        run: node .local/release-unpacked/scripts/kernel-runtime-smoke.mjs
+        env:
+          DS_GROUP_DSH_CLI: ${{ github.workspace }}/apps/ds-group/.local/dsh-install/node_modules/.bin/dsh
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DS_GROUP_KERNEL_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/kernel-runtime-smoke.json
+      - name: Native Bot session survives restart with zero generations
+        run: node .local/release-unpacked/scripts/runtime-smoke.mjs
+        env:
+          DS_GROUP_DSH_CLI: ${{ github.workspace }}/apps/ds-group/.local/dsh-install/node_modules/.bin/dsh
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DS_GROUP_RUNTIME_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/runtime-smoke.json
+          OPENCODE_API_KEY: ci-synthetic-key-no-generation
+      - name: Complete native tools, observation and automatic review use only a local provider
+        run: node .local/release-unpacked/tests/runtime-native.host.mjs
+        env:
+          DS_GROUP_DSH_CLI: ${{ github.workspace }}/apps/ds-group/.local/dsh-install/node_modules/.bin/dsh
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DSCORD_NATIVE_NODE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/runtime-native-host.json
+      - name: Current memory replaces superseded snapshots across restart and native compaction
+        run: node .local/release-unpacked/tests/memory-snapshot.runtime.mjs
+        env:
+          DS_GROUP_DSH_CLI: ${{ github.workspace }}/apps/ds-group/.local/dsh-install/node_modules/.bin/dsh
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DSCORD_SNAPSHOT_REPORT: ${{ github.workspace }}/apps/ds-group/.local/memory-snapshot-host.json
+      - name: Native tools, artifacts and cancellation with a local scripted provider
+        run: node .local/release-unpacked/scripts/runtime-work-smoke.mjs
+        env:
+          DS_GROUP_DSH_CLI: ${{ github.workspace }}/apps/ds-group/.local/dsh-install/node_modules/.bin/dsh
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DS_GROUP_WORK_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/runtime-work-smoke.json
+          OPENCODE_API_KEY: ci-synthetic-key-no-generation
+      - name: Native cross-server work authorization and synchronous tool guard
+        run: node .local/release-unpacked/scripts/cross-server-runtime-smoke.mjs
+        env:
+          DS_GROUP_DSH_CLI: ${{ github.workspace }}/apps/ds-group/.local/dsh-install/node_modules/.bin/dsh
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DS_GROUP_SCOPED_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/cross-server-runtime-smoke.json
+          OPENCODE_API_KEY: ci-synthetic-key-no-generation
+      - name: Upload native runtime result
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime
+          path: |
+            apps/ds-group/.local/kernel-runtime-smoke.json
+            apps/ds-group/.local/runtime-smoke.json
+            apps/ds-group/.local/runtime-native-host.json
+            apps/ds-group/.local/memory-snapshot-host.json
+            apps/ds-group/.local/runtime-work-smoke.json
+            apps/ds-group/.local/cross-server-runtime-smoke.json
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
+
+  browser:
+    name: Browser / Chromium
+    runs-on: ubuntu-24.04
+    # Match @playwright/test in package-lock.json; browsers and system dependencies are preinstalled.
+    # https://playwright.dev/docs/docker
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:2f05f8a734509a7b3f26a912639488ee08f58a7b292d14d62271bcff9038768f
+      options: --shm-size=1g --init
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/ds-group
+        shell: bash
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
+          cache: npm
+          cache-dependency-path: apps/ds-group/package-lock.json
+      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: Validate preinstalled Chromium
+        run: |
+          node --input-type=module <<'JS'
+          import { createRequire } from 'node:module';
+          import { chromium } from 'playwright';
+          const require = createRequire(import.meta.url);
+          if (require('@playwright/test/package.json').version !== '1.64.1') throw new Error('Update the pinned Playwright container to match the package');
+          const browser = await chromium.launch();
+          console.log('Preinstalled Chromium:', await browser.version());
+          await browser.close();
+          JS
+      - name: Build chat and administration frontends required by the browser suite
+        run: npm run build
+      - name: Chat, unified client and administration browser checks
+        run: npm run test:browser
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: browser-checks
+          path: |
+            apps/ds-group/.local/*browser*.json
+            apps/ds-group/.local/avatar-validation/browser.json
+            apps/ds-group/.local/avatar-validation/*.png
+            apps/ds-group/.local/governance/admin-browser.json
+            apps/ds-group/.local/server-updates-browser/*.json
+            apps/ds-group/.local/server-updates-browser/*.png
+            apps/ds-group/.local/governance/admin-*.png
+            apps/ds-group/.local/unified-client-browser/*.json
+            apps/ds-group/.local/unified-client-browser/*.png
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 14
