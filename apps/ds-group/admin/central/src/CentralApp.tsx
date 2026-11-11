@@ -9,7 +9,8 @@ import {
   Settings,
   Users,
 } from "lucide-react";
-import { Button, Input, NativeSelect } from "../../../ui/controls";
+import { Button, Input } from "../../../ui/controls";
+import { Select } from "../../../ui/select";
 import { Field } from "../../src/fields";
 import { useLocale, useTranslation } from "../../src/locale";
 import { centralMessages } from "./messages";
@@ -209,30 +210,29 @@ function Preferences({ central }: { central: Central }) {
   return (
     <div className="admin-preferences">
       <Field label={t("theme")}>
-        <NativeSelect
+        <Select<"dark" | "light" | "system">
           value={theme}
-          onChange={(event) => {
-            const value = event.target.value as "dark" | "light" | "system";
+          onValueChange={(value) => {
             setTheme(value);
             window.DSGroupTheme?.setPreference(value);
           }}
-        >
-          <option value="system">{t("system")}</option>
-          <option value="light">{t("light")}</option>
-          <option value="dark">{t("dark")}</option>
-        </NativeSelect>
+          options={[
+            { value: "system", label: t("system") },
+            { value: "light", label: t("light") },
+            { value: "dark", label: t("dark") },
+          ]}
+        />
       </Field>
       <Field label={t("language")}>
-        <NativeSelect
+        <Select<"en" | "zh-CN" | "system">
           value={preference}
-          onChange={(event) =>
-            setPreference(event.target.value as "en" | "zh-CN" | "system")
-          }
-        >
-          <option value="system">{t("system")}</option>
-          <option value="zh-CN">简体中文</option>
-          <option value="en">English</option>
-        </NativeSelect>
+          onValueChange={setPreference}
+          options={[
+            { value: "system", label: t("system") },
+            { value: "zh-CN", label: "简体中文" },
+            { value: "en", label: "English" },
+          ]}
+        />
       </Field>
     </div>
   );
@@ -622,19 +622,27 @@ function AccountsPanel({ central }: { central: Central }) {
           <Input name="q" placeholder={t("searchAccounts")} />
         </Field>
         <Field label={t("kind")}>
-          <NativeSelect name="kind" defaultValue="">
-            <option value="">{t("all")}</option>
-            <option value="human">{t("human")}</option>
-            <option value="bot">{t("bot")}</option>
-          </NativeSelect>
+          <Select
+            name="kind"
+            defaultValue=""
+            options={[
+              { value: "", label: t("all") },
+              { value: "human", label: t("human") },
+              { value: "bot", label: t("bot") },
+            ]}
+          />
         </Field>
         <Field label={t("status")}>
-          <NativeSelect name="status" defaultValue="">
-            <option value="">{t("all")}</option>
-            <option value="active">{t("active")}</option>
-            <option value="disabled">{t("disabled")}</option>
-            <option value="closed">{t("closed")}</option>
-          </NativeSelect>
+          <Select
+            name="status"
+            defaultValue=""
+            options={[
+              { value: "", label: t("all") },
+              { value: "active", label: t("active") },
+              { value: "disabled", label: t("disabled") },
+              { value: "closed", label: t("closed") },
+            ]}
+          />
         </Field>
         <Button variant="secondary" type="submit" disabled={busy}>
           {t("search")}
@@ -734,19 +742,24 @@ function SettingsPanel({ central }: { central: Central }) {
       </div>
       <div className="admin-form-fields">
         <Field label={t("listing")}>
-          <NativeSelect name="listing" defaultValue={overview.settings.listing}>
-            <option value="review">{t("listingReview")}</option>
-            <option value="open">{t("listingOpen")}</option>
-          </NativeSelect>
+          <Select
+            name="listing"
+            defaultValue={overview.settings.listing}
+            options={[
+              { value: "review", label: t("listingReview") },
+              { value: "open", label: t("listingOpen") },
+            ]}
+          />
         </Field>
         <Field label={t("registration")}>
-          <NativeSelect
+          <Select
             name="registration"
             defaultValue={overview.settings.registration}
-          >
-            <option value="open">{t("registrationOpen")}</option>
-            <option value="closed">{t("registrationClosed")}</option>
-          </NativeSelect>
+            options={[
+              { value: "open", label: t("registrationOpen") },
+              { value: "closed", label: t("registrationClosed") },
+            ]}
+          />
         </Field>
         <p className="admin-muted">{t("adminsHint")}</p>
       </div>

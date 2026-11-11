@@ -10,6 +10,7 @@ import { CHAT, connectFixture } from './fixtures/connect.mjs';
 import { DecisionSettings } from '../dsh-connect/decision-settings.mjs';
 import { createDecisionProvider } from '../src/decision-provider.mjs';
 import { KernelUpdates } from '../dsh-connect/kernel-updates.mjs';
+import { chooseOption } from "./helpers/select.mjs";
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'dscord-kernel-ui-'));
 const output = path.join(packageRoot, '.local/kernel-settings-browser');
@@ -379,7 +380,7 @@ try {
     if (!await panel.locator('form').isVisible()) await panel.locator('summary').click();
     await panel.locator('form').waitFor();
   };
-  await decision.getByLabel('Service preset', { exact: true }).selectOption('typesafe-jev');
+  await chooseOption(decision.getByLabel('Service preset', { exact: true }), 'typesafe-jev');
   assert.equal(await decision.getByLabel('Decision model name', { exact: true }).inputValue(), 'jev-1.14.0');
   assert.equal(await decision.getByLabel('Service address', { exact: true }).inputValue(), 'https://api.typesafe.ai/v1/systemone');
   assert.equal(await keyField.inputValue(), '');
@@ -396,12 +397,12 @@ try {
   await decisionShot('decision-jev-light-zh.png');
   await page.evaluate(() => { window.fixture.locale('en'); document.body.setAttribute('data-ds-dark-theme', ''); });
   await revealDecision();
-  await decision.getByLabel('Service preset', { exact: true }).selectOption('cloudflare-clef');
+  await chooseOption(decision.getByLabel('Service preset', { exact: true }), 'cloudflare-clef');
   assert.equal(await keyField.getAttribute('required'), '');
   const accountId = '0123456789abcdef0123456789abcdef';
   await decision.getByLabel('Cloudflare Account ID', { exact: true }).fill(accountId);
   assert.equal(await decision.getByLabel('Service address', { exact: true }).inputValue(), `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/cloudflare/clef`);
-  await decision.getByLabel('Decision model name', { exact: true }).selectOption('clef-flash');
+  await chooseOption(decision.getByLabel('Decision model name', { exact: true }), 'clef-flash');
   assert.match(await decision.getByLabel('Service address', { exact: true }).inputValue(), /\/clef-flash$/);
   await keyField.fill('synthetic-cloudflare-key');
   await save.click();
@@ -420,7 +421,7 @@ try {
   await page.setViewportSize({ width: 1000, height: 900 });
   await page.evaluate(() => { window.fixture.locale('en'); document.body.setAttribute('data-ds-dark-theme', ''); });
   await revealDecision();
-  await decision.getByLabel('Service preset', { exact: true }).selectOption('typesafe-jev');
+  await chooseOption(decision.getByLabel('Service preset', { exact: true }), 'typesafe-jev');
   assert.equal(await keyField.getAttribute('required'), null, 'switching back keeps this service’s credential');
   await save.click();
   await decision.getByRole('status').filter({ hasText: 'Saved. The decision model is working.' }).waitFor();

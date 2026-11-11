@@ -7,6 +7,7 @@ import tailwindcss from '@tailwindcss/vite';
 import { chromium } from 'playwright';
 import { packageRoot } from '../src/paths.mjs';
 import { CHAT, centralUrl, connectFixture } from './fixtures/connect.mjs';
+import { chooseOption, optionLabels, selectedValue } from "./helpers/select.mjs";
 
 // The page shows both Bot dialogs for one signed-in person. Its requests to the central server are carried there
 // by the test, so the page, the central server and the DSH controller are the real ones end to end.
@@ -125,10 +126,10 @@ try {
   await dialog.waitFor();
   assert.equal(await page.locator('#create-bot-title').textContent(), 'Add a Bot');
   assert.equal(await page.locator('#create-bot-submit').isDisabled(), true, 'a Bot needs a name');
-  assert.deepEqual(await page.locator('#create-bot-model option').allTextContents(), ['Device default']);
+  assert.deepEqual(await optionLabels(page.locator('#create-bot-model')), ['Device default']);
   await dialog.getByText('Models can be chosen here once a device is connected.', { exact: true }).waitFor();
   // Where the Bot will run is always shown: with no device yet, it says the first one to connect takes it.
-  assert.deepEqual(await page.locator('#create-bot-device option').allTextContents(), ['The first device that connects']);
+  assert.deepEqual(await optionLabels(page.locator('#create-bot-device')), ['The first device that connects']);
   assert.equal(await page.locator('#create-bot-device').isDisabled(), true);
   await dialog.getByText('No device is connected yet. After creating the Bot you get a connection key', { exact: false }).waitFor();
   await page.locator('#create-bot-name').fill('Shiyu');
@@ -165,13 +166,16 @@ try {
   // With a device linked, the form offers that device's models and a new Bot comes online with no further step.
   await page.locator('#open-create-bot').click();
   await dialog.waitFor();
-  await page.locator('#create-bot-model option[value="fixture/large"]').waitFor({ state: 'attached' });
-  assert.deepEqual(await page.locator('#create-bot-model option').allTextContents(), ['Device default (fixture/default)', 'Default', 'Large', 'Locked (no key on the device yet)']);
-  assert.deepEqual(await page.locator('#create-bot-device option').allTextContents(), ['DSH laptop · Online']);
-  assert.equal(await page.locator('#create-bot-device').inputValue(), f.controller.state.hostId);
+  for (let tries = 0; !(await optionLabels(page.locator('#create-bot-model'))).includes('Large'); tries++) {
+    assert.ok(tries < 50, 'the device reports its models');
+    await page.waitForTimeout(100);
+  }
+  assert.deepEqual(await optionLabels(page.locator('#create-bot-model')), ['Device default (fixture/default)', 'Default', 'Large', 'Locked (no key on the device yet)']);
+  assert.deepEqual(await optionLabels(page.locator('#create-bot-device')), ['DSH laptop · Online']);
+  assert.equal(await selectedValue(page.locator('#create-bot-device')), f.controller.state.hostId);
   assert.equal(await page.locator('#create-bot-name').inputValue(), '', 'the form starts empty each time');
   await page.locator('#create-bot-name').fill('数据员');
-  await page.locator('#create-bot-model').selectOption('fixture/large');
+  await chooseOption(page.locator('#create-bot-model'), 'fixture/large');
   assert.equal(await dialog.locator('.bot-setup-fields [data-decision-warning]').count(), 1, 'the chosen device is named as lacking its decision model');
   await shots('create-form-device');
   await page.locator('#create-bot-submit').click();
@@ -203,8 +207,8 @@ try {
   await row.locator('[data-bot-setup-button]').click();
   await row.getByLabel('Name', { exact: true }).fill('诗雨');
   await row.getByLabel('Role', { exact: true }).fill('Keeps the garden plan');
-  assert.deepEqual(await row.getByLabel('Runs on', { exact: true }).locator('option').allTextContents(), ['DSH laptop · Online']);
-  await row.getByLabel('Model', { exact: true }).selectOption('fixture/large');
+  assert.deepEqual(await optionLabels(row.getByLabel('Runs on', { exact: true })), ['DSH laptop · Online']);
+  await chooseOption(row.getByLabel('Model', { exact: true }), 'fixture/large');
   await row.locator('[data-save-bot]').click();
   await row.getByRole('status').filter({ hasText: 'Saved.' }).waitFor();
   await until(() => f.locals[0].name === '诗雨' && f.locals[0].role === 'Keeps the garden plan' && f.locals[0].model === 'fixture/large', 'the device applies the new setup');

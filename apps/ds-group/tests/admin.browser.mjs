@@ -5,6 +5,7 @@ import os from "node:os";
 import { chromium } from "playwright";
 import { createAdmin } from "../src/admin.mjs";
 import { packageRoot } from "../src/paths.mjs";
+import { chooseOption } from "./helpers/select.mjs";
 
 const root = await mkdtemp(path.join(os.tmpdir(), "dscord-admin-browser-"));
 const invitations = [];
@@ -77,12 +78,12 @@ try {
   page.on("pageerror", (error) => errors.push(error.message));
   await page.goto(base);
   await page.screenshot({ path: path.join(output, "admin-login-desktop.png"), animations: "disabled" });
-  await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
+  await chooseOption(page.getByLabel("Language", { exact: true }), "zh-CN");
   await page.getByLabel("管理员账号", { exact: true }).fill("admin");
   await page.getByLabel("密码", { exact: true }).fill("incorrect-browser-password");
   await page.getByRole("button", { name: "登录", exact: true }).click();
   await page.getByRole("alert").getByText("管理员账号或密码错误。", { exact: true }).waitFor();
-  await page.getByLabel("语言", { exact: true }).selectOption("en");
+  await chooseOption(page.getByLabel("语言", { exact: true }), "en");
   await page.getByRole("alert").getByText("Administrator name or password is incorrect.", { exact: true }).waitFor();
   checks.push("Known login errors follow the active language, including a language change after failure");
   await page.getByLabel("Administrator", { exact: true }).fill("admin");
@@ -277,8 +278,8 @@ try {
   });
   checks.push("Deployment controls persist the upload policy");
   await page.getByRole("button", { name: "Server directory", exact: true }).click();
-  await page.getByLabel("How people find this server", { exact: true }).selectOption("number");
-  await page.getByLabel("How people join", { exact: true }).selectOption("invite");
+  await chooseOption(page.getByLabel("How people find this server", { exact: true }), "number");
+  await chooseOption(page.getByLabel("How people join", { exact: true }), "invite");
   await page.getByLabel("Name", { exact: true }).fill("Robotics club");
   await page.getByLabel("Description", { exact: true }).fill("Arms, wheels and weekly build nights");
   await page.getByLabel("Tags (comma-separated, up to 10)", { exact: true }).fill("Robots, arms");
@@ -303,22 +304,22 @@ try {
   await page.locator(".admin-server-number strong").filter({ hasText: "48213907" }).waitFor();
   await page.getByText("Submitted, waiting for the central administrators to review.", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Submit again", exact: true }).waitFor();
-  await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
+  await chooseOption(page.getByLabel("Language", { exact: true }), "zh-CN");
   await page.getByText("别人怎么找到本服务器", { exact: true }).waitFor();
   await page.getByText("已提交，等待中央管理员审核。", { exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, "admin-directory-zh-desktop.png"), fullPage: true, animations: "disabled" });
-  await page.getByLabel("语言", { exact: true }).selectOption("en");
+  await chooseOption(page.getByLabel("语言", { exact: true }), "en");
   await page.screenshot({ path: path.join(output, "admin-directory-en-desktop.png"), fullPage: true, animations: "disabled" });
-  await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
+  await chooseOption(page.getByLabel("Language", { exact: true }), "zh-CN");
   await page.getByRole("button", { name: "撤销", exact: true }).first().click();
   await page.getByText("没有有效的邀请码", { exact: true }).waitFor();
-  await page.getByLabel("语言", { exact: true }).selectOption("en");
+  await chooseOption(page.getByLabel("语言", { exact: true }), "en");
   checks.push("Directory controls persist discovery and join modes, submit without a central account, show the server number and listing state, and create and revoke invitations");
   await page.getByRole("button", { name: "Prepare and apply", exact: true }).click();
-  await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
+  await chooseOption(page.getByLabel("Language", { exact: true }), "zh-CN");
   await page.getByRole("button", { name: "概览", exact: true }).click();
   await page.getByText("部分应用", { exact: true }).waitFor();
-  await page.getByLabel("语言", { exact: true }).selectOption("en");
+  await chooseOption(page.getByLabel("语言", { exact: true }), "en");
   checks.push("Chinese overview localizes the observed partial application state");
   await page
     .getByRole("button", { name: "Administrators", exact: true })
@@ -332,7 +333,7 @@ try {
   await page.waitForFunction(() => document.querySelector('form.admin-editor [role="checkbox"]')?.getAttribute('aria-checked') === 'true');
   assert.equal(await page.getByRole("checkbox", { name: "Enabled", exact: true }).getAttribute("aria-checked"), "true");
   await page.getByLabel("Administrator", { exact: true }).fill("auditor");
-  await page.getByLabel("Role", { exact: true }).selectOption("auditor");
+  await chooseOption(page.getByLabel("Role", { exact: true }), "auditor");
   await page
     .getByLabel("New password (12+ characters; leave empty to keep)")
     .fill("synthetic-auditor-password");
@@ -354,10 +355,10 @@ try {
     0,
   );
   checks.push("Audit shows actual administrative writes without credentials");
-  await page.getByLabel("Language", { exact: true }).selectOption("zh-CN");
+  await chooseOption(page.getByLabel("Language", { exact: true }), "zh-CN");
   await page.getByRole("heading", { name: "审计", exact: true }).waitFor();
   await page.getByText("admin · 所有者", { exact: true }).waitFor();
-  await page.getByLabel("外观", { exact: true }).selectOption("dark");
+  await chooseOption(page.getByLabel("外观", { exact: true }), "dark");
   assert.equal(await page.locator("html").getAttribute("data-theme"), "dark");
   checks.push(
     "Chinese translation and dark appearance use shared preferences and tokens",
@@ -386,7 +387,7 @@ try {
     "Mobile management forms fit a 390px viewport without page overflow",
   );
   await page.setViewportSize({ width: 1440, height: 1000 });
-  await page.getByLabel("外观", { exact: true }).selectOption("light");
+  await chooseOption(page.getByLabel("外观", { exact: true }), "light");
   await page.screenshot({
     path: path.join(output, "admin-desktop.png"),
     fullPage: true,

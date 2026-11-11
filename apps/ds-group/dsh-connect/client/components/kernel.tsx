@@ -201,19 +201,15 @@ export function DecisionPanel({
           name="decisionPreset"
           value={preset}
           disabled={busy || !form}
-          onChange={(event) => {
-            const next = form?.presets.find(
-              (item) => item.id === event.target.value,
-            );
+          onValueChange={(id) => {
+            const next = form?.presets.find((item) => item.id === id);
             if (next) selectPreset(next);
           }}
-        >
-          {(form?.presets ?? []).map((item) => (
-            <option key={item.id} value={item.id}>
-              {item.name}
-            </option>
-          ))}
-        </Select>
+          options={(form?.presets ?? []).map((item) => ({
+            value: item.id,
+            label: item.name,
+          }))}
+        />
         <span className="dc-hint">{t("decisionServiceHelp")}</span>
       </div>
       {cloudflare && (
@@ -257,12 +253,13 @@ export function DecisionPanel({
             id="decision-model"
             name="decisionModel"
             value={model}
-            onChange={(event) => changeModel(event.target.value)}
+            onValueChange={changeModel}
             disabled={busy}
-          >
-            <option value="clef">Clef</option>
-            <option value="clef-flash">Clef Flash</option>
-          </Select>
+            options={[
+              { value: "clef", label: "Clef" },
+              { value: "clef-flash", label: "Clef Flash" },
+            ]}
+          />
         ) : (
           <Input
             id="decision-model"

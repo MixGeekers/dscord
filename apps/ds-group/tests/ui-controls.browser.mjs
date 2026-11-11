@@ -6,6 +6,7 @@ import { chromium } from "playwright";
 import { createServer } from "vite";
 import tailwindcss from "@tailwindcss/vite";
 import { packageRoot } from "../src/paths.mjs";
+import { chooseOption } from "./helpers/select.mjs";
 
 const html = `<!doctype html>
 <html><head>
@@ -17,7 +18,8 @@ const html = `<!doctype html>
 </head><body><div id="root"></div><script type="module">
   import React from 'react';
   import { createRoot } from 'react-dom/client';
-  import { Button, Checkbox, Input, NativeSelect, Radio, RadioGroup, Textarea } from '/@fs/${path.join(packageRoot, "ui/controls.tsx")}';
+  import { Button, Checkbox, Input, Radio, RadioGroup, Textarea } from '/@fs/${path.join(packageRoot, "ui/controls.tsx")}';
+  import { Select } from '/@fs/${path.join(packageRoot, "ui/select.tsx")}';
   const h = React.createElement;
   const fixture = window.controlsFixture = { cancelReset: false };
   document.addEventListener('reset', event => { if (fixture.cancelReset) event.preventDefault(); }, true);
@@ -33,8 +35,8 @@ const html = `<!doctype html>
             h('label', null, h(Radio, { value: 'all' }), 'All messages')),
           h('label', null, 'Title', h(Input, { name: 'title', defaultValue: 'Draft' })),
           h('label', null, 'Details', h(Textarea, { name: 'details', defaultValue: 'Notes' })),
-          h('label', null, 'Choice', h(NativeSelect, { name: 'choice', defaultValue: 'first' },
-            h('option', { value: 'first' }, 'First'), h('option', { value: 'second' }, 'Second')))),
+          h('label', { htmlFor: 'choice' }, 'Choice'), h(Select, { id: 'choice', name: 'choice', defaultValue: 'first',
+            options: [{ value: 'first', label: 'First' }, { value: 'second', label: 'Second' }] })),
         h(Button, { id: 'reset-controls', variant: 'secondary', type: 'reset' }, 'Reset')));
   }
   createRoot(document.getElementById('root')).render(h(Fixture));
@@ -76,7 +78,7 @@ try {
   await page.getByText("All messages", { exact: true }).click();
   await page.getByLabel("Title").fill("Changed");
   await page.getByLabel("Details").fill("More");
-  await page.getByLabel("Choice").selectOption("second");
+  await chooseOption(page.getByLabel("Choice"), "second");
   assert.deepEqual(await values(), { mode: "all", title: "Changed", details: "More", choice: "second" });
   checks.push("checkboxAndRadioLabelsChangeHiddenFormInputs");
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { chromium } from "playwright";
 import { createCentral } from "../central/service.mjs";
 import { packageRoot } from "../src/paths.mjs";
+import { chooseOption } from "./helpers/select.mjs";
 
 // A real central server with its built panel; chat servers' public pages are synthetic.
 const ISSUER = "https://id.example.org";
@@ -120,17 +121,17 @@ try {
   checks.push("accountsCanBeDisabledButNotOneself");
 
   await page.getByRole("button", { name: /^设置/ }).click();
-  await page.getByLabel("新登记的服务器", { exact: true }).selectOption("open");
+  await chooseOption(page.getByLabel("新登记的服务器", { exact: true }), "open");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await page.getByText("设置已保存。", { exact: true }).waitFor();
   assert.equal((await api("/api/admin/overview", { token: curator })).settings.listing, "open");
-  await page.getByLabel("新登记的服务器", { exact: true }).selectOption("review");
+  await chooseOption(page.getByLabel("新登记的服务器", { exact: true }), "review");
   await page.getByRole("button", { name: "保存", exact: true }).click();
   await page.getByText("设置已保存。", { exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, "central-settings-zh.png"), animations: "disabled" });
   checks.push("settingsSwitchBetweenReviewAndImmediateListing");
 
-  await page.getByLabel("语言", { exact: true }).selectOption("en");
+  await chooseOption(page.getByLabel("语言", { exact: true }), "en");
   await page.getByRole("button", { name: /^Servers/ }).click();
   await page.getByRole("tab", { name: /All/ }).click();
   await page.locator(".central-server-row").nth(3).waitFor();

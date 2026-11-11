@@ -1,0 +1,49 @@
+/* Layout of the component showcase page. It is a page stylesheet like any other: roles and scale only. */
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--color-bg-canvas); color: var(--color-text-normal); font: var(--text-body); }
+button, input, textarea { font: inherit; }
+code { font: var(--text-code); }
+
+.showcase { display: grid; gap: var(--space-2xl); width: min(100%, 1180px); margin: 0 auto; padding: var(--space-3xl) var(--space-2xl) var(--space-4xl); }
+.showcase-header { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: var(--space-lg) var(--space-2xl); }
+.showcase-heading { display: grid; gap: var(--space-xs); }
+.showcase-switches { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.showcase-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-xl); }
+.showcase-card { min-width: 0; padding: var(--space-2xl); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); background: var(--color-bg-primary); }
+.showcase-wide { grid-column: 1 / -1; }
+.showcase-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-sm); }
+.showcase-stack { display: grid; gap: var(--space-lg); }
+.showcase-panel { display: grid; gap: var(--space-2xl); padding: var(--space-xl); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-bg-primary); }
+
+.showcase-roles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--space-lg) var(--space-2xl); margin: 0; }
+.showcase-role { display: grid; gap: var(--space-xs); min-width: 0; }
+.showcase-role-sample { margin: 0; color: var(--color-text-primary); }
+.showcase-role-display { font: var(--text-display); }
+.showcase-role-title { font: var(--text-title); }
+.showcase-role-heading { font: var(--text-heading); }
+.showcase-role-message { font: var(--text-message); color: var(--color-text-normal); }
+.showcase-role-body-strong { font: var(--text-body-strong); }
+.showcase-role-body { font: var(--text-body); color: var(--color-text-normal); }
+.showcase-role-label { font: var(--text-label); color: var(--color-text-secondary); }
+.showcase-role-caption { font: var(--text-caption); color: var(--color-text-muted); }
+.showcase-role-micro { font: var(--text-micro); color: var(--color-text-secondary); }
+.showcase-role-code { font: var(--text-code); color: var(--color-text-normal); }
+
+.showcase-dot { display: block; width: var(--size-icon-sm); height: var(--size-icon-sm); border-radius: var(--radius-round); background: var(--color-avatar-bot); }
+
+.showcase-scroll { max-height: 260px; border: 1px solid var(--color-border-subtle); border-radius: var(--radius-md); background: var(--color-bg-secondary); }
+.showcase-swatches { display: flex; flex-wrap: wrap; gap: var(--space-md); }
+.showcase-swatch { width: var(--size-control); height: var(--size-control); padding: 0; border: 0; border-radius: var(--radius-round); cursor: pointer; }
+.showcase-swatch[aria-checked="true"] { outline: var(--focus-width) solid var(--color-text-primary); outline-offset: var(--focus-offset); }
+.showcase-swatch:focus-visible { outline: var(--focus-width) solid var(--color-focus); outline-offset: var(--focus-offset); }
+.showcase-swatch-indigo { background: var(--palette-indigo); }
+.showcase-swatch-blue { background: var(--palette-blue); }
+.showcase-swatch-teal { background: var(--palette-teal); }
+.showcase-swatch-rose { background: var(--palette-rose); }
+.showcase-swatch-amber { background: var(--palette-amber); }
+
+@media (max-width: 760px) {
+  .showcase { padding: var(--space-xl) var(--space-lg) var(--space-3xl); }
+  .showcase-grid, .showcase-roles { grid-template-columns: minmax(0, 1fr); }
+  .showcase-card { padding: var(--space-lg); }
+}

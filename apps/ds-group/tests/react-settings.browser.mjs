@@ -6,6 +6,7 @@ import { createServer } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import { chromium } from 'playwright';
 import { packageRoot } from '../src/paths.mjs';
+import { chooseOption, selectedValue } from "./helpers/select.mjs";
 
 const html = `<!doctype html>
 <html>
@@ -222,28 +223,28 @@ try {
   checks.push('settingsFrameKeepsExactDesktopBoundsAcrossTabs');
 
   await page.locator('[data-settings-tab="appearance"]').click();
-  await page.locator('#language-select').selectOption('en');
+  await chooseOption(page.locator('#language-select'), 'en');
   await page.waitForFunction(() => document.documentElement.lang === 'en');
   sameFrame(await frame(), desktopFrame);
   assert.equal(await page.locator('#settings-title').textContent(), 'Settings');
-  await page.locator('#language-select').selectOption('system');
-  assert.equal(await page.locator('#language-select').inputValue(), 'system');
-  await page.locator('#language-select').selectOption('en');
-  assert.equal(await page.locator('#language-select').inputValue(), 'en');
+  await chooseOption(page.locator('#language-select'), 'system');
+  assert.equal(await selectedValue(page.locator('#language-select')), 'system');
+  await chooseOption(page.locator('#language-select'), 'en');
+  assert.equal(await selectedValue(page.locator('#language-select')), 'en');
   checks.push('languagePreferenceChangesEvenWhenResolvedLocaleMatches');
 
-  await page.locator('#theme-select').selectOption('light');
+  await chooseOption(page.locator('#theme-select'), 'light');
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
-  await page.locator('#theme-select').selectOption('system');
+  await chooseOption(page.locator('#theme-select'), 'system');
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
   await page.emulateMedia({ colorScheme: 'light' });
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'light');
-  await page.locator('#theme-select').selectOption('dark');
+  await chooseOption(page.locator('#theme-select'), 'dark');
   await page.waitForFunction(() => document.documentElement.dataset.theme === 'dark');
   await page.reload();
   await page.locator('[data-settings-tab="appearance"]').click();
-  assert.equal(await page.locator('#theme-select').inputValue(), 'dark');
-  assert.equal(await page.locator('#language-select').inputValue(), 'en');
+  assert.equal(await selectedValue(page.locator('#theme-select')), 'dark');
+  assert.equal(await selectedValue(page.locator('#language-select')), 'en');
   assert.equal(await page.evaluate(() => document.documentElement.dataset.theme), 'dark');
   checks.push('themeSystemOverrideAndPreferencePersistence');
 
@@ -406,8 +407,8 @@ try {
   await page.keyboard.press('Enter');
   await page.waitForFunction(() => window.fixture.installPrompts === 1);
   checks.push('installPromptRemainsBoundAfterDialogReopen');
-  await page.locator('#theme-select').selectOption('light');
-  await page.locator('#language-select').selectOption('zh-CN');
+  await chooseOption(page.locator('#theme-select'), 'light');
+  await chooseOption(page.locator('#language-select'), 'zh-CN');
   await page.waitForFunction(() => document.documentElement.lang === 'zh-CN');
   assert.equal(await page.locator('#settings-title').textContent(), '设置');
   await page.setViewportSize({ width: 390, height: 844 });

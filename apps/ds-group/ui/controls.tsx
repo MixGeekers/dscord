@@ -6,9 +6,9 @@ import { Input as InputPrimitive } from "@base-ui/react/input";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { RadioGroup as RadioGroupPrimitive } from "@base-ui/react/radio-group";
 import { cva, type VariantProps } from "class-variance-authority";
-import { Check, ChevronDown } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
-import type { ComponentProps, Ref } from "react";
+import { Check } from "lucide-react";
+import type { ComponentProps } from "react";
+import { useFormReset } from "./form-reset";
 import { cn } from "./cn";
 
 const buttonVariants = cva(
@@ -67,52 +67,6 @@ export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
       {...props}
     />
   );
-}
-
-// Native select preserves HTML form submission, IME and existing preference APIs.
-export function NativeSelect({
-  className,
-  ...props
-}: ComponentProps<"select">) {
-  return (
-    <span className="ds-select-wrap">
-      <select
-        data-slot="select"
-        className={cn("ds-input ds-select w-full min-w-0", className)}
-        {...props}
-      />
-      <ChevronDown aria-hidden="true" size={16} strokeWidth={2} />
-    </span>
-  );
-}
-
-// Base UI mirrors values into hidden inputs for FormData. Its uncontrolled visual
-// state does not follow HTMLFormElement.reset(), so remount only that primitive
-// when the owning form resets. Controlled callers keep their supplied state.
-function useFormReset(
-  inputRef: Ref<HTMLInputElement> | undefined,
-  formId?: string,
-) {
-  const node = useRef<HTMLInputElement | null>(null);
-  const [version, setVersion] = useState(0);
-  useEffect(() => {
-    const form =
-      node.current?.form ?? (formId ? document.getElementById(formId) : null);
-    if (!form) return;
-    const reset = (event: Event) => {
-      queueMicrotask(() => {
-        if (!event.defaultPrevented) setVersion((previous) => previous + 1);
-      });
-    };
-    form.addEventListener("reset", reset);
-    return () => form.removeEventListener("reset", reset);
-  }, [version, formId]);
-  function connectInput(element: HTMLInputElement | null) {
-    node.current = element;
-    if (typeof inputRef === "function") inputRef(element);
-    else if (inputRef) inputRef.current = element;
-  }
-  return { version, connectInput };
 }
 
 export function Checkbox({

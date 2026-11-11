@@ -1,4 +1,5 @@
-import { Button, Checkbox, NativeSelect } from "../../../ui/controls";
+import { Button, Checkbox } from "../../../ui/controls";
+import { Select } from "../../../ui/select";
 import { useEffect, useRef, useState } from "react";
 import { ApiError, messageOf } from "../api";
 import {
@@ -223,36 +224,36 @@ export function BotWorkGrants({
               >
                 <legend>{room?.name ?? (grant.roomId || t("choose"))}</legend>
                 <label htmlFor={`work-grant-room-${index}`}>{t("room")}</label>
-                <NativeSelect
+                <Select
                   id={`work-grant-room-${index}`}
                   value={grant.roomId}
                   disabled={!editable || (!!grant.roomId && !room)}
-                  onChange={(event) =>
+                  onValueChange={(roomId) =>
                     update(index, {
-                      roomId: event.target.value,
+                      roomId,
                       requesterIds: [],
                       tools: [],
                       enabled: false,
                     })
                   }
-                >
-                  <option value="">{t("choose")}</option>
-                  {!!grant.roomId && !room && (
-                    <option value={grant.roomId}>{grant.roomId}</option>
-                  )}
-                  {rooms
-                    .filter(
-                      (room) =>
-                        room.roomId === grant.roomId ||
-                        !grants.some((other) => other.roomId === room.roomId),
-                    )
-                    .map((room) => (
-                      <option value={room.roomId} key={room.roomId}>
-                        {room.serverId ? `${room.serverId} · ` : ""}
-                        {room.name} · {room.roomId}
-                      </option>
-                    ))}
-                </NativeSelect>
+                  options={[
+                    { value: "", label: t("choose") },
+                    ...(!!grant.roomId && !room
+                      ? [{ value: grant.roomId, label: grant.roomId }]
+                      : []),
+                    ...rooms
+                      .filter(
+                        (room) =>
+                          room.roomId === grant.roomId ||
+                          !grants.some((other) => other.roomId === room.roomId),
+                      )
+                      .map((room) => ({
+                        value: room.roomId,
+                        label: room.name,
+                        description: `${room.serverId ? `${room.serverId} · ` : ""}${room.roomId}`,
+                      })),
+                  ]}
+                />
                 {!!grant.roomId && !room && (
                   <p className="muted small">{t("unavailableRoom")}</p>
                 )}

@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
-import { Button, NativeSelect } from "../../../ui/controls";
+import { Button } from "../../../ui/controls";
+import { Select } from "../../../ui/select";
 import { useLocale, useTranslation } from "../locale";
 import { settingsMessages } from "../locales/settings";
 import type { LocalePreference, ThemeColor, ThemePreference } from "../types";
@@ -23,31 +24,29 @@ export function AppearanceControls({ idPrefix = "" }: { idPrefix?: string }) {
     <div className="appearance-controls">
       <div className="appearance-field">
         <label htmlFor={`${idPrefix}language-select`}>{t("language")}</label>
-        <NativeSelect
+        <Select<LocalePreference>
           id={`${idPrefix}language-select`}
           value={locale.preference}
-          onChange={(event) =>
-            locale.setPreference(event.target.value as LocalePreference)
-          }
-        >
-          <option value="system">{t("system")}</option>
-          <option value="zh-CN">简体中文</option>
-          <option value="en">English</option>
-        </NativeSelect>
+          onValueChange={locale.setPreference}
+          options={[
+            { value: "system", label: t("system") },
+            { value: "zh-CN", label: "简体中文" },
+            { value: "en", label: "English" },
+          ]}
+        />
       </div>
       <div className="appearance-field">
         <label htmlFor={`${idPrefix}theme-select`}>{t("theme")}</label>
-        <NativeSelect
+        <Select<ThemePreference>
           id={`${idPrefix}theme-select`}
           value={theme.getPreference()}
-          onChange={(event) =>
-            theme.setPreference(event.target.value as ThemePreference)
-          }
-        >
-          <option value="system">{t("system")}</option>
-          <option value="light">{t("light")}</option>
-          <option value="dark">{t("dark")}</option>
-        </NativeSelect>
+          onValueChange={(value) => theme.setPreference(value)}
+          options={[
+            { value: "system", label: t("system") },
+            { value: "light", label: t("light") },
+            { value: "dark", label: t("dark") },
+          ]}
+        />
       </div>
       <fieldset className="theme-colors">
         <legend>{t("themeColor")}</legend>

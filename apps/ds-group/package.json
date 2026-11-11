@@ -9,6 +9,7 @@
   },
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "showcase": "vite --config ui/showcase/vite.config.ts",
     "typecheck": "tsc --noEmit && tsc -p admin/tsconfig.json --noEmit && tsc -p dsh-connect/client/tsconfig.json --noEmit",
     "build": "tsc --noEmit && vite build && node scripts/build-pwa.mjs && npm run build:admin && npm run build:dsh-client",
     "build:dsh-client": "tsc -p dsh-connect/client/tsconfig.json --noEmit && node scripts/build-dsh-client.mjs",
