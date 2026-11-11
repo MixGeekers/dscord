@@ -7,6 +7,7 @@ import { useTranslation } from "../locale";
 import { settingsMessages } from "../locales/settings";
 import { Icon } from "./Icons";
 import type { Api, Participant, Role, Session } from "../types";
+import { ScrollArea } from "../../../ui/layout";
 
 interface RoleDraft {
   id?: string;
@@ -119,7 +120,7 @@ export function RolesDialog({
           <Icon name="close" />
         </Button>
       </header>
-      <div className="dialog-scroll-region">
+      <ScrollArea className="dialog-scroll-region">
         <section>
           <div className="settings-section-heading">
             <h3>{t("roles")}</h3>
@@ -225,7 +226,7 @@ export function RolesDialog({
             </form>
           )}
         </section>
-      </div>
+      </ScrollArea>
       {draft && (
         <footer className="dialog-footer settings-actions">
           <Button

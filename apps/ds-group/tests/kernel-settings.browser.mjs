@@ -169,7 +169,9 @@ try {
   checks.push('timelineShowsOriginalWordsAllEventKindsAndPagesEarlier');
   await screenshot('bot-timeline-dark-en.png');
   await page.locator('[data-bot-tab="conversations"]').click();
-  await page.locator('[data-contact-id="@planner:home.test"]').click();
+  await page.locator('[data-bot-panel="conversations"] .bot-contact-rows [data-contact-id="@planner:home.test"]').waitFor();
+  await screenshot('bot-conversations-dark-en.png');
+  await page.locator('[data-bot-panel="conversations"] .ds-chip[data-value="@planner:home.test"]').click();
   await page.locator('[data-bot-panel="conversations"]').getByText('Asked for a planting calendar').waitFor();
   assert.ok(await page.evaluate(() => window.fixture.calls.some(call => call.route.endsWith('/contacts?contact=%40planner%3Ahome.test'))));
   assert.doesNotMatch(await page.locator('[data-bot-panel="conversations"] .bot-timeline').innerText(), /Bob asked/);
@@ -193,6 +195,16 @@ try {
   assert.ok(overflow.page <= overflow.viewport + 1 && overflow.home <= overflow.viewport + 1, JSON.stringify(overflow));
   await screenshot('bot-memory-light-zh-mobile.png');
   checks.push('mobileLightThemeAndChineseKeepStatusPageInsideViewport');
+  // The redone pages in Chinese at desktop width: conversations with everyone, then the memory list.
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.locator('[data-bot-tab="conversations"]').click();
+  await page.locator('[data-bot-panel="conversations"] .ds-chip[data-value="all"]').click();
+  await page.locator('[data-bot-panel="conversations"] .bot-contact-rows').waitFor();
+  await screenshot('bot-conversations-light-zh.png');
+  await page.locator('[data-bot-tab="memory"]').click();
+  await page.locator('[data-memory-profile]').first().waitFor();
+  await screenshot('bot-memory-list-light-zh.png');
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('[data-bot-tab="now"]').click();
   await page.evaluate(() => { window.fixture.offline = true; window.fixture.failSave = false; });
   await page.getByRole('button', { name: '刷新', exact: true }).click();
@@ -212,6 +224,10 @@ try {
   await page.locator('[data-bot-home]').waitFor({ state: 'detached' });
   await page.locator('#open-profile').click();
   assert.match(await page.locator('.bot-profile-owner').innerText(), /Alice/);
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.waitForTimeout(100);
+  await screenshot('member-profile-bot-light-zh.png');
+  await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('#member-bot-home').click();
   await page.locator('[data-bot-home]').waitFor();
   checks.push('memberProfileShowsOwnerAndOpensOwnedBotStatusPage');

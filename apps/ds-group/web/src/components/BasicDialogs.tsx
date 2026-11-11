@@ -1,4 +1,3 @@
-import { AvatarEditor } from "./AvatarEditor";
 import { Avatar } from "./Avatar";
 import { Button, Checkbox, Input } from "../../../ui/controls";
 import { useEffect, useRef, useState } from "react";
@@ -17,6 +16,8 @@ import { kernelMessages } from "../locales/kernel";
 import { botHomeMessages } from "../locales/bot-home";
 import { connectionLabel } from "../bot-kernel";
 import type { Api, Participant, Role, Room, Session } from "../types";
+import { InfoList, ScrollArea } from "../../../ui/layout";
+import type { InfoItem } from "../../../ui/layout";
 
 function useDialog(open: boolean) {
   const ref = useRef<HTMLDialogElement>(null);
@@ -212,7 +213,7 @@ export function RoomDialog({
             <Icon name="close" />
           </Button>
         </div>
-        <div className="dialog-scroll-region">
+        <ScrollArea className="dialog-scroll-region">
           <div id="room-name-field" hidden={isAdd}>
             <label htmlFor="new-room-name">{t("groupName")}</label>
             <Input
@@ -258,7 +259,7 @@ export function RoomDialog({
           <p id="room-form-error" className="settings-feedback" role="alert">
             {error || (restored ? t("pendingGroup") : "")}
           </p>
-        </div>
+        </ScrollArea>
         <footer className="dialog-footer">
           <Button
             variant="default"
@@ -285,6 +286,8 @@ interface MemberDialogProps {
   botStatus?: string;
   owner?: Participant;
   onManageBot?(id: string): void;
+  /** Opens the person's own account settings, where their avatar and name are changed. */
+  onEditProfile?(): void;
   onDirect(id: string): void;
   onMention(member: Participant): void;
   onClose(): void;
@@ -298,6 +301,7 @@ export function MemberDialog({
   botStatus,
   owner,
   onManageBot,
+  onEditProfile,
   onDirect,
   onMention,
   onClose,
@@ -309,6 +313,48 @@ export function MemberDialog({
   const membership = member
     ? roles.filter((role) => role.memberIds.includes(member.id))
     : [];
+  const self = !!member && member.id === session?.user_id;
+  const ownBot =
+    member?.kind === "bot" && !!session && member.ownerId === session.user_id;
+  const details: InfoItem[] = [];
+  if (member?.kind === "bot")
+    details.push({
+      label: t("memberStatus"),
+      value: (
+        <span className="bot-connection-status">
+          {kernelText(connectionLabel(botStatus))}
+        </span>
+      ),
+    });
+  if (member?.kind === "bot" && member.ownerId)
+    details.push({
+      label: kernelText("owner"),
+      value: (
+        <span className="bot-profile-owner">
+          {owner?.name ?? member.ownerId}
+          {owner?.name && (
+            <small className="member-full-id">{member.ownerId}</small>
+          )}
+        </span>
+      ),
+    });
+  if (membership.length)
+    details.push({
+      label: t("memberRoles"),
+      value: (
+        <span id="member-dialog-roles" className="member-role-list">
+          {membership.map((role) => (
+            <span
+              key={role.id}
+              className="role-badge"
+              style={{ "--role-color": role.color } as CSSProperties}
+            >
+              {role.name}
+            </span>
+          ))}
+        </span>
+      ),
+    });
   return (
     <dialog
       ref={dialog}
@@ -329,63 +375,29 @@ export function MemberDialog({
       >
         <Icon name="close" />
       </Button>
-      <div className="dialog-scroll-region">
-        <div id="member-dialog-avatar">
+      <div
+        className="member-banner"
+        data-kind={member?.kind}
+        aria-hidden="true"
+      />
+      <header className="member-dialog-head">
+        <div id="member-dialog-avatar" className="member-dialog-avatar">
           <Avatar member={member} size={512} />
         </div>
-        {member &&
-          session &&
-          (member.id === session.user_id ||
-            (member.kind === "bot" && member.ownerId === session.user_id)) && (
-            <AvatarEditor key={member.id} session={session} member={member} />
-          )}
         <h2 id="member-dialog-name">{member?.name}</h2>
         <p id="member-dialog-id">{member?.id}</p>
-        {member?.kind === "bot" && (
-          <p className="bot-connection-status">
-            {kernelText(connectionLabel(botStatus))}
-          </p>
-        )}
-        {member?.kind === "bot" && member.ownerId && (
-          <p className="bot-profile-owner">
-            {kernelText("owner")} · {owner?.name ?? member.ownerId}
-            <small className="member-full-id">
-              {owner?.name && member.ownerId}
-            </small>
-          </p>
-        )}
-        {member?.kind === "bot" &&
-          member.ownerId === session?.user_id &&
-          onManageBot && (
-            <Button
-              id="member-bot-home"
-              variant="ghost"
-              type="button"
-              onClick={() => onManageBot(member.id)}
-            >
-              <Icon name="bot" />
-              {homeText("home")}
-            </Button>
-          )}
-        <div id="member-dialog-roles" className="member-role-list">
-          {membership.map((role) => (
-            <span
-              key={role.id}
-              className="role-badge"
-              style={{ "--role-color": role.color } as CSSProperties}
-            >
-              {role.name}
-            </span>
-          ))}
-        </div>
-      </div>
-      <div className="dialog-footer settings-actions">
+      </header>
+      {details.length > 0 && (
+        <ScrollArea className="dialog-scroll-region">
+          <InfoList items={details} />
+        </ScrollArea>
+      )}
+      <div className="dialog-footer member-dialog-actions">
         <Button
           variant="default"
           id="member-dm"
-          className="primary-button"
           type="button"
-          hidden={!member || member.id === session?.user_id}
+          hidden={!member || self}
           onClick={() => {
             if (member) {
               onClose();
@@ -398,7 +410,6 @@ export function MemberDialog({
         <Button
           variant="secondary"
           id="member-mention"
-          className="secondary-button"
           type="button"
           disabled={
             !session || !member || !room?.participantIds.includes(member.id)
@@ -412,6 +423,28 @@ export function MemberDialog({
         >
           {t("mention")}
         </Button>
+        {self && onEditProfile && (
+          <Button
+            id="member-edit-profile"
+            variant="ghost"
+            type="button"
+            onClick={onEditProfile}
+          >
+            <Icon name="edit" />
+            {t("editProfile")}
+          </Button>
+        )}
+        {ownBot && onManageBot && member && (
+          <Button
+            id="member-bot-home"
+            variant="ghost"
+            type="button"
+            onClick={() => onManageBot(member.id)}
+          >
+            <Icon name="bot" />
+            {homeText("home")}
+          </Button>
+        )}
       </div>
     </dialog>
   );

@@ -18,6 +18,8 @@ import type {
   SettingsTab,
   Participant,
 } from "../types";
+import { Field } from "../../../ui/form";
+import { InfoList, ScrollArea, Section } from "../../../ui/layout";
 
 export interface SettingsDialogProps {
   tab: SettingsTab | null;
@@ -121,77 +123,129 @@ export function SettingsDialog(props: SettingsDialogProps) {
             </button>
           ))}
         </nav>
-        <div className="dialog-scroll-region settings-panel-scroll">
-          <section data-settings-panel="account" hidden={tab !== "account"}>
-            <h3>{t("currentAccount")}</h3>
-            {tab === "account" && session && (
-              <AvatarEditor
-                key={session.user_id}
-                session={session}
-                member={
-                  props.currentUser ?? {
-                    id: session.user_id,
-                    globalId: session.identity?.globalId ?? undefined,
-                    name: session.user_id,
-                    kind: "human",
-                  }
-                }
-                onChanged={props.onProfileChanged}
+        <ScrollArea className="dialog-scroll-region settings-panel-scroll">
+          <div
+            className="settings-panel"
+            data-settings-panel="account"
+            hidden={tab !== "account"}
+          >
+            {/* The avatar lives on the central server, so it needs the central sign-in. */}
+            {tab === "account" &&
+              session?.binding?.centralIssuer &&
+              session.central?.token && (
+                <Section title={t("currentAccount")}>
+                  <AvatarEditor
+                    key={session.user_id}
+                    session={session}
+                    member={
+                      props.currentUser ?? {
+                        id: session.user_id,
+                        globalId: session.identity?.globalId ?? undefined,
+                        name: session.user_id,
+                        kind: "human",
+                      }
+                    }
+                    onChanged={props.onProfileChanged}
+                  />
+                </Section>
+              )}
+            <Section title={t("identity")} description={t("identityHelp")}>
+              <InfoList
+                className="account-identity"
+                items={[
+                  {
+                    label: t("userId"),
+                    value: (
+                      <span id="settings-account">
+                        {session?.user_id || t("signedOut")}
+                      </span>
+                    ),
+                    code: Boolean(session),
+                  },
+                  ...(session?.identity?.globalId
+                    ? [
+                        {
+                          label: t("globalId"),
+                          value: session.identity.globalId,
+                          code: true,
+                        },
+                      ]
+                    : []),
+                  {
+                    label: t("central"),
+                    value:
+                      session?.binding?.centralIssuer ?? t("configuredByHome"),
+                  },
+                  { label: t("homeCore"), value: config.homeCoreUrl },
+                  {
+                    label: t("homeMatrix"),
+                    value:
+                      session?.home?.matrixUrl ??
+                      config.homeMatrixUrl ??
+                      t("configuredByHome"),
+                  },
+                ]}
               />
-            )}
-            <p id="settings-account" className="identity-value">
-              {session?.user_id || t("signedOut")}
-            </p>
-            {session?.identity?.globalId && (
-              <p className="muted small identity-value">
-                {session.identity.globalId}
-              </p>
-            )}
-            <dl className="account-origins">
-              <dt>{t("central")}</dt>
-              <dd>
-                {session?.binding?.centralIssuer ?? t("configuredByHome")}
-              </dd>
-              <dt>{t("homeCore")}</dt>
-              <dd>{config.homeCoreUrl}</dd>
-              <dt>{t("homeMatrix")}</dt>
-              <dd>
-                {session?.home?.matrixUrl ??
-                  config.homeMatrixUrl ??
-                  t("configuredByHome")}
-              </dd>
-            </dl>
+            </Section>
             {session && (
               <ConnectDsh session={session} server={config.homeCoreUrl} />
             )}
-          </section>
-          <section
+          </div>
+          <div
+            className="settings-panel"
             data-settings-panel="notifications"
             hidden={tab !== "notifications"}
           >
-            <h3>{t("deviceNotifications")}</h3>
-            <p id="push-status" role="status" />
-            <label htmlFor="push-device-label">{t("deviceName")}</label>
-            <Input id="push-device-label" maxLength={80} autoComplete="off" />
-            <p id="push-feedback" className="settings-feedback" role="status" />
-            <details className="settings-help">
-              <summary>{t("mobileNotifications")}</summary>
-              <p>{t("mobileHelp")}</p>
-            </details>
-          </section>
-          <section
+            <Section title={t("deviceNotifications")}>
+              <p id="push-status" className="settings-status" role="status" />
+              <Field
+                label={t("deviceName")}
+                htmlFor="push-device-label"
+                description={t("deviceNameHelp")}
+              >
+                <Input
+                  id="push-device-label"
+                  maxLength={80}
+                  autoComplete="off"
+                  aria-describedby="push-device-label-description"
+                />
+              </Field>
+              <p
+                id="push-feedback"
+                className="settings-feedback"
+                role="status"
+              />
+              <details className="settings-help">
+                <summary>{t("mobileNotifications")}</summary>
+                <p>{t("mobileHelp")}</p>
+              </details>
+            </Section>
+          </div>
+          <div
+            className="settings-panel"
             data-settings-panel="appearance"
             hidden={tab !== "appearance"}
           >
-            <h3>{t("appearanceLanguage")}</h3>
-            <AppearanceControls />
-            <h3>{t("installApp")}</h3>
-            <p id="install-status" role="status" />
-            <p id="install-help" className="settings-feedback" />
-            <h3>{t("connection")}</h3>
-            <p id="offline-status" />
-          </section>
-        </div>
+            <Section title={t("appearanceLanguage")}>
+              <AppearanceControls />
+            </Section>
+            <Section title={t("application")}>
+              <InfoList
+                items={[
+                  {
+                    label: t("installApp"),
+                    value: <span id="install-status" role="status" />,
+                  },
+                  {
+                    label: t("connection"),
+                    value: <span id="offline-status" role="status" />,
+                  },
+                ]}
+              />
+              <p id="install-help" className="settings-feedback" />
+            </Section>
+          </div>
+        </ScrollArea>
         <footer className="dialog-footer settings-dialog-footer">
           <div className="settings-actions" hidden={tab !== "account"}>
             <Button

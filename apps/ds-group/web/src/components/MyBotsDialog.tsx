@@ -19,6 +19,7 @@ import type { Participant, ServerStatus, Session } from "../types";
 import { BotSetupFields, DecisionWarning, StageLabel } from "./BotSetup";
 import type { BotSetup } from "./BotSetup";
 import { ConnectDsh } from "./ConnectDsh";
+import { ScrollArea } from "../../../ui/layout";
 
 const setupOf = (bot: ManagedBot): BotSetup => ({
   displayName: bot.displayName,
@@ -278,7 +279,7 @@ export function MyBotsDialog({
           <Icon name="close" />
         </Button>
       </header>
-      <div className="dialog-scroll-region">
+      <ScrollArea className="dialog-scroll-region">
         <p className="muted">
           {b(managed.available ? "manageHelp" : "needsCentral")}
         </p>
@@ -404,7 +405,7 @@ export function MyBotsDialog({
             </details>
           </section>
         )}
-      </div>
+      </ScrollArea>
       <footer className="dialog-footer">
         <Button
           variant="default"

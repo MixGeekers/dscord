@@ -115,6 +115,7 @@ export function FilterChips<Value extends string = string>({
           key={chip.value}
           value={chip.value}
           disabled={chip.disabled}
+          data-value={chip.value}
           className="ds-chip"
         >
           {chip.leading ? (

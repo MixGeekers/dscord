@@ -7,6 +7,7 @@ import { authMessages } from "../locales/auth";
 import type { CentralInfo } from "../central";
 import type { Session } from "../types";
 import { Icon } from "./Icons";
+import { ScrollArea } from "../../../ui/layout";
 
 export interface AuthSubmission {
   mode: "login" | "register";
@@ -224,7 +225,7 @@ export function AuthDialog({
             <Icon name="close" />
           </Button>
         </div>
-        <div className="dialog-scroll-region">
+        <ScrollArea className="dialog-scroll-region">
           {central && (
             <p id="login-central" className="auth-central">
               {t(registering ? "centralRegister" : "centralSignIn", {
@@ -356,7 +357,7 @@ export function AuthDialog({
           >
             {visibleError}
           </div>
-        </div>
+        </ScrollArea>
         <footer className="dialog-footer">
           <Button
             variant="default"
