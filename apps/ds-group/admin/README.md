@@ -71,12 +71,16 @@ Core 的房间证明附件入口为 `GET /api/rooms/:roomId/attachments/:attachm
 
 ## 管理 API
 
+“服务器更新”提供版本检查、一键安装、维护时段、进度和历史；仅实例 owner 可以执行更新。更新期间自动重连，正在执行的任务先完成。部署前提与备份恢复语义见[服务器更新](../deploy/updates.md)。
+
 API 仅由独立管理服务提供，不挂到 Core 的聊天监听器。
 
 | 接口 | 用途 |
 | --- | --- |
 | `POST /admin-api/login`、`logout`，`GET /admin-api/me` | 本实例管理员会话 |
 | `GET /admin-api/overview` | 身份、服务、应用状态和不含凭据的存储摘要 |
+| `GET /admin-api/server-update` | 更新状态和历史 |
+| `POST /admin-api/server-update/check`、`settings`、`apply`、`recover` | owner 检查、配置、安装及重试恢复 |
 | `GET /admin-api/policy`、`PUT /admin-api/policy` | 读取及按 revision 保存策略 |
 | `POST /admin-api/apply` | 应用指定 revision，返回各房间和服务状态 |
 | `POST /admin-api/invite` | 邀请已批准的精确成员进入本服房间 |

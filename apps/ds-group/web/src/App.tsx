@@ -152,9 +152,7 @@ export default function App({
     at: number;
   } | null>(null);
   const [botStatuses, setBotStatuses] = useState<Record<string, BotStatus>>({});
-  const [roomDialog, setRoomDialog] = useState<"create" | "invite" | null>(
-    null,
-  );
+  const [roomDialog, setRoomDialog] = useState<"create" | "add" | null>(null);
   const [createBotOpen, setCreateBotOpen] = useState(false);
   const [inboxOpen, setInboxOpen] = useState(false);
   const [notificationRoom, setNotificationRoom] = useState<Room | null>(null);
@@ -315,7 +313,9 @@ export default function App({
   }, [config, resetConversation]);
 
   // What each owned Bot is doing, for the Bot list; one request covers them all.
+  // Bot homes read the same statuses, so the list and a Bot's page never disagree.
   const hasOwnedBots = ownedBots.length > 0;
+  const pollBotStatuses = useRef<() => void>(() => {});
   useEffect(() => {
     if (!session || !hasOwnedBots) return;
     const account = session;
@@ -331,10 +331,12 @@ export default function App({
           );
         })
         .catch(() => {});
+    pollBotStatuses.current = poll;
     poll();
     const timer = setInterval(poll, 10000);
     return () => {
       stopped = true;
+      pollBotStatuses.current = () => {};
       clearInterval(timer);
     };
   }, [api, session, hasOwnedBots]);
@@ -1070,6 +1072,8 @@ export default function App({
       session={session}
       api={api}
       status={status}
+      live={botStatuses[homeBotParticipant.id]}
+      onRefreshLive={() => pollBotStatuses.current()}
       rooms={spaces.flatMap((space) => roomsInSpace(allRooms, space))}
       participants={participants}
       opening={openingDirectId === homeBotParticipant.id}
@@ -1104,7 +1108,7 @@ export default function App({
         mentionCount={mentionCount}
         showTaskHistory={showTaskHistory}
         canCreateRoom={verified && homeSelected}
-        canInvite={
+        canAddMembers={
           verified &&
           homeSelected &&
           room?.kind === "group" &&
@@ -1150,7 +1154,7 @@ export default function App({
           if (session) setBotsOpen(true);
           else openLogin();
         }}
-        onInvite={() => (session ? setRoomDialog("invite") : openLogin())}
+        onAddMembers={() => (session ? setRoomDialog("add") : openLogin())}
         onInbox={() => (session ? setInboxOpen(true) : openLogin())}
         onNotifications={() =>
           session ? setNotificationRoom(room) : openLogin()
@@ -1302,14 +1306,12 @@ export default function App({
         session={session}
         room={room}
         participants={participants}
-        ownedBots={ownedBots}
         api={api}
         pendingStorageKey={
           session ? storageKey(config, "pending-room", session, serverName) : ""
         }
         onRoom={(next) => {
           navigate(next, matrixServer(session!.user_id));
-          refresh();
           if (next.status === "partially_joined") notify(t("joinPending"));
         }}
         onChanged={refresh}

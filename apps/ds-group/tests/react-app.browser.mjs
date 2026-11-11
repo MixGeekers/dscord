@@ -291,6 +291,11 @@ try {
     } else if (key === 'GET /api/bots/status') {
       body = { bots: (ownedBots.get(user?.id) ?? []).map(bot => ({ botId: bot.id, online: true, updatedAt: Date.now(), activity: 'working',
         responder: { state: 'idle' }, workers: [{ taskId: 'task-1', title: 'Close the books', stage: 'running' }], queue: [], lastDecision: null })) };
+    } else if (key === `GET /api/bots/${encodeURIComponent('@finance:test')}/kernel`) {
+      // Read at another moment than the list's status; the home page's live part must not come from here.
+      body = { runtime: { id: 'dscord-kernel', version: '0.4.0', available: true }, online: true, updatedAt: Date.now(),
+        attention: { mode: 'natural', activity: 'speaking', queue: null, lastDecision: null },
+        responder: { state: 'replying', requesterId: '@bob:test', since: Date.now() }, work: { workers: [], queue: [] } };
     } else if (key === `POST /api/rooms/${encodeURIComponent(rooms[0].roomId)}/messages`) {
       sentMessages.push({
         roomId: rooms[0].roomId,
@@ -351,6 +356,24 @@ try {
   }
 
   await expectEditor(pendingMessage.body, false);
+  // The server rail scrolls only up and down, so Windows' classic scrollbars never show a sideways one,
+  // and its icons sit in the middle of their circles.
+  const rail = await page.evaluate(() => {
+    const rail = document.querySelector('.server-rail');
+    const list = document.querySelector('.server-list');
+    const add = document.querySelector('#server-settings-button');
+    const icon = add.querySelector('svg').getBoundingClientRect();
+    const button = add.getBoundingClientRect();
+    return {
+      rail: rail.scrollWidth - rail.clientWidth,
+      list: list.scrollWidth - list.clientWidth,
+      x: Math.abs(icon.left + icon.width / 2 - (button.left + button.width / 2)),
+      y: Math.abs(icon.top + icon.height / 2 - (button.top + button.height / 2)),
+    };
+  });
+  assert.deepEqual({ rail: rail.rail, list: rail.list }, { rail: 0, list: 0 });
+  assert.ok(rail.x < 0.5 && rail.y < 0.5, JSON.stringify(rail));
+  checks.push('serverRailHasNoSidewaysOverflowAndCentersItsIcons');
   await page.waitForFunction(() => !document.querySelector('#send-button').disabled);
   assert.equal(await page.locator('#send-button-text').textContent(), 'Retry sending');
   assert.deepEqual(await readStorage(alicePendingKey), pendingMessage);
@@ -519,8 +542,20 @@ try {
   assert.match(connectionKey, /^[A-Za-z0-9_-]+$/);
   assert.deepEqual(JSON.parse(Buffer.from(connectionKey, 'base64url').toString('utf8')), { server: origin, code: 'connect-1' });
   assert.deepEqual(connectCodeTokens, ['central-register-charlie-new']);
+  // The key is shown only while the person stays: another tab or a closed dialog drops it.
+  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator('[data-settings-tab="account"]').click();
+  await page.locator('#make-connection-key').filter({ hasText: 'Copy connection key' }).waitFor();
+  assert.equal(await page.locator('#connection-key').count(), 0);
+  await page.locator('#make-connection-key').click();
+  await page.locator('#connection-key').waitFor();
   await page.locator('#close-settings').click();
-  checks.push('settingsMakeOneDshConnectionKeyFromTheCentralSession');
+  await page.locator('#identity-button').click();
+  await page.locator('#settings-button').click();
+  await page.locator('#make-connection-key').filter({ hasText: 'Copy connection key' }).waitFor();
+  assert.equal(await page.locator('#connection-key').count(), 0);
+  await page.locator('#close-settings').click();
+  checks.push('settingsMakeOneDshConnectionKeyFromTheCentralSessionAndDropItOnLeaving');
 
   await page.locator('#global-bots-button').click();
   await page.locator('#create-bot-button').click();
@@ -532,7 +567,7 @@ try {
   await page.locator('#create-bot-progress[data-stage="noDevice"]').waitFor();
   assert.deepEqual(centralBots.map(bot => [bot.displayName, bot.settings.servers]), [['Finance', [origin]]]);
   await page.locator('#bot-make-connection-key').click();
-  assert.deepEqual(JSON.parse(Buffer.from(await page.locator('#bot-connection-key').inputValue(), 'base64url').toString('utf8')), { server: origin, code: 'connect-2' });
+  assert.deepEqual(JSON.parse(Buffer.from(await page.locator('#bot-connection-key').inputValue(), 'base64url').toString('utf8')), { server: origin, code: 'connect-3' });
   await page.locator('#bot-copy-connection-key').waitFor();
   checks.push('addBotDialogCreatesTheBotAtCentralAndMakesTheDshConnectionKeyInPlace');
   await page.locator('#create-bot-done').click();
@@ -545,6 +580,12 @@ try {
   await page.locator('#owned-bots [data-owned-bot-id="@finance:test"] [data-bot-status="working"]').filter({ hasText: "Tasks running: 1" }).waitFor();
   assert.equal(await page.locator('#owned-bot-count').textContent(), '1');
   checks.push('addBotPointsToDshAndOwnedBotsFollowCore');
+  // The Bot's page shows what the list shows: one status for both.
+  await page.locator('#owned-bots [data-owned-bot-id="@finance:test"]').click();
+  await page.locator('[data-bot-home] [data-activity="working"]').waitFor();
+  assert.equal(await page.locator('[data-bot-home] [data-bot-responder]').getAttribute('data-bot-responder'), 'idle');
+  assert.match(await page.locator('[data-bot-panel="now"]').innerText(), /Close the books/);
+  checks.push('botHomeAndBotListReadOneStatus');
 
   await page.locator('#identity-button').click();
   await page.locator('#settings-button').click();

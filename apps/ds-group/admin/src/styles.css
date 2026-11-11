@@ -888,3 +888,12 @@ font: var(--text-body-strong);
     gap: var(--space-sm);
   }
 }
+/* Updates use the existing panel, field and token system. */
+.admin-update-panels { display: grid; gap: var(--space-lg); min-width: 0; }
+.admin-update-panels .admin-panel { min-width: 0; overflow-wrap: anywhere; padding: var(--space-xl); }
+.admin-update-panels form { display: grid; gap: var(--space-lg); }
+.admin-update-panels .admin-settings-grid { gap: var(--space-lg); }
+.admin-update-panels form > button { justify-self: start; }
+.admin-update-release, .admin-update-progress { margin-block: var(--space-lg); padding: var(--space-lg); border: 1px solid var(--color-border-subtle); border-radius: var(--radius-lg); }
+.admin-update-progress { display: grid; gap: var(--space-sm); }
+.admin-update-history { display: grid; gap: var(--space-lg); padding-inline-start: var(--space-2xl); }

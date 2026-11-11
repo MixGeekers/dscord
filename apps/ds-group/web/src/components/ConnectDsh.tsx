@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "../../../ui/controls";
 import { messageOf } from "../api";
 import { connectionKey } from "../central";
@@ -10,6 +10,8 @@ import type { Session } from "../types";
  * Makes a one-time connection key for the person's DSH and copies it in the same click. The key names this
  * chat server and a central code, so pasting it is all DSH needs to sign in and add this server. `idPrefix`
  * keeps the control ids apart where the page shows this more than once; `bare` leaves out the heading.
+ * A key is shown only while the person stays here: once the section is hidden (another tab, a closed
+ * dialog, a collapsed section) the key is dropped, and coming back offers a fresh one.
  */
 export function ConnectDsh({
   session,
@@ -29,6 +31,7 @@ export function ConnectDsh({
   const [busy, setBusy] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
+  const section = useRef<HTMLElement>(null);
   const issuer = session.binding?.centralIssuer;
   const token = session.central?.token;
   // A key belongs to the account that made it.
@@ -36,6 +39,19 @@ export function ConnectDsh({
     setKey(null);
     setError("");
   }, [token]);
+  // Dialogs here stay mounted while closed, so leaving is seen as the section losing its size.
+  useEffect(() => {
+    const element = section.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => {
+      if (element.getClientRects().length) return;
+      setKey(null);
+      setCopied(false);
+      setError("");
+    });
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
   async function write(value: string) {
     try {
       await navigator.clipboard.writeText(value);
@@ -51,6 +67,7 @@ export function ConnectDsh({
     setCopied(false);
     try {
       const made = await connectionKey(issuer, token, server);
+      if (!section.current?.getClientRects().length) return;
       setKey({ value: made.key, minutes: Math.round(made.expiresIn / 60) });
       await write(made.key);
     } catch (reason) {
@@ -63,6 +80,7 @@ export function ConnectDsh({
   const id = (name: string) => `${idPrefix}${name}`;
   return (
     <section
+      ref={section}
       className={bare ? "connect-dsh connect-dsh-bare" : "connect-dsh"}
       aria-label={t("connectDsh")}
     >

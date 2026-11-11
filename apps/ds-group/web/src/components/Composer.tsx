@@ -486,31 +486,38 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
             className="reply-preview"
             hidden={!props.reply}
           >
-            <div className="reply-copy">
-              <span>{t("replying", { name: "" })}</span>
+            <Icon name="reply" />
+            <p className="reply-copy">
+              <span className="reply-label">{t("replyingTo")}</span>
               <strong id="reply-preview-name">{props.reply?.senderName}</strong>
               <span id="reply-preview-body">
                 {markdownPreview(props.reply?.body ?? "")}
               </span>
-            </div>
+            </p>
             <Button
               variant="ghost"
+              size="sm"
               id="reply-mention-toggle"
               className="reply-mention-toggle"
               type="button"
               aria-pressed={props.replyMention}
+              title={t(props.replyMention ? "replyOnHint" : "replyOffHint", {
+                name: props.reply?.senderName ?? "",
+              })}
               disabled={disabled}
               onClick={() => props.onReplyMention(!props.replyMention)}
             >
               {props.replyMention ? t("replyOn") : t("replyOff")}
             </Button>
+            <span className="reply-divider" aria-hidden="true" />
             <Button
               variant="ghost"
               size="icon"
               id="clear-reply"
-              className="icon-button"
+              className="reply-close"
               type="button"
               aria-label={t("clearReply")}
+              title={t("clearReply")}
               disabled={disabled}
               onClick={props.onClearReply}
             >

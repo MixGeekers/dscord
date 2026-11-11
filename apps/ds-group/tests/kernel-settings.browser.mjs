@@ -42,16 +42,19 @@ const webHtml = `<!doctype html><html><head>${style}</head><body><div id="root">
     {id:'exchange:task-1>planner',kind:'exchange',at:at+1000,direction:'out',peerId:planner.id,roomId:room.roomId,status:'returned',taskId:'task-1',detail:'Asked for a planting calendar'},
   ];
   const earlier = {id:'task:task-0:0',kind:'task',at:at-60000,taskId:'task-0',title:'Measure the bed',from:null,to:'done',by:'core',roomId:room.roomId,peerId:owner.id};
-  const offline = () => { if (fixture.offline) throw new ApiError('Connect this Bot before reading its memory', 503, 0, 'BOT_OFFLINE'); };
-  const api = async (route, options={}) => {
-    fixture.calls.push({route,method:options.method,body:options.body,timeout:options.timeout});
-    const url = new URL(route,'http://fixture.test');
-    if(route.endsWith('/kernel')) return {runtime:{id:fixture.offline?null:'dscord-kernel',version:fixture.offline?null:'0.4.0',available:!fixture.offline},online:!fixture.offline,updatedAt:Date.now(),desiredAttention:fixture.desired,
+  const kernel = () => ({runtime:{id:fixture.offline?null:'dscord-kernel',version:fixture.offline?null:'0.4.0',available:!fixture.offline},online:!fixture.offline,updatedAt:Date.now(),desiredAttention:fixture.desired,
       attention:fixture.offline?{mode:fixture.desired?.mode??null,activity:null,provider:{configured:null,available:null,model:null},queue:null,lastDecision:null}:{mode:fixture.mode,activity:'waiting',provider:{configured:true,available:null,health:'unknown',model:'participation-model'},queue:{pending:2,waiting:1,evaluating:0,errors:0},lastDecision:{action:'SPEAK',at:at+3000,outcome:'delivered'}},
       responder:fixture.offline?null:{state:'replying',roomId:room.roomId,requesterId:person.id,since:at+4000},
       work:{status:fixture.offline?'unknown':'waiting',activeTasks:fixture.offline?null:1,waiting:fixture.offline?null:1,
         workers:fixture.offline?[]:[{taskId:'task-1',title:'Plan the herb bed',stage:'running',roomId:room.roomId,requesterId:owner.id,doing:{tool:'read',target:'garden.md'},since:new Date(at+2000).toISOString(),toolCalls:3}],
-        queue:fixture.offline?[]:[{taskId:'task-2',title:'Order seeds',stage:'queued',requesterId:owner.id}]}};
+        queue:fixture.offline?[]:[{taskId:'task-2',title:'Order seeds',stage:'queued',requesterId:owner.id}]}});
+  // What the Bot list polls: the same snapshot, so the home page and the list agree.
+  const liveOf = () => { const k = kernel(); return {botId:bot.id,online:k.online,updatedAt:k.updatedAt,activity:k.attention.activity,responder:k.responder,workers:k.work.workers,queue:k.work.queue,lastDecision:k.attention.lastDecision}; };
+  const offline = () => { if (fixture.offline) throw new ApiError('Connect this Bot before reading its memory', 503, 0, 'BOT_OFFLINE'); };
+  const api = async (route, options={}) => {
+    fixture.calls.push({route,method:options.method,body:options.body,timeout:options.timeout});
+    const url = new URL(route,'http://fixture.test');
+    if(route.endsWith('/kernel')) return kernel();
     if(route.endsWith('/attention')) {if(fixture.failSave)throw new Error('Synthetic uncertain save'); fixture.desired={mode:options.body.mode,revision:1,status:'pending',applied:false,online:!fixture.offline};return fixture.desired;}
     if(url.pathname.endsWith('/timeline')) { offline(); return url.searchParams.has('before') ? {items:[earlier],next:null} : {items:timeline,next:timeline.at(-1).at}; }
     if(url.pathname.endsWith('/contacts')) { offline(); const contact=url.searchParams.get('contact');
@@ -67,14 +70,14 @@ const webHtml = `<!doctype html><html><head>${style}</head><body><div id="root">
     throw new Error('Unexpected fixture route '+route);
   };
   const status = {nodes:[{id:'n',botId:bot.id,name:bot.name,status:'waiting'}]};
-  function Fixture(){const [open,setOpen]=React.useState(true);const [member,setMember]=React.useState(null);const [user,setUser]=React.useState(owner.id);const [home,setHome]=React.useState(null);
+  function Fixture(){const [open,setOpen]=React.useState(true);const [member,setMember]=React.useState(null);const [user,setUser]=React.useState(owner.id);const [home,setHome]=React.useState(null);const [live,setLive]=React.useState(liveOf);fixture.refreshLive=()=>setLive(liveOf());
     fixture.locale=setLocalePreference;fixture.switchUser=setUser;fixture.closeHome=()=>setHome(null);
     const session={user_id:user,access_token:'synthetic-token'};
     return React.createElement(React.Fragment,null,
       React.createElement('button',{id:'open-profile',onClick:()=>setMember(bot)},'Profile'),
       React.createElement('button',{id:'open-bots',onClick:()=>setOpen(true)},'Bots'),
       React.createElement(MyBotsDialog,{open,bots:[bot],status,session,server:'https://home.test',onClose:()=>setOpen(false),onCreate:()=>{},onHome:id=>{setOpen(false);setHome(id);},onDirect:id=>fixture.direct.push(id)}),
-      home && React.createElement('section',{id:'bots-panel',className:'home-panel bots-panel'},React.createElement(BotHome,{key:home,bot,session,api,status,rooms:[room],participants:[owner,person,bot,planner],opening:false,onDirect:id=>fixture.direct.push(id)})),
+      home && React.createElement('section',{id:'bots-panel',className:'home-panel bots-panel'},React.createElement(BotHome,{key:home,bot,session,api,status,live,onRefreshLive:()=>fixture.refreshLive(),rooms:[room],participants:[owner,person,bot,planner],opening:false,onDirect:id=>fixture.direct.push(id)})),
       React.createElement(MemberDialog,{member,session,room,roles:[],botStatus:'waiting',owner,onClose:()=>setMember(null),onDirect:()=>{},onMention:()=>{},onManageBot:id=>{setMember(null);setHome(id);}}));
   }createRoot(document.getElementById('root')).render(React.createElement(Fixture));
 </script></body></html>`;
