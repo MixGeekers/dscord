@@ -267,7 +267,7 @@ export class ChatFeatures {
       const joined = await this.roomMemberProfiles(client, roomId, userId);
       const members = Object.keys(joined);
       if (roomPath[2] === 'mentionables' && request.method === 'GET') {
-        return send(200, { members: withRoomDisplayNames(members.map(id => this.person(id)).filter(Boolean), joined).map(({ id, name, localpart, kind }) => ({ id, name, localpart, kind, status: this.presence(id) })),
+        return send(200, { members: withRoomDisplayNames(members.map(id => this.person(id)).filter(Boolean), joined).map(({ id, name, localpart, kind, globalId, avatar, profileVersion }) => ({ id, name, localpart, kind, status: this.presence(id), ...(globalId ? { globalId } : {}), ...(profileVersion > 0 ? { avatar, profileVersion } : {}) })),
           roles: this.roles().filter(role => role.memberIds.some(id => members.includes(id)))
             .map(role => ({ ...role, canMention: role.mentionable || userId === this.ownerId })),
           canMentionEveryone: userId === this.ownerId, canMentionHere: userId === this.ownerId });

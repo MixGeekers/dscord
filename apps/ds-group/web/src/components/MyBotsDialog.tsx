@@ -1,3 +1,5 @@
+import { AvatarEditor } from "./AvatarEditor";
+import { Avatar } from "./Avatar";
 import { Button } from "../../../ui/controls";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent } from "react";
@@ -30,10 +32,12 @@ function BotSettingsForm({
   bot,
   server,
   managed,
+  session,
 }: {
   bot: ManagedBot;
   server: string;
   managed: ManagedBots;
+  session: Session | null;
 }) {
   const t = useTranslation(botMessages);
   const [setup, setSetup] = useState(() => setupOf(bot));
@@ -69,6 +73,21 @@ function BotSettingsForm({
   }
   return (
     <form className="bot-setup-form" onSubmit={submit}>
+      {session && (
+        <AvatarEditor
+          session={session}
+          botId={bot.id}
+          member={{
+            id: bot.id,
+            globalId: bot.globalId,
+            name: bot.displayName,
+            kind: "bot",
+            avatar: bot.avatar,
+            profileVersion: bot.profileVersion,
+          }}
+          onChanged={() => void managed.reload()}
+        />
+      )}
       <BotSetupFields
         idPrefix={`bot-${bot.id}`}
         value={setup}
@@ -284,7 +303,15 @@ export function MyBotsDialog({
                 key={key}
               >
                 <header>
-                  <span className="avatar avatar-bot">{name.slice(0, 1)}</span>
+                  <Avatar
+                    member={{
+                      ...participant,
+                      ...bot,
+                      name,
+                      kind: "bot",
+                      id: participant?.id ?? bot?.id,
+                    }}
+                  />
                   <div>
                     <strong>{name}</strong>
                     <small className="member-full-id">
@@ -339,6 +366,7 @@ export function MyBotsDialog({
                 {problem && <p className="node-error">{problem}</p>}
                 {bot && editing === bot.id && (
                   <BotSettingsForm
+                    session={session}
                     bot={bot}
                     server={server}
                     managed={managed}

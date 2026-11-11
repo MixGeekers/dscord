@@ -6,8 +6,8 @@ import { MatrixClient } from './matrix-client.mjs';
 
 const failure = (status, message) => Object.assign(new Error(message), { status });
 const coded = (status, code, message = code) => Object.assign(failure(status, message), { code });
-const publicPerson = ({ id, localpart, name, kind, ownerId, globalId }) => ({ id, localpart, name, kind,
-  ...(kind === 'bot' ? { ownerId } : {}), ...(globalId ? { globalId } : {}) });
+const publicPerson = ({ id, localpart, name, kind, ownerId, globalId, avatar, profileVersion }) => ({ id, localpart, name, kind,
+  ...(kind === 'bot' ? { ownerId } : {}), ...(globalId ? { globalId } : {}), ...(profileVersion > 0 ? { avatar, profileVersion } : {}) });
 const MATRIX_LOCALPART = /^[a-z0-9._=\-/]{1,64}$/;
 const IDENTITY_SCHEMA_VERSION = '2';
 
@@ -120,7 +120,7 @@ export class AccountService {
   participant(row) {
     return { id: row.user_id, localpart: row.localpart, name: row.name, kind: row.kind,
       ...(row.owner_id ? { ownerId: row.owner_id } : {}), ...(row.global_id ? { globalId: row.global_id } : {}),
-      ...(row.service_token ? { accessToken: row.service_token } : {}) };
+      ...(row.service_token ? { accessToken: row.service_token } : {}), ...this.profileOf?.(row.user_id) };
   }
 
   refreshSetup() {

@@ -1,3 +1,4 @@
+import { Avatar } from "./Avatar";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import type {
@@ -58,26 +59,6 @@ export interface ShellProps {
   onNotifications(): void;
   onToggleTasks(): void;
   onMember(id: string): void;
-}
-
-function Avatar({
-  member,
-  index = 0,
-  id,
-}: {
-  member?: Participant;
-  index?: number;
-  id?: string;
-}) {
-  return (
-    <span
-      id={id}
-      className={`avatar avatar-${member?.kind ?? "human"}${index % 2 ? " avatar-alternate" : ""}`}
-      aria-hidden="true"
-    >
-      {(member?.name || "?").slice(0, 1)}
-    </span>
-  );
 }
 
 function presenceClass(status?: string) {
@@ -227,7 +208,7 @@ export function Shell(props: ShellProps) {
     );
   }
 
-  function memberContents(member: Participant, index: number) {
+  function memberContents(member: Participant, _index: number) {
     const status =
       props.mentionables.members.find((item) => item.id === member.id)
         ?.status ??
@@ -247,7 +228,7 @@ export function Shell(props: ShellProps) {
             : t("offline");
     return (
       <>
-        <Avatar member={member} index={index} />
+        <Avatar member={member} />
         <span className="member-info">
           <strong>{member.name}</strong>
           {participants.some(

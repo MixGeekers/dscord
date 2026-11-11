@@ -20,3 +20,8 @@ Web interfaces
 Bundled UI and icon notices are in web/licenses/ and the corresponding
 licenses/ directory in each prebuilt interface. Other installed dependencies
 retain the licenses provided by their respective packages.
+
+Avatar image processing
+The installed sharp 0.35.5 dependency is licensed under Apache-2.0. Its
+platform packages include libvips and their own third-party license notices;
+retain those notices with the installed dependencies.

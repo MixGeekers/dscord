@@ -59,3 +59,7 @@ docker compose --env-file /absolute/path/server.env \
 Core 的 `media.sqlite` 保存本应用上传附件的稳定 ID、文件名、类型、大小、SHA-256、状态和 Matrix URI。房间及消息中的附件引用由 Matrix 保存。切换文件字节后端后，这些记录继续支持既有消息和下载入口。
 
 云盘中已有文件的发现、全盘扫描、外部变化同步和导入需要独立的持久文件索引。这些索引作业不是当前附件后端的功能。
+
+## 账号头像
+
+全局头像由中央服务保存，默认位于中央数据卷的 `avatars/`。本节 S3 配置覆盖 Synapse 中的头像副本和聊天附件，不覆盖中央原始头像资源。配置与备份见[自定义头像](../../central/avatars.md)。

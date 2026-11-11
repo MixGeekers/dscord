@@ -1,3 +1,4 @@
+import { Avatar } from "./Avatar";
 import { Button, Checkbox, ColorInput, Input } from "../../../ui/controls";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { formatNumber } from "../../i18n.js";
@@ -213,9 +214,7 @@ export function RolesDialog({
                         })
                       }
                     />
-                    <span className={`avatar avatar-${person.kind}`}>
-                      {person.name.slice(0, 1)}
-                    </span>
+                    <Avatar member={person} />
                     <span>
                       {person.name}
                       <small className="member-full-id">{person.id}</small>
