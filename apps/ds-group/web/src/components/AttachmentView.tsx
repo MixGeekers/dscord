@@ -4,6 +4,7 @@ import { useTranslation } from "../locale";
 import { artifactMessages } from "../locales/artifacts";
 import { Icon } from "./Icons";
 import type { Attachment, RawRequest, Session } from "../types";
+import { Loading } from "../../../ui/loading";
 
 export interface AttachmentViewProps {
   attachment: Attachment;
@@ -163,11 +164,14 @@ export function AttachmentView({
                 title={preview.attachment.name}
               />
             )}
-            {preview.kind === "text" && (
-              <pre className="preview-text">
-                {previewFailed ? t("previewFailed") : (text ?? t("loading"))}
-              </pre>
-            )}
+            {preview.kind === "text" &&
+              (previewFailed || text != null ? (
+                <pre className="preview-text">
+                  {previewFailed ? t("previewFailed") : text}
+                </pre>
+              ) : (
+                <Loading label={t("loading")} />
+              ))}
           </div>
         </dialog>
       )}

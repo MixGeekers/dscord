@@ -17,6 +17,7 @@ import { AccountMenu } from "./AccountMenu";
 import { GlobalBotsNav, GlobalBotsSidebar } from "./GlobalBotsNav";
 import type { CollaborationSpace } from "../spaces";
 import type { BotStatus } from "../bot-kernel";
+import { Loading } from "../../../ui/loading";
 
 export interface ShellProps {
   bootstrap: Bootstrap | null;
@@ -478,13 +479,10 @@ export function Shell(props: ShellProps) {
             </div>
           </div>
           {loadingDirectOwnership && (
-            <p
+            <Loading
               id="ownership-loading-sidebar"
-              className="sidebar-empty"
-              role="status"
-            >
-              {t("loadingBotOwnership")}
-            </p>
+              label={t("loadingBotOwnership")}
+            />
           )}
         </aside>
         <main className="conversation">
@@ -643,16 +641,18 @@ export function Shell(props: ShellProps) {
               <div className="bots-panel-empty">
                 <Icon name="bot" />
                 <h2>{t("myBots")}</h2>
-                <p
-                  id={openingBot ? "bot-open-status" : undefined}
-                  role={openingBot ? "status" : undefined}
-                >
-                  {openingBot
-                    ? t("openingBot", { name: openingBot.name })
-                    : ownershipKnown
-                      ? t("selectBot")
-                      : t("loadingBotOwnership")}
-                </p>
+                {openingBot || ownershipKnown ? (
+                  <p
+                    id={openingBot ? "bot-open-status" : undefined}
+                    role={openingBot ? "status" : undefined}
+                  >
+                    {openingBot
+                      ? t("openingBot", { name: openingBot.name })
+                      : t("selectBot")}
+                  </p>
+                ) : (
+                  <Loading label={t("loadingBotOwnership")} />
+                )}
               </div>
             )}
           </section>
@@ -661,8 +661,8 @@ export function Shell(props: ShellProps) {
             className="home-panel bots-panel"
             hidden={!loadingDirectOwnership}
           >
-            <div className="bots-panel-empty" role="status">
-              <p>{t("loadingBotOwnership")}</p>
+            <div className="bots-panel-empty">
+              <Loading size="lg" label={t("loadingBotOwnership")} />
             </div>
           </section>
           <div

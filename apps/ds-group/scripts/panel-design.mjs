@@ -36,7 +36,8 @@ function selectors(prelude) {
   return [...parts, prelude.slice(from)].map(part => part.trim().replace(/\s+/g, ' '));
 }
 
-/** The same rules with every selector under `scope`. Only plain rules and @media are expected in ui/styles.css. */
+/** The same rules with every selector under `scope`. Only plain rules, @media and @keyframes are expected in ui/styles.css.
+ * Keyframes are global by nature: they keep their own names (prefixed `ds-`) and are written on one line, unscoped. */
 export function scoped(css, scope, indent = '') {
   const text = css.replace(/\/\*[\s\S]*?\*\//g, '');
   const rules = [];
@@ -57,10 +58,11 @@ export function scoped(css, scope, indent = '') {
     const prelude = text.slice(index, open).trim();
     const body = text.slice(open + 1, close);
     if (prelude.startsWith('@media')) rules.push(`${indent}${prelude} {\n${scoped(body, scope, `${indent}  `)}\n${indent}}`);
+    else if (prelude.startsWith('@keyframes')) rules.push(`${indent}${prelude} { ${scoped(body, null).split('\n').join(' ')} }`);
     else if (prelude.startsWith('@')) throw new Error(`ui/styles.css uses ${prelude.split(' ')[0]}, which the DSH page cannot scope`);
     else {
       const lines = body.split(';').map(line => line.trim().replace(/\s+/g, ' ')).filter(Boolean);
-      rules.push(`${indent}${selectors(prelude).map(selector => `${scope} ${selector}`).join(', ')} { ${lines.join('; ')}; }`);
+      rules.push(`${indent}${selectors(prelude).map(selector => (scope ? `${scope} ${selector}` : selector)).join(', ')} { ${lines.join('; ')}; }`);
     }
     index = close + 1;
   }

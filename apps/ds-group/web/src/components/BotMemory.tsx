@@ -14,6 +14,7 @@ import type {
 } from "../bot-kernel";
 import type { Api, Participant, Room } from "../types";
 import { Icon } from "./Icons";
+import { Loading } from "../../../ui/loading";
 
 export function BotMemory({
   bot,
@@ -248,7 +249,7 @@ export function BotMemory({
           </div>
         </div>
       </form>
-      {loading && <p role="status">{t("loadingMemory")}</p>}
+      {loading && <Loading label={t("loadingMemory")} />}
       {error && <p role="alert">{t("memoryFailed", { error })}</p>}
       {!!error && (
         <Button

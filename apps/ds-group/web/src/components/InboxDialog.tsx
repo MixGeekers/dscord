@@ -8,6 +8,7 @@ import { markdownPreview } from "../markdown";
 import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
 import type { Api, ChatEvent, Participant, Room } from "../types";
+import { Loading } from "../../../ui/loading";
 
 type InboxEvent = ChatEvent & { read: boolean; mentionKinds: string[] };
 interface InboxResponse {
@@ -220,7 +221,7 @@ export function InboxDialog({
         aria-live="polite"
       >
         {loading ? (
-          <p className="muted">{t("loading")}</p>
+          <Loading label={t("loading")} />
         ) : error ? (
           <p className="error-text">{error}</p>
         ) : events.length ? (

@@ -6,6 +6,7 @@ import { botHomeMessages } from "../locales/bot-home";
 import type { BotStatus } from "../bot-kernel";
 import type { Participant, Room } from "../types";
 import { Icon } from "./Icons";
+import { Loading } from "../../../ui/loading";
 
 function directRoom(rooms: Room[], botId: string) {
   return rooms.find(
@@ -165,10 +166,10 @@ export function GlobalBotsSidebar({
               </Button>
             );
           })
+        ) : known ? (
+          <p className="sidebar-empty">{t("noBots")}</p>
         ) : (
-          <p className="sidebar-empty" role={known ? undefined : "status"}>
-            {known ? t("noBots") : t("loadingBotOwnership")}
-          </p>
+          <Loading label={t("loadingBotOwnership")} />
         )}
       </nav>
       <div className="global-bots-actions">
