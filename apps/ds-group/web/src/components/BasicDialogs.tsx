@@ -60,11 +60,10 @@ interface PendingGroup {
 }
 
 interface RoomDialogProps {
-  mode: "create" | "invite" | null;
+  mode: "create" | "add" | null;
   session: Session | null;
   room: Room | null;
   participants: Participant[];
-  ownedBots: Participant[];
   api: Api;
   pendingStorageKey?: string;
   onRoom(room: Room): void;
@@ -78,7 +77,6 @@ export function RoomDialog({
   session,
   room,
   participants,
-  ownedBots,
   api,
   pendingStorageKey,
   onRoom,
@@ -93,14 +91,15 @@ export function RoomDialog({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const [restored, setRestored] = useState(false);
-  const isInvite = mode === "invite";
-  const choices = isInvite
-    ? ownedBots.filter((bot) => !room?.participantIds.includes(bot.id))
-    : participants.filter(
-        (person) =>
-          person.id !== session?.user_id &&
-          (person.kind === "human" || person.ownerId === session?.user_id),
-      );
+  const isAdd = mode === "add";
+  // Other people and your own Bots; adding leaves out who is already here.
+  const choices = participants.filter(
+    (person) =>
+      !!session &&
+      person.id !== session.user_id &&
+      (person.kind === "human" || person.ownerId === session.user_id) &&
+      !(isAdd && room?.participantIds.includes(person.id)),
+  );
 
   useEffect(() => {
     setError("");
@@ -129,11 +128,11 @@ export function RoomDialog({
     if (!session || !mode || busy) return;
     const eligible = new Set(choices.map((person) => person.id));
     const inviteIds = selectedIds.filter((id) => eligible.has(id)).sort();
-    if (isInvite && !inviteIds.length) {
-      setError(t("chooseBot"));
+    if (isAdd && !inviteIds.length) {
+      setError(t("chooseMember"));
       return;
     }
-    if (!isInvite && !name.trim()) {
+    if (!isAdd && !name.trim()) {
       setError(t("chooseName"));
       return;
     }
@@ -161,19 +160,22 @@ export function RoomDialog({
         if (!result.roomId) throw new Error(t("groupReceiptMissing"));
         sessionStorage.removeItem(key);
         onRoom(result);
-        if (result.status === "partially_joined") onError(t("partialJoin"));
         try {
           await onChanged();
         } catch (cause) {
           onError(messageOf(cause));
         }
       } else if (room) {
-        for (const participantId of inviteIds) {
-          await api(`/api/rooms/${encodeURIComponent(room.roomId)}/invite`, {
-            method: "POST",
-            body: { participantId },
-          });
-        }
+        const result = await api<Room>(
+          `/api/rooms/${encodeURIComponent(room.roomId)}/invite`,
+          { method: "POST", body: { participantIds: inviteIds } },
+        );
+        const statuses = new Set(
+          (result.joinResults ?? []).map((item) => item.status),
+        );
+        if (statuses.has("approval_required")) onError(t("approvalRequired"));
+        else if (statuses.has("pending")) onError(t("partialAdd"));
+        else if (statuses.has("invited")) onError(t("invitedElsewhere"));
         await onChanged();
       }
       onClose();
@@ -184,7 +186,7 @@ export function RoomDialog({
     }
   }
 
-  const title = t(isInvite ? "inviteBots" : "createGroup");
+  const title = t(isAdd ? "addMembers" : "createGroup");
   return (
     <dialog
       ref={dialog}
@@ -211,20 +213,20 @@ export function RoomDialog({
           </Button>
         </div>
         <div className="dialog-scroll-region">
-          <div id="room-name-field" hidden={isInvite}>
+          <div id="room-name-field" hidden={isAdd}>
             <label htmlFor="new-room-name">{t("groupName")}</label>
             <Input
               id="new-room-name"
               maxLength={80}
               autoComplete="off"
-              required={!isInvite}
+              required={!isAdd}
               value={name}
               disabled={busy}
               onChange={(event) => setName(event.target.value)}
             />
           </div>
           <label id="room-choice-label">
-            {t(isInvite ? "selectBot" : "inviteMembers")}
+            {t(isAdd ? "chooseMembers" : "inviteMembers")}
           </label>
           <div id="room-choices" className="room-choices">
             {choices.map((person) => (
@@ -249,7 +251,7 @@ export function RoomDialog({
             ))}
             {!choices.length && (
               <p className="muted small">
-                {t(isInvite ? "noBots" : "noMembers")}
+                {t(isAdd ? "everyoneHere" : "noMembers")}
               </p>
             )}
           </div>
@@ -263,16 +265,10 @@ export function RoomDialog({
             id="room-submit"
             className="primary-button login-submit"
             type="submit"
-            disabled={busy || (isInvite && !choices.length)}
+            disabled={busy || (isAdd && !choices.length)}
           >
             {t(
-              isInvite
-                ? busy
-                  ? "inviting"
-                  : "invite"
-                : busy
-                  ? "creating"
-                  : "create",
+              isAdd ? (busy ? "adding" : "add") : busy ? "creating" : "create",
             )}
           </Button>
         </footer>
