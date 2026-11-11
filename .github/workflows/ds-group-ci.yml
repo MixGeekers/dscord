@@ -227,6 +227,11 @@ jobs:
   browser:
     name: Browser / Chromium
     runs-on: ubuntu-24.04
+    # Match @playwright/test in package-lock.json; browsers and system dependencies are preinstalled.
+    # https://playwright.dev/docs/docker
+    container:
+      image: mcr.microsoft.com/playwright:v1.64.1-noble@sha256:ee15712262f017b8157421b212b12099146645f44b1bc5c0514cbbe6a229b1d0
+      options: --ipc=host --init
     timeout-minutes: 15
     defaults:
       run:
@@ -241,21 +246,17 @@ jobs:
           cache: npm
           cache-dependency-path: apps/ds-group/package-lock.json
       - run: npm ci --ignore-scripts --no-audit --no-fund
-      - name: Install Chromium with bounded dependency downloads
-        timeout-minutes: 5
+      - name: Validate preinstalled Chromium
         run: |
-          printf '%s\n' \
-            'Acquire::Retries "2";' \
-            'Acquire::http::Timeout "30";' \
-            'Acquire::https::Timeout "30";' \
-            | sudo tee /etc/apt/apt.conf.d/80-dscord-ci-network-timeouts
-          # The runner's Azure mirror has repeatedly failed DNS before tests can start.
-          # Keep Ubuntu's signed sources and use its official primary archive hosts.
-          printf '%s\n' \
-            'https://archive.ubuntu.com/ubuntu' \
-            'https://security.ubuntu.com/ubuntu' \
-            | sudo tee /etc/apt/apt-mirrors.txt
-          npx playwright install --with-deps chromium
+          node --input-type=module <<'JS'
+          import { createRequire } from 'node:module';
+          import { chromium } from 'playwright';
+          const require = createRequire(import.meta.url);
+          if (require('@playwright/test/package.json').version !== '1.64.1') throw new Error('Update the pinned Playwright container to match the package');
+          const browser = await chromium.launch();
+          console.log('Preinstalled Chromium:', await browser.version());
+          await browser.close();
+          JS
       - name: Build chat and administration frontends required by the browser suite
         run: npm run build
       - name: Chat, unified client and administration browser checks
@@ -266,6 +267,8 @@ jobs:
           name: browser-checks
           path: |
             apps/ds-group/.local/*browser*.json
+            apps/ds-group/.local/avatar-validation/browser.json
+            apps/ds-group/.local/avatar-validation/*.png
             apps/ds-group/.local/governance/admin-browser.json
             apps/ds-group/.local/governance/admin-*.png
             apps/ds-group/.local/unified-client-browser/*.json
