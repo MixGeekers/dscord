@@ -184,6 +184,21 @@ try {
 
   const editor = page.locator('#message-input');
   await editor.click();
+  // The placeholder floats over the empty field, so the caret sits at its start, not after the hint.
+  const caret = await page.evaluate(() => {
+    const input = document.querySelector('#message-input');
+    const hint = getComputedStyle(input, '::before');
+    const marker = document.createElement('span');
+    marker.textContent = '\u200b';
+    input.append(marker);
+    const at = marker.getBoundingClientRect().left - input.getBoundingClientRect().left;
+    marker.remove();
+    return { position: hint.position, content: hint.content, at, padding: parseFloat(getComputedStyle(input).paddingLeft) };
+  });
+  assert.equal(caret.position, 'absolute');
+  assert.notEqual(caret.content, 'none');
+  assert.ok(Math.abs(caret.at - caret.padding) < 1, JSON.stringify(caret));
+  checks.push('emptyComposerCaretStartsBeforeThePlaceholder');
   await editor.pressSequentially('@Bo');
   await page.locator('.mention-suggestion').first().waitFor();
   await editor.press('Enter');

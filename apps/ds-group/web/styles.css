@@ -170,8 +170,9 @@ h1 { margin: 0; color: var(--color-text-primary); font-size: var(--font-size-med
 .composer-input-row { display: flex; align-items: center; gap: var(--space-4); padding: var(--space-3) var(--space-4); }
 .attach-button { display: grid; place-items: center; width: 24px; height: 24px; margin-inline: var(--space-1); flex-shrink: 0; border: 0; border-radius: var(--radius-round); background: var(--color-text-secondary); color: var(--color-bg-input); font-size: 23px; font-weight: var(--font-weight-semibold); line-height: 20px; }
 .attach-button:hover { background: var(--color-text-normal); }
-.message-input { min-height: 42px; max-height: 220px; overflow-y: auto; flex: 1; padding: var(--space-5) var(--space-1); font-size: var(--font-size-body); line-height: 22px; color: var(--color-text-normal); white-space: pre-wrap; overflow-wrap: anywhere; outline: none; scrollbar-width: thin; }
-.message-input:empty::before { content: attr(data-placeholder); color: var(--color-text-muted); pointer-events: none; }
+.message-input { position: relative; min-height: 42px; max-height: 220px; overflow-y: auto; flex: 1; padding: var(--space-5) var(--space-1); font-size: var(--font-size-body); line-height: 22px; color: var(--color-text-normal); white-space: pre-wrap; overflow-wrap: anywhere; outline: none; scrollbar-width: thin; }
+/* The placeholder floats over the field so the caret starts at the left, not after the hint. */
+.message-input[data-empty="true"]::before { content: attr(data-placeholder); position: absolute; inset-inline: var(--space-1); top: var(--space-5); overflow: hidden; color: var(--color-text-muted); white-space: nowrap; text-overflow: ellipsis; pointer-events: none; }
 .message-input[contenteditable="false"] { color: var(--color-text-muted); }
 .send-button { display: grid; place-items: center; flex-shrink: 0; width: 32px; height: 34px; padding: 0; border: 0; border-radius: var(--radius-control); background: transparent; color: var(--color-text-secondary); font-size: var(--font-size-lg); }
 .send-button:not(:disabled):hover { color: var(--color-text-on-accent); background: var(--color-accent); }
@@ -458,7 +459,6 @@ legend { color: var(--color-text-secondary); font-weight: var(--font-weight-semi
 
 .mention-suggestion-status { width: 7px; height: 7px; border-radius: var(--radius-round); background: var(--color-icon-muted); flex-shrink: 0; }
 .mention-suggestion-status.online { background: var(--color-status-success); }
-.message-input[data-empty="true"]::before { content: attr(data-placeholder); color: var(--color-text-muted); pointer-events: none; }
 
 @media (pointer: coarse) {
   .attachment-action.ds-button { flex-basis: 44px; width: 44px; min-height: 44px; }
