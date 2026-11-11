@@ -676,6 +676,8 @@ legend { font: var(--text-micro); color: var(--color-text-secondary); font-weigh
 .avatar { overflow: hidden; }
 .avatar > img { width: 100%; height: 100%; object-fit: cover; }
 .avatar-editor { display: grid; justify-items: start; gap: var(--space-md); }
+.profile-name-form { display: grid; gap: var(--space-sm); margin-top: var(--space-lg); }
+.profile-name-form .settings-actions { margin-top: 0; }
 .avatar-editor > p { margin: 0; }
 .avatar-editor > .settings-actions { margin-top: 0; }
 .avatar-editor-identity { display: flex; align-items: center; gap: var(--space-md); }

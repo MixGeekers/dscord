@@ -235,6 +235,20 @@ export async function createBot(
   return bot;
 }
 
+/** The signed-in person changes their own display name; chat servers show it after their next profile sync. */
+export async function updateProfile(
+  issuer: string,
+  token: string,
+  input: { displayName: string },
+): Promise<{ displayName: string }> {
+  const { account } = await call<{ account: { displayName: string } }>(
+    issuer,
+    "/api/me",
+    { method: "PATCH", token, body: input },
+  );
+  return account;
+}
+
 export async function updateBot(
   issuer: string,
   token: string,

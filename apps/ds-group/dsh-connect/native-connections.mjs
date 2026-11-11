@@ -17,8 +17,8 @@ import { KernelNodeClient } from '../src/kernel-node-client.mjs';
 import { KERNEL_VERSION, hello } from '../src/node-protocol.mjs';
 
 export class NativeConnections {
-  constructor({ ctx, native, decisionSettings, updates, enableKernelControl = true, introduce = hello }) {
-    Object.assign(this, { ctx, native, decisionSettings, updates, enableKernelControl, introduce });
+  constructor({ ctx, native, decisionSettings, updates, editProfile, enableKernelControl = true, introduce = hello }) {
+    Object.assign(this, { ctx, native, decisionSettings, updates, editProfile, enableKernelControl, introduce });
     this.connections = new Map();
     // Each native Bot's contact book, open while any of its server connections is.
     this.books = new Map();
@@ -138,7 +138,8 @@ export class NativeConnections {
         },
       });
       Object.assign(entry, { bridge, botNode });
-      bridge.core.seat(node.id).contacts = botNode.contacts;
+      Object.assign(bridge.core.seat(node.id), { contacts: botNode.contacts,
+        editProfile: this.editProfile && node.centralId ? changes => this.editProfile(node.centralId, changes) : null });
       await botNode.start();
       await bridge.serveFront();
       await bridge.onWorkerResult((task, message, text) => botNode.acceptWorkerResult(task, message, text));

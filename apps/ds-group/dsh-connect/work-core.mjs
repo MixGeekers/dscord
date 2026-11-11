@@ -19,8 +19,8 @@ import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-
 export const FRONT_TOOLS = new Set([
   'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot',
   'recall', 'contacts', 'memory_source', 'raw_source_query', 'read_image',
-  // Quick Bot-level actions: memory and schedules belong to the Bot itself.
-  'remember', 'forget', 'review_memory', 'schedule_create', 'schedule_edit',
+  // Quick Bot-level actions: memory, schedules and its own profile belong to the Bot itself.
+  'remember', 'forget', 'review_memory', 'schedule_create', 'schedule_edit', 'update_profile',
 ]);
 // Workers do the work; they do not speak for the Bot or change what it remembers.
 export const WORKER_DENY = new Set([
@@ -33,8 +33,20 @@ export const CARD_REFUSAL = '这里是聊天，没有卡片界面。要问对方
 // The native host's own team, groups and Bot-to-Bot channel: in DSCord each has one other way, so these are off for everyone.
 export const NATIVE_TEAM_TOOLS = new Set(['message_bot', 'list_bots', 'post_to_group', 'group_relay', 'read_group_chat', 'read_own_chat',
   'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal']);
-export const NATIVE_TEAM_REFUSAL = 'DSCord 里不用这个工具：找别的 Bot 办事用 ask_bot（工作者用 work_ask 交给前台），有哪些 Bot 看 contacts，群就是 Matrix 房间，Bot 由管理后台创建和设置。';
+export const NATIVE_TEAM_REFUSAL = 'DSCord 里不用这个工具：找别的 Bot 办事用 ask_bot（工作者用 work_ask 交给前台），有哪些 Bot 看 contacts，群就是 Matrix 房间，改你自己的名字和头像用 update_profile，其余 Bot 设置由主人在网页上管理。';
 const ASKS_PER_TURN = 3;
+// The central server decides the real limit; this only keeps a stray path from reading a huge file.
+const AVATAR_READ_LIMIT = 20 * 1024 * 1024;
+const imageType = bytes => bytes.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) ? 'image/png'
+  : bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff ? 'image/jpeg'
+  : bytes.subarray(0, 4).toString('latin1') === 'RIFF' && bytes.subarray(8, 12).toString('latin1') === 'WEBP' ? 'image/webp' : null;
+const PROFILE_ERRORS = {
+  DISPLAY_NAME_INVALID: '名字最多 80 个字，不能有控制字符。',
+  AVATAR_FORMAT: '头像只能是 PNG、JPEG 或 WebP 的单帧图片。',
+  AVATAR_TOO_LARGE: '图片太大，换一张小一点的。',
+  AVATAR_INVALID_IMAGE: '这个文件解不出图片，换一张。',
+  AVATAR_CHANGED: '资料刚被别处改过，再试一次。',
+};
 const ASK_FILES = 10;
 export const FRONT_REFUSAL = '前台不直接做这件事。用 dispatch_work 把它交给工作者，然后告诉对方已经开始。';
 
@@ -247,6 +259,14 @@ export class WorkCore {
           files: { type: 'array', items: { type: 'string' }, description: '要一起交给对方的本地文件路径，会作为附件发过去；这条消息带的附件不用列' },
         },
         execute: args => this.askBot(args) },
+      { name: 'update_profile', output,
+        description: '修改你自己的资料：显示名称和头像，和人在网页上改自己的资料一样。保存在中央服务器，几秒内同步到你所在的每个聊天服务器。只填要改的项。',
+        parameters: {
+          name: { type: 'string', description: '新的显示名称，最多 80 个字' },
+          avatar: { type: 'string', description: '新头像图片的本地路径（PNG、JPEG 或 WebP），会居中裁成正方形' },
+          clear_avatar: { type: 'boolean', description: '为 true 时去掉头像，恢复默认' },
+        },
+        execute: args => this.updateProfile(args) },
     ];
   }
 
@@ -321,6 +341,38 @@ export class WorkCore {
     asks.push({ to: contact.account, body: text, ...(attached.length ? { files: attached } : {}) });
     this.asks.set(origin.requestId, asks);
     return `已记下：这一轮结束后发给 ${contact.name}。它的结果会作为新消息回到你这里，那时再回复请求者。现在这一轮的回复简短告诉对方你去问了谁，不要编结果。`;
+  }
+
+  /** The Bot changes its own name or avatar at the central server, through the connection that holds its session. */
+  async updateProfile({ name, avatar, clear_avatar: clear } = {}) {
+    const seats = [this.seats.get(this.origin?.botId), ...this.seats.values()];
+    const edit = seats.find(seat => seat?.editProfile)?.editProfile;
+    if (!edit) return '现在连不上中央服务器，改不了资料。';
+    const changes = {};
+    if (name !== undefined && name !== null) {
+      changes.displayName = String(name).trim();
+      if (!changes.displayName) return 'name 不能是空的。';
+    }
+    if (avatar && clear === true) return 'avatar 和 clear_avatar 只填一个。';
+    if (clear === true) changes.avatar = null;
+    else if (avatar) {
+      const filename = path.resolve(String(avatar));
+      const info = await stat(filename).catch(() => null);
+      if (!info?.isFile()) return `读不到文件 ${avatar}；头像要用你这边真实存在的图片文件。`;
+      if (info.size > AVATAR_READ_LIMIT) return PROFILE_ERRORS.AVATAR_TOO_LARGE;
+      const bytes = await readFile(filename);
+      const type = imageType(bytes);
+      if (!type) return PROFILE_ERRORS.AVATAR_FORMAT;
+      changes.avatar = { bytes, type };
+    }
+    if (!Object.keys(changes).length) return '没有要改的：填 name、avatar 或 clear_avatar。';
+    let account;
+    try { account = await edit(changes); }
+    catch (error) { return `没改成：${PROFILE_ERRORS[error.remoteCode] || error.message}`; }
+    if (account?.displayName) this.botName = account.displayName;
+    const done = [changes.displayName !== undefined ? `名字是「${account?.displayName ?? changes.displayName}」` : '',
+      changes.avatar === null ? '头像已去掉' : changes.avatar ? '头像已换上' : ''].filter(Boolean).join('，');
+    return `已保存：${done}。几秒内各聊天服务器上都会显示新的资料。`;
   }
 
   /** Tasks started or joined for this request: each delivers its result to the requester on its own. */

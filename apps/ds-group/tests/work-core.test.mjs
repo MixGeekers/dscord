@@ -372,3 +372,39 @@ test('a Bot on two chat servers has one core, and each result goes back through 
   await f.core.release(elsewhere);
   assert.equal(await WorkCore.acquire({ nativeBotId: 'native' }), f.core);
 });
+
+test('update_profile changes the Bot\'s own name and avatar through its connection, and checks the image first', async t => {
+  const f = await fixture(t);
+  await f.core.serveFront(f.agentFor('front'));
+  assert.ok(FRONT_TOOLS.has('update_profile'));
+  assert.match(NATIVE_TEAM_REFUSAL, /update_profile/, 'the native update_bot refusal points to the one way to rename');
+  assert.match(await run(f, 'front', 'update_profile', { name: '小林' }), /连不上中央服务器/);
+  const edits = [];
+  f.core.seat(f.id).editProfile = async changes => {
+    edits.push(changes);
+    if (changes.displayName?.length > 80) throw Object.assign(new Error('DISPLAY_NAME_INVALID'), { remoteCode: 'DISPLAY_NAME_INVALID' });
+    return { displayName: changes.displayName ?? '小林' };
+  };
+  assert.match(await run(f, 'front', 'update_profile', { name: ' 小林 ' }), /已保存：名字是「小林」/);
+  assert.deepEqual(edits.at(-1), { displayName: '小林' });
+  assert.equal(f.core.botName, '小林');
+  const png = path.join(f.directory, 'me.png');
+  await writeFile(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]));
+  assert.match(await run(f, 'front', 'update_profile', { avatar: png }), /头像已换上/);
+  assert.equal(edits.at(-1).avatar.type, 'image/png');
+  assert.equal(edits.at(-1).displayName, undefined);
+  const note = path.join(f.directory, 'note.txt');
+  await writeFile(note, 'not an image');
+  const count = edits.length;
+  assert.match(await run(f, 'front', 'update_profile', { avatar: note }), /PNG、JPEG 或 WebP/);
+  assert.match(await run(f, 'front', 'update_profile', { avatar: path.join(f.directory, 'missing.png') }), /读不到文件/);
+  assert.match(await run(f, 'front', 'update_profile', { avatar: png, clear_avatar: true }), /只填一个/);
+  assert.match(await run(f, 'front', 'update_profile', {}), /没有要改的/);
+  assert.match(await run(f, 'front', 'update_profile', { name: '  ' }), /不能是空的/);
+  assert.equal(edits.length, count, 'nothing invalid reaches the central server');
+  assert.match(await run(f, 'front', 'update_profile', { name: 'x'.repeat(81) }), /没改成：名字最多 80 个字/);
+  // A Bot changes its own profile whenever it decides to, not only while answering a message.
+  f.core.origin = null;
+  assert.match(await run(f, 'front', 'update_profile', { clear_avatar: true }), /头像已去掉/);
+  assert.equal(edits.at(-1).avatar, null);
+});

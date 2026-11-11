@@ -1,4 +1,5 @@
 import { AvatarEditor } from "./AvatarEditor";
+import { NameEditor } from "./NameEditor";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Button, Input } from "../../../ui/controls";
 import { Dialog, DialogContent, DialogTitle } from "../../../ui/overlays";
@@ -129,7 +130,7 @@ export function SettingsDialog(props: SettingsDialogProps) {
             data-settings-panel="account"
             hidden={tab !== "account"}
           >
-            {/* The avatar lives on the central server, so it needs the central sign-in. */}
+            {/* The avatar and name live on the central server, so they need the central sign-in. */}
             {tab === "account" &&
               session?.binding?.centralIssuer &&
               session.central?.token && (
@@ -145,6 +146,12 @@ export function SettingsDialog(props: SettingsDialogProps) {
                         kind: "human",
                       }
                     }
+                    onChanged={props.onProfileChanged}
+                  />
+                  <NameEditor
+                    key={`name-${session.user_id}-${props.currentUser?.name ?? ""}`}
+                    session={session}
+                    name={props.currentUser?.name ?? ""}
                     onChanged={props.onProfileChanged}
                   />
                 </Section>

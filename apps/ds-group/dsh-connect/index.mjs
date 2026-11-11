@@ -17,7 +17,8 @@ export async function apply(ctx, config = {}) {
   let processes;
   const updates = await new KernelUpdates({ ctx, directory, isIdle: () => processes?.idle() ?? true }).initialize();
   ctx.effect(() => () => updates.dispose(), 'dscord: kernel update checks');
-  processes = new NativeConnections({ ctx, native, updates });
+  // A Bot's own profile tool goes through the controller, which holds the Bot's central session.
+  processes = new NativeConnections({ ctx, native, updates, editProfile: (centralId, changes) => controller.editProfile(centralId, changes) });
   const controller = new ConnectController({ directory, native, processes, updates });
   const ready = controller.initialize();
   ctx.effect(() => ctx.connection.fetch.register({
