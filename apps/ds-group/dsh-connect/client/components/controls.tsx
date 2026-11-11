@@ -51,6 +51,27 @@ export function Textarea({ className, ...props }: ComponentProps<"textarea">) {
   );
 }
 
+export function Select({ className, ...props }: ComponentProps<"select">) {
+  return (
+    <span className="ds-select-wrap">
+      <select
+        data-slot="select"
+        className={classes("ds-input ds-select", className)}
+        {...props}
+      />
+      <svg
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden="true"
+      >
+        <path d="m6 9 6 6 6-6" />
+      </svg>
+    </span>
+  );
+}
+
 /** A native checkbox, so it submits and resets with its form; styles.ts draws its checked state. */
 export function Checkbox(props: Omit<ComponentProps<"input">, "type">) {
   return (

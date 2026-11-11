@@ -50,10 +50,24 @@ export interface KernelState {
   /** What the settings form starts from. The key itself is never read back. */
   decisionForm?: {
     enabled: boolean;
+    preset: string;
     hasKey: boolean;
     model: string;
     endpoint: string;
+    accountId?: string;
+    presets: DecisionPreset[];
   } | null;
+}
+
+export interface DecisionPreset {
+  id: string;
+  name: string;
+  model: string;
+  endpoint: string;
+  hasKey: boolean;
+  models: string[];
+  accountRequired?: boolean;
+  accountId?: string;
 }
 
 /** The service that decides when Bots speak, as the device reports it. */

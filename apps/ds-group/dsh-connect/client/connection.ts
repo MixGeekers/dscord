@@ -28,6 +28,8 @@ const ERROR_KEYS: Record<string, MessageKey> = {
   CONNECT_CODE_EXPIRED: "connectKeyExpired",
   INVALID_DECISION_ENDPOINT: "decisionEndpointInvalid",
   INVALID_DECISION_MODEL: "decisionModelInvalid",
+  INVALID_DECISION_PRESET: "decisionPresetInvalid",
+  INVALID_DECISION_ACCOUNT: "decisionAccountInvalid",
 };
 
 /**

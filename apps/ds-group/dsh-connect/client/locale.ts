@@ -4,6 +4,12 @@ export const localeNamespace = "dscord.connection";
 export const zh = {
   unknown: "未知",
   decisionTitle: "决策模型",
+  decisionService: "服务预设",
+  decisionServiceHelp:
+    "选择服务后自动填写默认模型和地址。每个服务分别保存凭据。",
+  decisionAccount: "Cloudflare 账户 ID",
+  decisionAccountHelp:
+    "在 Cloudflare 的 Workers AI 页面复制账户 ID，服务地址会自动生成。",
   decisionHelp:
     "Bot 靠它判断什么时候该开口。它和 Bot 回答用的模型是两回事，只保存在这台设备上，这台设备运行的 Bot 共用。",
   decisionDoesJoin:
@@ -17,16 +23,19 @@ export const zh = {
   decisionFailed: "验证失败",
   decisionUnchecked: "已配置，尚未验证",
   decisionReady: "运行正常",
-  decisionSetup1: "准备一把决策服务的 API key，默认是 OpenAI 的 key。",
-  decisionSetup2: "填在下面。模型和服务地址已填好默认值，用别的服务时再改。",
-  decisionSetup3: "点「保存并验证」，这里会立刻问服务一次，告诉你能不能用。",
+  decisionSetup1:
+    "选择服务，准备它的 API key；Cloudflare 使用 Workers AI API token。",
+  decisionSetup2: "填写凭据。默认模型和地址已填好，Cloudflare 还需要账户 ID。",
+  decisionSetup3:
+    "点「保存并验证」，用两个合成小问题检查参与判断与接话接口，会产生模型请求。",
   decisionApiKey: "决策模型 API key",
   decisionKeyNeeded: "必填。只保存在这台设备，保存后不会再显示。",
-  decisionKeyHelp: "已保存一把 key，不会再显示。留空则继续用它，填写则替换。",
+  decisionKeyHelp: "这个服务已有凭据，不会再显示。留空保留，填写则替换。",
   decisionModelName: "决策模型名",
   decisionModelHelp: "决策服务里的模型名。清空后恢复默认。",
   decisionEndpoint: "服务地址",
-  decisionEndpointHelp: "Decisions 接口的完整地址。清空后恢复默认。",
+  decisionEndpointHelp:
+    "所选服务的完整接口地址。清空后恢复默认，Cloudflare 根据账户生成。",
   enableDecision: "启用决策模型",
   saveDecision: "保存并验证",
   decisionSaving: "正在验证…",
@@ -41,13 +50,16 @@ export const zh = {
   decisionErrorLimit:
     "服务说请求太多或额度用完了（{code}）。稍后再点一次「保存并验证」。",
   decisionErrorProtocol:
-    "服务有回应，但不是决策模型该有的回答（{code}）。检查地址是不是 Decisions 接口、模型名是否一致。",
+    "服务有回应，但格式或模型与所选服务不符（{code}）。检查服务预设、地址和模型名。",
   decisionErrorUnreachable:
     "连不上服务或等待超时（{code}）。检查网络和服务地址。",
   decisionErrorOther: "服务没有正常回答（{code}）。",
   decisionEndpointInvalid:
     "服务地址要以 http:// 或 https:// 开头，不能带账号密码或 # 片段。",
   decisionModelInvalid: "模型名不能为空，也不能有空格。",
+  decisionPresetInvalid: "请选择支持的决策服务。",
+  decisionAccountInvalid:
+    "Cloudflare 账户 ID 应为 32 位十六进制字符，也可以填写完整的 Workers AI 服务地址。",
   kernelConflict:
     "这台设备正在运行旧的 Bot 内核。请先停用旧插件，按迁移说明启用 DSCord。",
   model: "模型",
@@ -131,6 +143,12 @@ export const zh = {
 export const en: Record<keyof typeof zh, string> = {
   unknown: "Unknown",
   decisionTitle: "Decision model",
+  decisionService: "Service preset",
+  decisionServiceHelp:
+    "Choosing a service fills in its default model and address. Credentials are saved separately for each service.",
+  decisionAccount: "Cloudflare Account ID",
+  decisionAccountHelp:
+    "Copy your Account ID from Workers AI in Cloudflare. The service address is filled in automatically.",
   decisionHelp:
     "Bots use it to judge when to speak. It is separate from the model a Bot answers with, is kept only on this device, and is shared by the Bots this device runs.",
   decisionDoesJoin:
@@ -145,22 +163,22 @@ export const en: Record<keyof typeof zh, string> = {
   decisionUnchecked: "Set up, not checked yet",
   decisionReady: "Working",
   decisionSetup1:
-    "Get an API key for the decision service. By default that is an OpenAI key.",
+    "Choose a service and get its API key. Cloudflare uses a Workers AI API token.",
   decisionSetup2:
-    "Enter it below. The model and address are filled in with the defaults; change them only for another service.",
+    "Enter the credential below. The default model and address are filled in; Cloudflare also needs an Account ID.",
   decisionSetup3:
-    "Choose “Save and check”. The service is asked once right away, and this panel says whether it works.",
+    "Choose “Save and check”. Two small synthetic questions check participation and turn-taking. This sends model requests.",
   decisionApiKey: "Decision model API key",
   decisionKeyNeeded:
     "Required. Stored only on this device and never shown again.",
   decisionKeyHelp:
-    "A key is saved and is never shown again. Leave this blank to keep it, or enter a new one to replace it.",
+    "This service has a saved credential, which is never shown again. Leave this blank to keep it, or enter a replacement.",
   decisionModelName: "Decision model name",
   decisionModelHelp:
     "The model’s name at the decision service. Clear it to return to the default.",
   decisionEndpoint: "Service address",
   decisionEndpointHelp:
-    "The full address of the Decisions endpoint. Clear it to return to the default.",
+    "The full endpoint for the selected service. Clear it to use the default; Cloudflare builds it from your account.",
   enableDecision: "Use the decision model",
   saveDecision: "Save and check",
   decisionSaving: "Checking…",
@@ -177,13 +195,16 @@ export const en: Record<keyof typeof zh, string> = {
   decisionErrorLimit:
     "The service says there are too many requests or the quota is used up ({code}). Choose “Save and check” again later.",
   decisionErrorProtocol:
-    "The service answered, but not the way a decision model does ({code}). Check that the address is a Decisions endpoint and the model name matches.",
+    "The service answered, but its format or model does not match the selected service ({code}). Check the preset, address, and model.",
   decisionErrorUnreachable:
     "The service could not be reached or took too long ({code}). Check the network and the address.",
   decisionErrorOther: "The service did not answer properly ({code}).",
   decisionEndpointInvalid:
     "The address must start with http:// or https:// and carry no credentials or # fragment.",
   decisionModelInvalid: "The model name cannot be empty or contain spaces.",
+  decisionPresetInvalid: "Choose a supported decision service.",
+  decisionAccountInvalid:
+    "Use a 32-character hexadecimal Cloudflare Account ID, or enter a complete Workers AI endpoint.",
   kernelConflict:
     "An older Bot kernel is running on this device. Stop its plugin and follow the migration instructions to enable DSCord.",
   model: "Model",

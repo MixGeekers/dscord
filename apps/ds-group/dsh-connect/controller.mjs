@@ -505,7 +505,9 @@ export class ConnectController {
       if (this.closed) throw new Error('连接插件正在关闭');
       switch (body.action) {
         case 'save-decision-provider': return this.processes.saveDecisionProvider({ apiKey: body.apiKey, enabled: body.enabled,
-          model: body.model, endpoint: body.endpoint });
+          model: body.model, endpoint: body.endpoint,
+          ...(body.preset === undefined ? {} : { preset: body.preset }),
+          ...(body.accountId === undefined ? {} : { accountId: body.accountId }) });
         case 'login': return this.login(body);
         case 'logout': return this.logout();
         default: throw new Error('未知连接操作');

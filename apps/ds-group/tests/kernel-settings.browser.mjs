@@ -8,7 +8,7 @@ import { chromium } from 'playwright';
 import { packageRoot } from '../src/paths.mjs';
 import { CHAT, connectFixture } from './fixtures/connect.mjs';
 import { DecisionSettings } from '../dsh-connect/decision-settings.mjs';
-import { createOpenAIDecisionProvider } from '../src/decision-provider.mjs';
+import { createDecisionProvider } from '../src/decision-provider.mjs';
 import { KernelUpdates } from '../dsh-connect/kernel-updates.mjs';
 
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'dscord-kernel-ui-'));
@@ -228,12 +228,25 @@ try {
   const decisionCalls = [];
   const decisionFetch = async (url, options) => {
     const body = JSON.parse(options.body); decisionCalls.push({ url, model: body.model });
-    if (options.headers.Authorization !== 'Bearer synthetic-decision-key') return new Response('{}', { status: 401 });
-    return Response.json({ model: body.model, answers: [{ name: body.questions[0].name, type: 'choice', choice: 'REPLY', confidence: 0.9,
-      probabilities: [{ value: 'WAIT', probability: 0.05 }, { value: 'JOIN', probability: 0.05 }, { value: 'REPLY', probability: 0.9 }] }] });
+    const systemone = !Array.isArray(body.questions);
+    const cf = url.includes('api.cloudflare.com');
+    const expectedKey = cf ? 'synthetic-cloudflare-key' : systemone ? 'synthetic-jev-key' : 'synthetic-decision-key';
+    if (options.headers.Authorization !== `Bearer ${expectedKey}`) return new Response('{}', { status: 401 });
+    const name = systemone ? Object.keys(body.questions)[0] : body.questions[0].name;
+    const choice = name === 'participation' ? 'SPEAK' : 'REPLY';
+    const choices = systemone ? Object.keys(body.questions[name].criteria) : body.questions[0].choices.map(item => item.value);
+    const probabilities = Object.fromEntries(choices.map(value => [value, value === choice ? 0.9 : 0.05]));
+    if (systemone) {
+      assert.ok(body.state.self);
+      assert.equal(body.prompt_cache_options, undefined);
+      const result = { model: body.model, answers: { [name]: { type: 'choice', choice, confidence: 0.9, probabilities } }, usage: { input_tokens: 42, output_tokens: 7 } };
+      return Response.json(cf ? { success: true, result, errors: [], messages: [] } : result);
+    }
+    return Response.json({ model: body.model, answers: [{ name, type: 'choice', choice, confidence: 0.9,
+      probabilities: Object.entries(probabilities).map(([value, probability]) => ({ value, probability })) }] });
   };
   const decisionSettings = await new DecisionSettings({ directory: path.join(temporary, 'decision'), environment: {},
-    providerFactory: options => createOpenAIDecisionProvider({ ...options, fetchImpl: decisionFetch }) }).initialize();
+    providerFactory: options => createDecisionProvider({ ...options, fetchImpl: decisionFetch }) }).initialize();
   // A synthetic registry: the plugin runs 0.4.0 and a newer release speaks the same protocol.
   const pluginManager = { listBundles: () => [{ name: 'dscord', source: '^0.4.0' }], registries: () => ({ registry: 'https://registry.test/' }),
     installBundle: async () => ({ application: 'restart-required' }) };
@@ -284,7 +297,7 @@ try {
   assert.equal(await step(), 'Set up the decision model');
   const decision = page.getByRole('region', { name: 'Decision model' });
   assert.equal(await decision.getAttribute('data-state'), 'missing');
-  assert.match(await decision.innerText(), /Not set up[\s\S]*Without it, Bots answer only when mentioned[\s\S]*Get an API key/);
+  assert.match(await decision.innerText(), /Not set up[\s\S]*Without it, Bots answer only when mentioned[\s\S]*Choose a service/);
   assert.deepEqual([await decision.getByLabel('Decision model name', { exact: true }).inputValue(), await decision.getByLabel('Service address', { exact: true }).inputValue()],
     ['gpt-6-luna', 'https://api.openai.com/v1/decisions']);
   assert.ok(await page.evaluate(() => { const [first, second] = [...document.querySelectorAll('.dc-decision, [aria-label="Bots this device runs"]')]; return first.matches('.dc-decision') && Boolean(second); }));
@@ -352,6 +365,69 @@ try {
   await decision.locator('summary').click();
   assert.equal(await decision.getByLabel('Decision model name', { exact: true }).inputValue(), 'company/decision-v2');
   await alsoChinese('panel-decision-edit-light-zh.png');
+  const decisionShot = async name => {
+    const filename = path.join(output, name);
+    const viewport = page.viewportSize();
+    // Fit the complete form so the page's sticky connection notice cannot cover its heading.
+    await page.setViewportSize({ ...viewport, height: 1600 });
+    await page.locator('.dscord-connect').evaluate(element => element.scrollTo(0, 0));
+    await page.locator('.dc-decision').screenshot({ path: filename, animations: 'disabled' }); report.screenshots.push(filename);
+    await page.setViewportSize(viewport);
+  };
+  const revealDecision = async () => {
+    const panel = page.locator('.dc-decision');
+    if (!await panel.locator('form').isVisible()) await panel.locator('summary').click();
+    await panel.locator('form').waitFor();
+  };
+  await decision.getByLabel('Service preset', { exact: true }).selectOption('typesafe-jev');
+  assert.equal(await decision.getByLabel('Decision model name', { exact: true }).inputValue(), 'jev-1.14.0');
+  assert.equal(await decision.getByLabel('Service address', { exact: true }).inputValue(), 'https://api.typesafe.ai/v1/systemone');
+  assert.equal(await keyField.inputValue(), '');
+  assert.equal(await keyField.getAttribute('required'), '', 'the old OpenAI credential is not reused');
+  await keyField.fill('synthetic-jev-key');
+  await save.click();
+  await decision.getByRole('status').filter({ hasText: 'Saved. The decision model is working.' }).waitFor();
+  assert.equal(await decision.locator('.dc-status').innerText(), 'Working · jev-1.14.0');
+  await decision.locator('summary').click();
+  await decisionShot('decision-jev-dark-en.png');
+  await page.evaluate(() => { window.fixture.locale('zh'); document.body.removeAttribute('data-ds-dark-theme'); });
+  await revealDecision();
+  await page.getByLabel('服务预设', { exact: true }).waitFor();
+  await decisionShot('decision-jev-light-zh.png');
+  await page.evaluate(() => { window.fixture.locale('en'); document.body.setAttribute('data-ds-dark-theme', ''); });
+  await revealDecision();
+  await decision.getByLabel('Service preset', { exact: true }).selectOption('cloudflare-clef');
+  assert.equal(await keyField.getAttribute('required'), '');
+  const accountId = '0123456789abcdef0123456789abcdef';
+  await decision.getByLabel('Cloudflare Account ID', { exact: true }).fill(accountId);
+  assert.equal(await decision.getByLabel('Service address', { exact: true }).inputValue(), `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/run/@cf/cloudflare/clef`);
+  await decision.getByLabel('Decision model name', { exact: true }).selectOption('clef-flash');
+  assert.match(await decision.getByLabel('Service address', { exact: true }).inputValue(), /\/clef-flash$/);
+  await keyField.fill('synthetic-cloudflare-key');
+  await save.click();
+  await decision.getByRole('status').filter({ hasText: 'Saved. The decision model is working.' }).waitFor();
+  assert.equal(await decision.locator('.dc-status').innerText(), 'Working · clef-flash');
+  await decision.locator('summary').click();
+  assert.equal(await keyField.inputValue(), '');
+  await decisionShot('decision-clef-dark-en.png');
+  await page.evaluate(() => { window.fixture.locale('zh'); document.body.removeAttribute('data-ds-dark-theme'); });
+  await revealDecision();
+  await page.getByLabel('Cloudflare 账户 ID', { exact: true }).waitFor();
+  await decisionShot('decision-clef-light-zh.png');
+  await page.setViewportSize({ width: 390, height: 844 });
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth + 1));
+  await decisionShot('decision-clef-light-zh-mobile.png');
+  await page.setViewportSize({ width: 1000, height: 900 });
+  await page.evaluate(() => { window.fixture.locale('en'); document.body.setAttribute('data-ds-dark-theme', ''); });
+  await revealDecision();
+  await decision.getByLabel('Service preset', { exact: true }).selectOption('typesafe-jev');
+  assert.equal(await keyField.getAttribute('required'), null, 'switching back keeps this service’s credential');
+  await save.click();
+  await decision.getByRole('status').filter({ hasText: 'Saved. The decision model is working.' }).waitFor();
+  await decision.locator('summary').click();
+  assert.equal(await keyField.inputValue(), '');
+  checks.push('jevAndClefPresetsUseSystemOneAndSeparateCredentialsWithAutomaticCloudflareRouting');
+  checks.push('decisionPresetsWorkInChineseEnglishDarkLightAndMobile');
   await decision.locator('summary').click();
   const upgrades = page.getByRole('region', { name: 'Plugin version' });
   await upgrades.getByText('0.5.0 is available', { exact: true }).waitFor();

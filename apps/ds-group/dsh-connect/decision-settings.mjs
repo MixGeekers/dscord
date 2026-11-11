@@ -1,84 +1,108 @@
 import path from 'node:path';
 import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
-import { createOpenAIDecisionProvider, decisionProviderConfiguration, turnQuestion } from '../src/decision-provider.mjs';
+import { createDecisionProvider, DecisionError, turnQuestion, attentionQuestion } from '../src/decision-provider.mjs';
+import { DECISION_PRESETS, decisionPreset, decisionPresetConfiguration, decisionEnvironment } from '../src/decision-presets.mjs';
 
-// One short, synthetic exchange: enough for the service to answer, with nothing of the owner's in it.
+// Synthetic exchanges only. Connectivity and protocol checks are not semantic quality evidence.
 const PROBE = Object.freeze({ version: 1, self: { id: 'dscord-check', name: 'DSCord' }, phase: 'before', pending: [{ senderName: 'DSCord', text: '你好' }] });
+const object = value => value && typeof value === 'object' && !Array.isArray(value);
+const profileValid = value => object(value) && ['apiKey', 'model', 'endpoint', 'accountId'].every(field => value[field] === undefined || typeof value[field] === 'string');
 
-/** A private node setting. Only publicStatus is returned to a browser or Core. */
+/** Private, per-service credentials. Only status and a submit-only form reach the local owner. */
 export class DecisionSettings {
-  constructor({ directory, environment = process.env, providerFactory = createOpenAIDecisionProvider }) {
+  constructor({ directory, environment = process.env, providerFactory = createDecisionProvider }) {
     this.filename = path.join(directory, 'decision-provider.json');
     this.environment = environment;
     this.providerFactory = providerFactory;
-    this.config = { version: 1, enabled: true };
+    this.config = { version: 2, enabled: true, preset: environment.DSCORD_DECISION_PRESET || 'openai-decisions', profiles: {} };
     this.provider = null;
   }
 
   async initialize() {
     const saved = await readOptionalJson(this.filename);
     if (saved) {
-      if (saved.version !== 1 || typeof saved.enabled !== 'boolean'
-        || saved.apiKey !== undefined && typeof saved.apiKey !== 'string') {
-        throw new Error('DECISION_SETTINGS_INVALID');
-      }
-      this.config = saved;
+      if (typeof saved.enabled !== 'boolean') throw new Error('DECISION_SETTINGS_INVALID');
+      if (saved.version === 1 && profileValid(saved)) {
+        const { apiKey, model, endpoint } = saved;
+        // A v1 file always meant the OpenAI Decisions protocol, including custom proxy routes.
+        this.config = { version: 2, enabled: saved.enabled, preset: 'openai-decisions', profiles: {
+          'openai-decisions': Object.fromEntries(Object.entries({ apiKey, model, endpoint }).filter(([, value]) => value !== undefined)),
+        } };
+      } else if (saved.version === 2 && object(saved.profiles) && DECISION_PRESETS.some(item => item.id === saved.preset)
+        && Object.entries(saved.profiles).every(([id, profile]) => DECISION_PRESETS.some(item => item.id === id) && profileValid(profile))) {
+        this.config = saved;
+      } else throw new Error('DECISION_SETTINGS_INVALID');
     }
     this.refresh();
     return this;
   }
 
-  key(config = this.config) {
-    return config.apiKey || this.environment.DSCORD_DECISION_API_KEY || this.environment.OPENAI_API_KEY || '';
-  }
-
-  options(config = this.config) {
-    return { ...decisionProviderConfiguration({ model: config.model ?? (this.environment.DSCORD_DECISION_MODEL || undefined),
-      endpoint: config.endpoint ?? (this.environment.DSCORD_DECISION_ENDPOINT || undefined) }), apiKey: this.key(config) };
+  options(config = this.config, id = config.preset) {
+    const environment = decisionEnvironment(this.environment, id);
+    const profile = config.profiles[id] || {};
+    return { ...decisionPresetConfiguration({ ...environment, ...profile, preset: id }), apiKey: profile.apiKey || environment.apiKey };
   }
 
   refresh() {
     const options = this.options();
-    this.provider = this.config.enabled && this.key()
-      ? this.providerFactory(options) : null;
+    this.provider = this.config.enabled && options.apiKey && options.endpoint ? this.providerFactory(options) : null;
   }
 
   publicStatus() {
+    const options = this.options();
     const health = this.provider?.health?.();
-    return { configured: Boolean(this.key()), enabled: this.config.enabled,
+    return { configured: Boolean(options.apiKey && options.endpoint), enabled: this.config.enabled,
       available: !this.config.enabled || !this.provider ? false
         : health?.health === 'ok' ? true : health?.health === 'error' ? false : null,
-      model: this.provider?.model || this.options().model, health: health?.status || health?.health || 'unknown',
+      preset: this.config.preset, model: this.provider?.model || options.model, health: health?.status || health?.health || 'unknown',
       ...(health?.lastErrorCode ? { error: health.lastErrorCode } : {}) };
   }
 
-  /** What the owner's own settings page fills its form with. The address stays on this device; the key is never read back. */
   form() {
-    const { model, endpoint } = this.options();
-    return { enabled: this.config.enabled, hasKey: Boolean(this.key()), model, endpoint };
+    const presets = DECISION_PRESETS.map(preset => {
+      const { model, endpoint, apiKey, accountId } = this.options(this.config, preset.id);
+      return { id: preset.id, name: preset.name, model, endpoint, hasKey: Boolean(apiKey), models: [...preset.models],
+        ...(preset.accountRequired ? { accountRequired: true, accountId } : {}) };
+    });
+    const active = presets.find(preset => preset.id === this.config.preset);
+    return { enabled: this.config.enabled, preset: active.id, hasKey: active.hasKey, model: active.model, endpoint: active.endpoint,
+      ...(active.accountRequired ? { accountId: active.accountId } : {}), presets };
   }
 
-  /**
-   * Ask the service one small question, so a wrong key, address or model shows now instead of as Bots that
-   * stay quiet later. The outcome is in the provider's health, which publicStatus reports.
-   */
+  /** Both participation and turn-taking must speak the selected protocol. No private chat is sent. */
   async verify() {
-    if (this.provider?.decide) await this.provider.decide(PROBE, { question: turnQuestion }).catch(() => {});
+    if (this.provider?.decide) {
+      try {
+        await this.provider.decide({ ...PROBE, currentMessages: [{ body: '大家好' }] }, { question: attentionQuestion });
+        await this.provider.decide(PROBE, { question: turnQuestion });
+      } catch { /* The provider's safe health code reports the failed request; no automatic retry. */ }
+    }
     return this.publicStatus();
   }
 
-  async save({ apiKey, enabled, model, endpoint } = {}) {
+  async save({ apiKey, enabled, model, endpoint, preset = this.config.preset, accountId } = {}) {
+    decisionPreset(preset);
     if (enabled !== undefined && typeof enabled !== 'boolean') throw new Error('INVALID_DECISION_SETTING');
     if (apiKey !== undefined && (typeof apiKey !== 'string' || apiKey.length > 4096)) throw new Error('INVALID_DECISION_KEY');
-    const next = { ...this.config,
-      ...(enabled === undefined ? {} : { enabled }),
+    const profile = { ...this.config.profiles[preset],
       ...(apiKey?.trim() ? { apiKey: apiKey.trim() } : {}),
-      ...(model === undefined ? {} : { model }),
-      ...(endpoint === undefined ? {} : { endpoint }),
+      ...(model === undefined ? {} : { model }), ...(endpoint === undefined ? {} : { endpoint }),
+      ...(accountId === undefined ? {} : { accountId }),
     };
-    // An emptied field goes back to the environment's value or the adapter's default.
-    for (const field of ['model', 'endpoint']) if (next[field] === '') delete next[field];
-    this.options(next);
+    for (const field of ['model', 'endpoint', 'accountId']) if (profile[field] === '') delete profile[field];
+    if (!profileValid(profile)) throw new Error('INVALID_DECISION_SETTING');
+    if (preset === 'cloudflare-clef') {
+      const environment = decisionEnvironment(this.environment, preset);
+      // Keep the normal Workers AI route derived from account/model rather than freezing it as a proxy override.
+      if (!environment.endpoint && profile.endpoint === decisionPresetConfiguration({ ...environment, ...profile, endpoint: '', preset }).endpoint) {
+        delete profile.endpoint;
+      }
+    }
+    const next = { version: 2, enabled: enabled ?? this.config.enabled, preset, profiles: { ...this.config.profiles, [preset]: profile } };
+    const options = this.options(next);
+    if (next.enabled && preset === 'cloudflare-clef' && !options.endpoint) {
+      throw new DecisionError('INVALID_DECISION_ACCOUNT', 'Enter a Cloudflare Account ID or a complete Workers AI endpoint');
+    }
     await savePrivateJson(this.filename, next);
     this.config = next;
     this.refresh();
