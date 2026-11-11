@@ -9,6 +9,9 @@ import { packageRoot } from '../src/paths.mjs';
 const execute = promisify(execFile);
 const name = `dscord-update-smoke-${randomBytes(4).toString('hex')}`;
 const image = process.env.DS_GROUP_IMAGE || 'dscord-updates:base';
+const { version: baseVersion } = JSON.parse(await readFile(path.join(packageRoot, 'package.json'), 'utf8'));
+const [major, minor, patch] = baseVersion.split('-')[0].split('.').map(Number);
+const [goodVersion, badVersion, interruptedVersion] = [1, 2, 3].map(index => `${major}.${minor}.${patch + 1}-smoke.${index}`);
 const output = path.resolve(process.env.DS_GROUP_UPDATE_SMOKE_REPORT || path.join(packageRoot, '.local/server-update-smoke.json'));
 await mkdir(path.dirname(output), { recursive: true });
 const root = await mkdtemp(path.join(path.dirname(output), `${name}-`));
@@ -24,8 +27,8 @@ const fixture = path.join(root, 'fixtures'); await mkdir(fixture);
 await writeFile(path.join(fixture, 'runner.mjs'), await readFile(path.join(packageRoot, 'tests/fixtures/server-updater-runner.mjs')));
 const state = path.join(root, 'updates'); await mkdir(state);
 const feed = async (version, targetImage, pauseAfterCreate = false) => writeFile(path.join(fixture, 'feed.json'), JSON.stringify({ pauseAfterCreate,
-  target: { version, image: targetImage, eligible: true, fromVersions: ['0.4.0-alpha.3', '0.4.0-alpha.4'], nodeProtocol: '1.0', deploymentContract: 1, rollbackCompatible: true } }));
-await feed('0.4.0-alpha.4', `${name}:good`);
+  target: { version, image: targetImage, eligible: true, fromVersions: [baseVersion, goodVersion], nodeProtocol: '1.0', deploymentContract: 1, rollbackCompatible: true } }));
+await feed(goodVersion, `${name}:good`);
 for (const service of Object.values(compose.services)) {
   if (service.build) { delete service.build; service.image = image; }
 }
@@ -55,7 +58,7 @@ const terminal = async phase => waitFor(async () => (await socketStatus()).job?.
 const seed = "const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('/data/update-smoke.sqlite');d.exec('CREATE TABLE IF NOT EXISTS retained(value TEXT)');d.prepare('INSERT INTO retained VALUES(?)').run(process.argv[1]);d.close();";
 const readRows = () => dc(['exec', '-T', 'core', 'node', '-e', "const{DatabaseSync}=require('node:sqlite');const d=new DatabaseSync('/data/update-smoke.sqlite');console.log(JSON.stringify(d.prepare('SELECT value FROM retained').all()));d.close();"]);
 try {
-  for (const [tag, version, broken] of [['good', '0.4.0-alpha.4', false], ['bad', '0.4.0-alpha.5', true], ['interrupted', '0.4.0-alpha.6', false]]) {
+  for (const [tag, version, broken] of [['good', goodVersion, false], ['bad', badVersion, true], ['interrupted', interruptedVersion, false]]) {
     const dockerfile = path.join(root, `Dockerfile.${tag}`);
     const script = `const fs=require('fs');const p=JSON.parse(fs.readFileSync('/app/package.json'));p.version='${version}';fs.writeFileSync('/app/package.json',JSON.stringify(p));${broken ? "fs.writeFileSync('/app/src/core.mjs','process.exit(42)\\n');" : ''}`;
     await writeFile(dockerfile, `FROM ${image}\nUSER root\nRUN ["node", "-e", ${JSON.stringify(script)}]\nUSER node\n`);
@@ -74,10 +77,10 @@ try {
   await dc(['exec', '-T', 'core', 'node', '-e', seed, 'before-update']);
   const snapshot = await dc(['exec', '-T', 'core', 'node', '-e', "const f=require('fs'),c=require('crypto');console.log(JSON.stringify(['matrix-setup.json','core-config.json'].map(n=>c.createHash('sha256').update(f.readFileSync('/data/'+n)).digest('hex'))))"]);
   await call(admin, '/admin-api/server-update/check', { token: adminToken, body: {} });
-  await call(admin, '/admin-api/server-update/apply', { token: adminToken, body: { version: '0.4.0-alpha.4' }, status: 202 });
+  await call(admin, '/admin-api/server-update/apply', { token: adminToken, body: { version: goodVersion }, status: 202 });
   await terminal('succeeded');
   assert.equal(await base('core', 18100), core); assert.equal(await base('administration', 18110), admin);
-  await waitFor(async () => (await call(admin, '/healthz')).version === '0.4.0-alpha.4', 20000);
+  await waitFor(async () => (await call(admin, '/healthz')).version === goodVersion, 20000);
   assert.deepEqual(JSON.parse(await readRows()), [{ value: 'before-update' }]);
   assert.equal(await dc(['exec', '-T', 'core', 'node', '-e', "const f=require('fs'),c=require('crypto');console.log(JSON.stringify(['matrix-setup.json','core-config.json'].map(n=>c.createHash('sha256').update(f.readFileSync('/data/'+n)).digest('hex'))))"]), snapshot);
   const history = await call(await base('synapse', 8008), `/_matrix/client/v3/rooms/${encodeURIComponent(roomId)}/messages?dir=b&limit=20`, { token: session.access_token });
@@ -87,18 +90,18 @@ try {
   await dc(['exec', '-T', 'updater', 'tar', '-tzf', `/updates/backups/${(await socketStatus()).job.id}/core.tgz`]);
   report.checks.push('Cold Core, Synapse and governance backups precede installation');
   await dc(['exec', '-T', 'core', 'node', '-e', seed, 'after-update']);
-  await feed('0.4.0-alpha.5', `${name}:bad`);
-  await call(admin, '/admin-api/server-update/apply', { token: adminToken, body: { version: '0.4.0-alpha.5' }, status: 202 });
+  await feed(badVersion, `${name}:bad`);
+  await call(admin, '/admin-api/server-update/apply', { token: adminToken, body: { version: badVersion }, status: 202 });
   await terminal('rolled-back');
-  assert.equal((await call(admin, '/healthz')).version, '0.4.0-alpha.4');
+  assert.equal((await call(admin, '/healthz')).version, goodVersion);
   assert.deepEqual(JSON.parse(await readRows()), [{ value: 'before-update' }, { value: 'after-update' }]);
   report.checks.push('A target that crashes restores the preceding containers without rewinding accepted data');
-  await feed('0.4.0-alpha.6', `${name}:interrupted`, true);
-  await call(admin, '/admin-api/server-update/apply', { token: adminToken, body: { version: '0.4.0-alpha.6' }, status: 202 });
+  await feed(interruptedVersion, `${name}:interrupted`, true);
+  await call(admin, '/admin-api/server-update/apply', { token: adminToken, body: { version: interruptedVersion }, status: 202 });
   await waitFor(async () => (await socketStatus()).job?.phase === 'installing' && (await docker(['ps', '--filter', `label=org.dscord.update-job=${(await socketStatus()).job.id}`, '--format', '{{.ID}}'])).length > 0);
-  await feed('0.4.0-alpha.6', `${name}:interrupted`, false);
+  await feed(interruptedVersion, `${name}:interrupted`, false);
   await dc(['restart', 'updater']); await terminal('rolled-back');
-  assert.equal((await call(admin, '/healthz')).version, '0.4.0-alpha.4');
+  assert.equal((await call(admin, '/healthz')).version, goodVersion);
   assert.deepEqual(JSON.parse(await readRows()), [{ value: 'before-update' }, { value: 'after-update' }]);
   report.checks.push('Restarting the updater during replacement recovers the durable transaction');
   report.status = 'passed';

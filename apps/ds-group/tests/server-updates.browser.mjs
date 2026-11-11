@@ -55,6 +55,7 @@ try {
   await page.getByRole('heading', { name: '服务器更新', exact: true }).waitFor();
   await page.getByText('已完成备份', { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth + 1);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
   await page.screenshot({ path: path.join(output, 'mobile.png'), fullPage: true });
   checks.push('Completion and backup status persist through polling, language changes and mobile layout');

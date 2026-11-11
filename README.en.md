@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2"><img src="https://img.shields.io/badge/release-0.4.0--alpha.2-344BFF?style=flat-square" alt="DSCord 0.4.0-alpha.2 release"></a>
-  <a href="https://www.npmjs.com/package/dscord/v/0.4.0-alpha.2"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="Install DSCord with npm"></a>
+  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.4"><img src="https://img.shields.io/badge/release-0.4.0--alpha.4-344BFF?style=flat-square" alt="DSCord 0.4.0-alpha.4 release"></a>
+  <a href="https://www.npmjs.com/package/dscord/v/0.4.0-alpha.4"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="Install DSCord with npm"></a>
   <a href="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml"><img src="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml/badge.svg?branch=main" alt="CI status on main"></a>
   <a href="apps/ds-group/deploy/README.md"><img src="https://img.shields.io/badge/Linux-amd64%20%7C%20arm64-0B1B52?style=flat-square" alt="Server deployment on Linux amd64 and arm64"></a>
 </p>
@@ -78,7 +78,7 @@ Select your Bot in a group, attach a file, and start with a request like this:
 
 ## Get started
 
-This guide targets **DSCord 0.4.0-alpha.2**. Use the same release for Core, the web client, and Bot nodes. The source archive, npm package, and checksums are available on this version's release page. [Release downloads](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2) · [Installation and upgrades](apps/ds-group/deploy/npm.md)
+This guide targets **DSCord 0.4.0-alpha.4**. Use the same release for Core, the web client, and Bot nodes. The source archive, npm package, and checksums are available on this version's release page. [Release downloads](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.4) · [Installation and upgrades](apps/ds-group/deploy/npm.md)
 
 Already have a server? Go to [Connect your Bot](#connect-bot). Addresses, ports, and paths below are replaceable examples. `localhost` always means the machine making the request.
 
@@ -87,7 +87,7 @@ Already have a server? Go to [Connect your Bot](#connect-bot). Addresses, ports,
 With Node `>=24.19.0 <25`, install `dscord` from the npm registry. The CLI manages servers and standalone nodes. Check the version after installation.
 
 ```sh
-npm install --global dscord@0.4.0-alpha.2
+npm install --global dscord@0.4.0-alpha.4
 dscord --version
 ```
 
@@ -118,7 +118,7 @@ Open [localhost:18100](http://localhost:18100) on the server, or your configured
 ### Connect your Bot
 
 1. Prepare compatible DSH. The pinned SDK baseline is `@deepseek-ai/dsh@0.2.2-rc.1`; source and CLI packages declare Node `>=24.19.0 <25`. These are the supported versions in [package.json](apps/ds-group/package.json) and the [host contract](apps/ds-group/dsh-connect/KERNEL.md), not a promise of compatibility with other hosts.
-2. Obtain or build a matching 0.4.0-alpha.2 `.tgz` using the [installation guide](apps/ds-group/deploy/npm.md#安装). Install and enable `dscord` in DSH's `Plugins → Add plugin`. Configure your own working model and credentials in DSH.
+2. Obtain or build a matching 0.4.0-alpha.4 `.tgz` using the [installation guide](apps/ds-group/deploy/npm.md#安装). Install and enable `dscord` in DSH's `Plugins → Add plugin`. Configure your own working model and credentials in DSH.
 3. On the web page choose “Add a Bot”, give it a name (role and model are optional) and choose “Create Bot”. If no DSH is connected yet, the dialog then offers a connection key: choose “Copy connection key”, open **DSCord** in DSH and paste it. DSH connects as soon as you paste and the Bot goes online.
 4. Adding more Bots needs no further step in DSH. A Bot's name, role, model, device and chat servers are all set under “My Bots” on the web page, and DSH follows within a few seconds. From there you can also message a Bot, open its status page, or invite it to a group.
 
