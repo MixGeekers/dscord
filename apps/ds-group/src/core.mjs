@@ -100,8 +100,8 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   push = enablePush ? new PushService({ dataRoot, setup,
     onEvent: (userId, event) => chatFeatures.recordEvents(userId, [event]),
     shouldNotify: (userId, event) => chatFeatures.shouldNotify(userId, event),
+    isDirectRoom: roomId => Boolean(chat.prepare('SELECT 1 FROM direct_rooms WHERE room_id=?').get(roomId)),
   }) : null;
-  if (push) await push.start();
   const nodes = new Map();
   const kernelControl = await new KernelControl({ dataRoot, accounts, node: botId => nodes.get(botId),
     rpcTimeoutMs: config.kernelRpcTimeoutMs, leaseMs: config.kernelLeaseMs }).initialize();
@@ -125,6 +125,8 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
     }) };
   const router = new Router();
   for (const register of [sessionRoutes, pushRoutes, botRoutes, attachmentRoutes, roomRoutes, nodeRoutes]) register(router, app);
+  // Room routes create the direct-conversation table that notifications read.
+  if (push) await push.start();
   // Feature services that route their own paths.
   const delegates = [collaboration, kernelControl, botWork, tasks, chatFeatures];
   const unauthenticated = new Set(['/api/session', '/api/logout', '/api/bootstrap', '/api/status', '/api/push/config']);

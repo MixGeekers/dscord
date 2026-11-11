@@ -33,6 +33,7 @@ import {
 import { useAdmin } from "./useAdmin";
 import type { AdminState } from "./useAdmin";
 import type { Application, ManagementSession, Policy } from "./types";
+import { Loading } from "../../ui/loading";
 import UpdatesPanel from "./UpdatesPanel";
 
 const sections = [
@@ -390,11 +391,7 @@ function Workspace({ admin }: { admin: AdminState }) {
             {notice}
           </div>
         )}
-        {!policy && !error && (
-          <div className="admin-loading" role="status">
-            {t("busy")}
-          </div>
-        )}
+        {!policy && !error && <Loading size="lg" label={t("busy")} />}
         {section === "overview" && <OverviewPanel admin={admin} />}
         {policy && collections.includes(section) && (
           <PolicyCollection

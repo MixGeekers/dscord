@@ -39,6 +39,9 @@ test('the DSH page is drawn by the design system of the web pages: their tokens,
   }
   assert.throws(() => scoped('@font-face { font-family: x; }', SCOPE), /cannot scope/);
   assert.equal(scoped('.a:is(.b, .c) > p,\n.d { color: red; margin: 0 }', '.s'), '.s .a:is(.b, .c) > p, .s .d { color: red; margin: 0; }');
+  // Keyframes keep their global names and stay unscoped, on one line; the loading animation is one of them.
+  assert.equal(scoped('@keyframes ds-x { from { opacity: 0 } to { opacity: 1 } }', '.s'), '@keyframes ds-x { from { opacity: 0; } to { opacity: 1; } }');
+  assert.match(design, /^@keyframes ds-loading-whale \{ 0% \{/m);
 
   // What the page adds itself uses tokens only.
   const defined = new Set(pageLight.keys());
@@ -48,4 +51,9 @@ test('the DSH page is drawn by the design system of the web pages: their tokens,
   for (const [declaration] of styles.matchAll(/(?:font-size|gap|padding|margin|border-radius)[a-z-]*:[^;}]*\d(?:px|rem)/g)) assert.fail(`${declaration} bypasses the scale`);
   // Base UI sets the --anchor-* and --available-* sizes on a popup's positioner while it is open.
   for (const [, name] of design.matchAll(/var\((--[\w-]+)/g)) assert.ok(defined.has(name) || /^--(anchor|available)-/.test(name), `${name} is used by a control and is not a design token`);
+});
+
+test('the loading animation in ui/styles.css is the current output of scripts/loading-motion.mjs', async () => {
+  const { loadingMotion, stylesheet } = await import('../scripts/loading-motion.mjs');
+  assert.ok((await readFile(stylesheet, 'utf8')).includes(loadingMotion()), 'run `node scripts/loading-motion.mjs` and commit ui/styles.css');
 });

@@ -1,4 +1,4 @@
-import { t, onLocaleChange } from "./i18n.js";
+import { t, getLocale, onLocaleChange } from "./i18n.js";
 
 const PUSH_OWNER_KEY = "ds-group.push-owner.v2";
 
@@ -16,6 +16,31 @@ function deviceName() {
   if (/iphone|ipad/i.test(navigator.userAgent)) return "iPhone / iPad";
   if (/android/i.test(navigator.userAgent)) return "Android";
   return platform || t("pwa.browser");
+}
+
+/**
+ * Tells the service worker which conversation this window shows, so its messages do not pop up,
+ * and clears the notifications already shown for it.
+ */
+export function showConversation(roomId) {
+  if (!("serviceWorker" in navigator)) return;
+  const shown =
+    typeof roomId === "string" && document.visibilityState === "visible"
+      ? roomId
+      : null;
+  navigator.serviceWorker.controller?.postMessage({
+    type: "ds-group:viewing",
+    roomId: shown,
+  });
+  if (!shown) return;
+  void navigator.serviceWorker
+    .getRegistration("/")
+    .then((registration) => registration?.getNotifications())
+    .then((notifications) => {
+      for (const notification of notifications ?? [])
+        if (notification.data?.roomId === shown) notification.close();
+    })
+    .catch(() => {});
 }
 
 export function initializePwa({
@@ -53,7 +78,11 @@ export function initializePwa({
   function syncOwner() {
     const worker =
       state.registration?.active ?? navigator.serviceWorker?.controller;
-    worker?.postMessage?.({ type: "ds-group:set-owner", owner: owner() });
+    worker?.postMessage?.({
+      type: "ds-group:set-owner",
+      owner: owner(),
+      locale: getLocale(),
+    });
   }
   function run(action) {
     operation = action();
@@ -383,6 +412,7 @@ export function initializePwa({
   $("push-device-label").value = deviceName();
   removers.push(
     onLocaleChange(() => {
+      syncOwner();
       renderInstall();
       renderNotifications();
       if (state.feedback)

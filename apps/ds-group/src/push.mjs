@@ -14,6 +14,24 @@ const pause = (milliseconds, signal) => new Promise(resolve => {
   signal?.addEventListener('abort', finish, { once: true });
 });
 
+/** Markdown source read as one line of plain text, the way a chat notification shows it. */
+export function previewText(markdown, limit = 180) {
+  const plain = markdown
+    .replace(/(`{3,}|~{3,})[^\n]*\n?([\s\S]*?)(?:\1|$)/g, '$2')
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+    .replace(/`([^`\n]+)`/g, '$1')
+    .replace(/^[ \t]{0,3}(?:#{1,6}[ \t]+|>[ \t]?)+/gm, '')
+    .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+\[[ xX]\][ \t]+/gm, '')
+    .replace(/(\*\*|__|~~|\|\|)(?=\S)([\s\S]*?\S)\1/g, '$2')
+    .replace(/(^|[^\p{L}\p{N}*_])([*_])(?=\S)([^*_\n]*?\S)\2(?![\p{L}\p{N}])/gu, '$1$3')
+    .replace(/\\([\\`*_{}\[\]()#+\-.!|~>])/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const characters = [...plain];
+  return characters.length > limit ? `${characters.slice(0, limit - 1).join('')}…` : plain;
+}
+
 function failure(status, message) { return Object.assign(new Error(message), { status }); }
 
 function checkedSubscription(input) {
@@ -37,7 +55,7 @@ function checkedSubscription(input) {
 
 /** Standard Web Push delivery and per-human Matrix notification cursors. */
 export class PushService {
-  constructor({ dataRoot, setup, transport, clientFactory, now = Date.now, pollTimeout = 10000, retryDelays = [30000, 120000], onError = console.error, onEvent, shouldNotify = () => true } = {}) {
+  constructor({ dataRoot, setup, transport, clientFactory, now = Date.now, pollTimeout = 10000, retryDelays = [30000, 120000], onError = console.error, onEvent, shouldNotify = () => true, isDirectRoom = () => false } = {}) {
     if (!dataRoot || !setup?.participants || !setup.homeserverUrl) throw new Error('Push service needs a data root and Matrix setup');
     this.setup = setup;
     this.dataRoot = dataRoot;
@@ -47,6 +65,7 @@ export class PushService {
     this.onError = onError;
     this.onEvent = onEvent;
     this.shouldNotify = shouldNotify;
+    this.isDirectRoom = isDirectRoom;
     this.transport = transport || ((subscription, payload, options) => webPush.sendNotification(subscription, payload, options));
     this.clientFactory = clientFactory || (person => new MatrixClient({ baseUrl: setup.homeserverUrl, accessToken: person.accessToken }));
     this.humans = setup.participants.filter(person => person.kind === 'human');
@@ -146,24 +165,43 @@ export class PushService {
     return { unsubscribed: result.changes > 0 };
   }
 
-  payload(event) {
-    const sender = this.setup.participants.find(person => person.id === event.sender)?.name || event.sender;
-    const group = Boolean(event.room_name) || event.room_id === this.setup.roomId;
-    const roomName = event.room_name || (group ? '初次协作' : sender);
-    const roleLabels = event.content['org.ds_group']?.mentions?.roleLabels || {};
-    const text = [...displayMentionText(event.content.body, this.setup.participants,
-      Object.entries(roleLabels).map(([id, name]) => ({ id, name })))].slice(0, 180).join('');
-    return { title: group ? `DS-Group · ${roomName}` : sender, body: group ? `${sender}：${text}` : text,
-      tag: `ds-group-${digest(event.event_id).slice(0, 32)}`, icon: '/icons/icon-192.png', badge: '/icons/icon-192.png',
-      data: { url: `/?roomId=${encodeURIComponent(event.room_id)}&eventId=${encodeURIComponent(event.event_id)}`, roomId: event.room_id, eventId: event.event_id } };
+  /** A message notification carries facts only; the service worker words it in the reader's language. */
+  payload(userId, event) {
+    const person = id => this.setup.participants.find(item => item.id === id);
+    const sender = person(event.sender);
+    const avatar = sender?.avatar?.sizes?.[128] || sender?.avatar?.url;
+    const direct = this.isDirectRoom(event.room_id);
+    const meta = event.content['org.ds_group'] || {};
+    const attachments = Array.isArray(meta.attachments) ? meta.attachments.filter(file => typeof file?.name === 'string') : [];
+    const roleLabels = Object.entries(meta.mentions?.roleLabels || {}).map(([id, name]) => ({ id, name }));
+    const body = event.content.body;
+    // A message with only attachments carries their names as its body; the attachment line already says so.
+    const caption = attachments.length && body === attachments.map(file => file.name).join(', ') ? '' : body;
+    const text = previewText(displayMentionText(caption, this.setup.participants, roleLabels));
+    const roomName = direct ? null : event.room_name || (event.room_id === this.setup.roomId ? '初次协作' : null);
+    return {
+      type: 'message', userId, roomId: event.room_id, eventId: event.event_id,
+      sentAt: Number.isFinite(event.origin_server_ts) ? event.origin_server_ts : this.now(),
+      room: { kind: direct ? 'direct' : 'group', name: roomName },
+      sender: { id: event.sender, name: sender?.name || event.sender, kind: sender?.kind === 'bot' ? 'bot' : 'human',
+        ...(sender?.globalId ? { globalId: sender.globalId } : {}),
+        ...(typeof avatar === 'string' && /^https?:\/\//.test(avatar) ? { avatar } : {}) },
+      text,
+      ...(attachments.length ? { attachment: {
+        kind: attachments.every(file => String(file.mimeType || '').startsWith('image/')) ? 'image' : 'file',
+        name: attachments[0].name.slice(0, 120), count: attachments.length,
+      } } : {}),
+    };
   }
 
   enqueueFor(userId, event) {
     if (event.type !== 'm.room.message' || typeof event.event_id !== 'string' || typeof event.room_id !== 'string'
       || typeof event.sender !== 'string' || typeof event.content?.body !== 'string' || !event.content.body.trim()) return 0;
     this.onEvent?.(userId, event);
+    // An edit changes a message the reader was already told about.
+    if (event.content['m.relates_to']?.rel_type === 'm.replace') return 0;
     if (event.sender === userId || !this.shouldNotify(userId, event)) return 0;
-    const payload = JSON.stringify(this.payload(event));
+    const payload = JSON.stringify(this.payload(userId, event));
     const occurredAt = Number.isFinite(event.origin_server_ts) ? event.origin_server_ts : this.now();
     const subscriptions = this.db.prepare('SELECT id FROM push_subscriptions WHERE user_id=? AND created_at<=?').all(userId, occurredAt);
     let queued = 0;
@@ -200,8 +238,7 @@ export class PushService {
     const subscriptions = this.db.prepare('SELECT id FROM push_subscriptions WHERE user_id=?').all(userId);
     if (!subscriptions.length) throw failure(404, 'Enable notifications on this device first');
     const eventId = `test-${randomUUID()}`;
-    const payload = JSON.stringify({ title: 'DS-Group', body: '通知已启用', tag: eventId,
-      icon: '/icons/icon-192.png', badge: '/icons/icon-192.png', data: { url: '/', test: true } });
+    const payload = JSON.stringify({ type: 'test', userId, eventId });
     for (const subscription of subscriptions) this.db.prepare(`INSERT INTO push_deliveries
       (subscription_id,event_id,user_id,payload_json,status,next_attempt,created_at) VALUES (?,?,?,?, 'pending',?,?)`)
       .run(subscription.id, eventId, userId, payload, this.now(), this.now());

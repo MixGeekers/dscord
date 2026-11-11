@@ -15,6 +15,7 @@ import { Field } from "../../src/fields";
 import { useLocale, useTranslation } from "../../src/locale";
 import { centralMessages } from "./messages";
 import type { CentralMessage } from "./messages";
+import { Loading } from "../../../ui/loading";
 
 type ListingStatus = "pending" | "listed" | "rejected" | "banned";
 interface Server {
@@ -854,11 +855,7 @@ function Workspace({ central }: { central: Central }) {
             {notice}
           </div>
         )}
-        {!overview && !error && (
-          <div className="admin-loading" role="status">
-            {t("busy")}
-          </div>
-        )}
+        {!overview && !error && <Loading size="lg" label={t("busy")} />}
         {section === "overview" && (
           <OverviewPanel
             central={central}

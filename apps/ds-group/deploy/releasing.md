@@ -31,7 +31,7 @@ node scripts/npm-pack.mjs
 
 发行工作流还生成 `server-update.json`，绑定最终多架构镜像摘要，并把它加入 `SHA256SUMS`。更新器只接受清单声明的来源版本与相同节点协议。发布前按[更新说明](updates.md)核对 `deploy/server-update-policy.json`：仅列入已验证升级且数据仍兼容旧程序的来源版本；不适用的发行将 `enabled` 设为 `false`，不生成可安装清单，改走专门迁移流程。独立更新器容器在应用更新期间保留自身版本，随完整部署维护。
 
-`ds-group-v版本` 标签触发 `.github/workflows/ds-group-release.yml`，并要求与包版本和锁一致。工作流先执行完整 CI，再从经过清单验证的源码包构建 Linux amd64/arm64 镜像和独立 npm tarball。npm tarball 会做干净安装检查。最终 GitHub Release 提供源码、npm tarball、校验和和镜像 index；容器地址由 `scripts/release-metadata.mjs` 给出。
+`ds-group-v版本` 标签触发 `.github/workflows/ds-group-release.yml`，并要求与包版本和锁一致。工作流先执行完整验证（`ds-group-full.yml`），再从经过清单验证的源码包构建 Linux amd64/arm64 镜像和独立 npm tarball。npm tarball 会做干净安装检查。最终 GitHub Release 提供源码、npm tarball、校验和和镜像 index；容器地址由 `scripts/release-metadata.mjs` 给出。
 
 这个工作流发布 GitHub 资产与容器，不依赖 npm 登录或尚未配置的 OIDC。分支 CI 和本地 `pack` 不执行 registry 发布。
 

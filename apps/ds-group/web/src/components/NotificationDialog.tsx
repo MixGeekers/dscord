@@ -6,6 +6,7 @@ import { useTranslation } from "../locale";
 import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
 import type { Api, NotificationPreferences, Room } from "../types";
+import { Loading } from "../../../ui/loading";
 
 interface NotificationDialogProps {
   room: Room | null;
@@ -178,13 +179,17 @@ export function NotificationDialog({
             />
             {t("suppressRoles")}
           </label>
-          <p
-            id="notification-feedback"
-            className="settings-feedback"
-            role="status"
-          >
-            {loading ? t("loading") : feedback}
-          </p>
+          {loading ? (
+            <Loading size="sm" label={t("loading")} />
+          ) : (
+            <p
+              id="notification-feedback"
+              className="settings-feedback"
+              role="status"
+            >
+              {feedback}
+            </p>
+          )}
         </div>
         <footer className="dialog-footer">
           <Button

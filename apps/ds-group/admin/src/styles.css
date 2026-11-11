@@ -277,8 +277,7 @@ font: var(--text-body-strong);
   color: var(--color-text-secondary);
 }
 .admin-error,
-.admin-notice,
-.admin-loading {
+.admin-notice {
   font: var(--text-body);
   display: flex;
   align-items: flex-start;
@@ -300,9 +299,6 @@ font: var(--text-body-strong);
 }
 .admin-notice {
   color: var(--color-status-success);
-}
-.admin-loading {
-  color: var(--color-text-secondary);
 }
 .admin-error svg,
 .admin-notice svg {

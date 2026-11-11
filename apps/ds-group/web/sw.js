@@ -151,95 +151,295 @@ const sameOwner = (left, right) =>
       left.homeCoreUrl === right.homeCoreUrl &&
       left.centralIssuer === right.centralIssuer,
   );
+// Which conversation each open window shows, so a message there does not pop up over it.
+const viewing = new Map();
 self.addEventListener("message", (event) => {
-  if (event.data?.type !== "ds-group:set-owner" || !event.source?.url) return;
+  if (!event.source?.url) return;
   const source = new URL(event.source.url);
   if (source.origin !== self.location.origin) return;
+  if (event.data?.type === "ds-group:viewing") {
+    const roomId = event.data.roomId;
+    if (typeof roomId === "string" && roomId.startsWith("!"))
+      viewing.set(event.source.id, roomId);
+    else viewing.delete(event.source.id);
+    return;
+  }
+  if (event.data?.type !== "ds-group:set-owner") return;
   const owner = event.data.owner === null ? null : validOwner(event.data.owner);
   if (event.data.owner !== null && !owner) return;
+  const locale = LOCALES.includes(event.data.locale) ? event.data.locale : null;
   event.waitUntil(
-    ownerStore("readwrite", (store) => store.put(owner, "current")),
+    ownerStore("readwrite", (store) => {
+      if (locale) store.put(locale, "locale");
+      return store.put(owner, "current");
+    }),
   );
 });
 
-function notificationTarget(data = {}, allowNavigation = false) {
-  if (!data || typeof data !== "object" || Array.isArray(data)) data = {};
-  const target = new URL("/", self.location.origin);
-  if (allowNavigation) {
-    try {
-      const supplied = new URL(
-        typeof data.url === "string" ? data.url : "/",
-        self.location.origin,
-      );
-      if (
-        supplied.origin === target.origin &&
-        ["/", "/index.html"].includes(supplied.pathname)
-      ) {
-        for (const key of ["roomId", "eventId", "server"]) {
-          const value = supplied.searchParams.get(key);
-          if (value) target.searchParams.set(key, value);
-        }
-      }
-    } catch {
-      /* Malformed notification targets open the app home. */
-    }
-    for (const key of [
-      "roomId",
-      "eventId",
-      "server",
-      "userId",
-      "homeCoreUrl",
-      "centralIssuer",
-    ]) {
-      if (typeof data[key] === "string" && data[key])
-        target.searchParams.set(key, data[key]);
-    }
+const LOCALES = ["zh-CN", "en"];
+const WORDS = {
+  "zh-CN": {
+    group: "群聊",
+    image: "[图片]",
+    images: "[{count} 张图片]",
+    file: "[文件] {name}",
+    files: "[{count} 个文件] {name} 等",
+    newMessages: "{count} 条新消息",
+    said: "{name}：{text}",
+    fallback: "发来一条消息",
+    testTitle: "DSCord",
+    testBody: "通知已开启。有人给你发消息时，这里会显示是谁、在哪里、说了什么。",
+  },
+  en: {
+    group: "Group",
+    image: "[Photo]",
+    images: "[{count} photos]",
+    file: "[File] {name}",
+    files: "[{count} files] {name} and more",
+    newMessages: "{count} new messages",
+    said: "{name}: {text}",
+    fallback: "sent a message",
+    testTitle: "DSCord",
+    testBody:
+      "Notifications are on. When someone messages you, you will see who, where and what they said.",
+  },
+};
+const word = (locale, key, values = {}) =>
+  (WORDS[locale] ?? WORDS.en)[key].replace(/\{(\w+)\}/g, (_, name) =>
+    String(values[name] ?? ""),
+  );
+// Messages kept per conversation; older ones still count toward the total.
+const STACK_LIMIT = 5;
+
+const clean = (value, limit) =>
+  typeof value === "string" ? [...value.trim()].slice(0, limit).join("") : "";
+
+/** The message facts Core sends, checked before any of them reaches the screen. */
+function messageFacts(payload) {
+  if (
+    payload.type !== "message" ||
+    typeof payload.roomId !== "string" ||
+    !payload.roomId.startsWith("!") ||
+    typeof payload.eventId !== "string" ||
+    !payload.eventId
+  )
+    return null;
+  const sender = payload.sender ?? {};
+  let avatar = null;
+  try {
+    const url = new URL(sender.avatar);
+    if (["https:", "http:"].includes(url.protocol)) avatar = url.href;
+  } catch {
+    /* A sender without a usable picture gets a drawn initial. */
   }
+  const attachment = payload.attachment;
+  return {
+    roomId: payload.roomId,
+    eventId: payload.eventId,
+    sentAt: Number.isFinite(payload.sentAt) ? payload.sentAt : Date.now(),
+    direct: payload.room?.kind === "direct",
+    roomName: clean(payload.room?.name, 80),
+    sender: {
+      id: clean(sender.id, 255),
+      colorKey: clean(sender.globalId, 255) || clean(sender.id, 255),
+      name: clean(sender.name, 80) || clean(sender.id, 80) || "?",
+      avatar,
+    },
+    text: clean(payload.text, 300),
+    attachment:
+      attachment && ["image", "file"].includes(attachment.kind)
+        ? {
+            kind: attachment.kind,
+            name: clean(attachment.name, 120),
+            count: Number.isSafeInteger(attachment.count)
+              ? Math.max(1, Math.min(attachment.count, 100))
+              : 1,
+          }
+        : null,
+  };
+}
+
+/** One message as a line: what was attached, then what was written. */
+function messageLine(facts, locale) {
+  const { attachment } = facts;
+  let label = "";
+  if (attachment?.kind === "image")
+    label =
+      attachment.count > 1
+        ? word(locale, "images", { count: attachment.count })
+        : word(locale, "image");
+  else if (attachment)
+    label = word(locale, attachment.count > 1 ? "files" : "file", attachment);
+  return [label, facts.text].filter(Boolean).join(" ") || word(locale, "fallback");
+}
+
+/** Title and body for a conversation's unread messages, newest last. */
+function present(stack, locale) {
+  const latest = stack.messages.at(-1);
+  const room = `#${stack.roomName || word(locale, "group")}`;
+  const many = stack.count > 1;
+  const more = word(locale, "newMessages", { count: stack.count });
+  if (stack.direct)
+    return {
+      title: many ? `${latest.senderName} · ${more}` : latest.senderName,
+      body: stack.messages.map((message) => message.line).join("\n"),
+    };
+  return {
+    title: many ? `${room} · ${more}` : `${latest.senderName} · ${room}`,
+    body: many
+      ? stack.messages
+          .map((message) =>
+            word(locale, "said", { name: message.senderName, text: message.line }),
+          )
+          .join("\n")
+      : latest.line,
+  };
+}
+
+function avatarHue(key) {
+  let hash = 0;
+  for (const character of key)
+    hash = ((hash << 5) - hash + character.codePointAt(0)) | 0;
+  return Math.abs(hash) % 360;
+}
+
+/** The same initial-on-colour picture the chat shows for someone without a photo. */
+async function initialAvatar(sender) {
+  if (typeof OffscreenCanvas !== "function") return null;
+  try {
+    const size = 192;
+    const canvas = new OffscreenCanvas(size, size);
+    const context = canvas.getContext("2d");
+    context.fillStyle = `hsl(${avatarHue(sender.colorKey || sender.name)} 34% 43%)`;
+    context.beginPath();
+    context.arc(size / 2, size / 2, size / 2, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = "#ffffff";
+    context.font = `600 ${size * 0.46}px system-ui, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif`;
+    context.textAlign = "center";
+    context.textBaseline = "middle";
+    context.fillText([...sender.name][0] ?? "?", size / 2, size / 2 + size * 0.03);
+    const bytes = new Uint8Array(
+      await (await canvas.convertToBlob({ type: "image/png" })).arrayBuffer(),
+    );
+    let binary = "";
+    for (let index = 0; index < bytes.length; index += 0x8000)
+      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+    return `data:image/png;base64,${btoa(binary)}`;
+  } catch {
+    return null;
+  }
+}
+
+async function readerLocale() {
+  const stored = await ownerStore("readonly", (store) =>
+    store.get("locale"),
+  ).catch(() => null);
+  if (LOCALES.includes(stored)) return stored;
+  return /^zh(?:-|$)/i.test(self.navigator?.language ?? "") ? "zh-CN" : "en";
+}
+
+async function someoneIsReading(roomId) {
+  const windows = await self.clients.matchAll({
+    type: "window",
+    includeUncontrolled: true,
+  });
+  return windows.some(
+    (client) =>
+      client.focused &&
+      client.visibilityState === "visible" &&
+      viewing.get(client.id) === roomId,
+  );
+}
+
+const conversationTag = (owner, roomId) => `ds-group:${owner.userId}:${roomId}`;
+
+async function showMessage(owner, facts, locale) {
+  if (await someoneIsReading(facts.roomId)) return;
+  const tag = conversationTag(owner, facts.roomId);
+  const shown = (await self.registration.getNotifications({ tag })).find(
+    (notification) => notification.data?.roomId === facts.roomId,
+  );
+  const earlier = Array.isArray(shown?.data?.messages) ? shown.data.messages : [];
+  if (earlier.some((message) => message.eventId === facts.eventId)) return;
+  const stack = {
+    direct: facts.direct,
+    roomName: facts.roomName,
+    count: (Number.isSafeInteger(shown?.data?.count) ? shown.data.count : 0) + 1,
+    messages: [
+      ...earlier,
+      { eventId: facts.eventId, senderName: facts.sender.name, line: messageLine(facts, locale) },
+    ].slice(-STACK_LIMIT),
+  };
+  const { title, body } = present(stack, locale);
+  const icon =
+    facts.sender.avatar ?? (await initialAvatar(facts.sender)) ?? "/icons/icon-192.png";
+  await self.registration.showNotification(title, {
+    body,
+    icon,
+    badge: "/icons/mark-128.png",
+    tag,
+    renotify: true,
+    timestamp: facts.sentAt,
+    lang: locale,
+    data: {
+      ...owner,
+      roomId: facts.roomId,
+      // Opening the notification starts at the first message it announced.
+      eventId:
+        typeof shown?.data?.eventId === "string" ? shown.data.eventId : facts.eventId,
+      direct: stack.direct,
+      roomName: stack.roomName,
+      count: stack.count,
+      messages: stack.messages,
+    },
+  });
+}
+
+/** Where a notification opens: the app, at its conversation and message for the bound reader. */
+function notificationTarget(data, allowNavigation) {
+  const target = new URL("/", self.location.origin);
+  if (!allowNavigation) return { url: target.href, roomId: null, eventId: null, userId: null };
+  for (const key of ["roomId", "eventId", "userId", "homeCoreUrl", "centralIssuer"])
+    if (typeof data[key] === "string" && data[key]) target.searchParams.set(key, data[key]);
   return {
     url: target.href,
     roomId: target.searchParams.get("roomId"),
     eventId: target.searchParams.get("eventId"),
-    userId: allowNavigation ? data.userId : null,
-    homeCoreUrl: allowNavigation ? data.homeCoreUrl : null,
-    centralIssuer: allowNavigation ? (data.centralIssuer ?? null) : null,
+    userId: data.userId,
+    homeCoreUrl: data.homeCoreUrl,
+    centralIssuer: data.centralIssuer ?? null,
   };
 }
 
 self.addEventListener("push", (event) => {
-  let payload = {};
+  let payload = null;
   try {
-    payload = event.data?.json() ?? {};
+    payload = event.data?.json() ?? null;
   } catch {
-    /* Unbound payloads contain no trusted navigation. */
+    /* Unreadable payloads are dropped. */
   }
-  if (!payload || typeof payload !== "object" || Array.isArray(payload))
-    payload = {};
   event.waitUntil(
     (async () => {
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
       const owner = await ownerStore("readonly", (store) =>
         store.get("current"),
       ).catch(() => null);
-      if (!owner) return;
-      const recipient = validOwner(payload.data);
-      if (recipient && !sameOwner(owner, recipient)) return;
-      const bound = Boolean(recipient);
-      const data = notificationTarget(payload.data, bound);
-      const title =
-        bound && typeof payload.title === "string" && payload.title.trim()
-          ? payload.title.slice(0, 120)
-          : "DSCord";
-      const body =
-        bound && typeof payload.body === "string"
-          ? payload.body.slice(0, 1000)
-          : "DSCord";
-      await self.registration.showNotification(title, {
-        body,
-        icon: "/icons/icon-192.png",
-        data,
-        ...(data.eventId
-          ? { tag: `ds-group-${data.userId}-${data.eventId}` }
-          : {}),
-      });
+      // Only the reader this browser is signed in as sees a notification meant for them.
+      if (!validOwner(owner) || payload.userId !== owner.userId) return;
+      const locale = await readerLocale();
+      if (payload.type === "test") {
+        await self.registration.showNotification(word(locale, "testTitle"), {
+          body: word(locale, "testBody"),
+          icon: "/icons/icon-192.png",
+          badge: "/icons/mark-128.png",
+          lang: locale,
+          data: { ...owner },
+        });
+        return;
+      }
+      const facts = messageFacts(payload);
+      if (facts) await showMessage(owner, facts, locale);
     })(),
   );
 });
@@ -251,9 +451,10 @@ self.addEventListener("notificationclick", (event) => {
       const owner = await ownerStore("readonly", (store) =>
         store.get("current"),
       ).catch(() => null);
+      const data = event.notification.data ?? {};
       const target = notificationTarget(
-        event.notification.data,
-        sameOwner(owner, validOwner(event.notification.data)),
+        data,
+        sameOwner(validOwner(owner), validOwner(data)),
       );
       const windows = await self.clients.matchAll({
         type: "window",

@@ -39,6 +39,7 @@ import type { BotHomeTab } from "./components/BotHome";
 import type { BotStatus } from "./bot-kernel";
 import { InboxDialog } from "./components/InboxDialog";
 import { NotificationDialog } from "./components/NotificationDialog";
+import { showConversation } from "../pwa.js";
 import {
   emptyMentions,
   isOwnedBotRoom,
@@ -53,6 +54,7 @@ import {
 } from "./app/timeline-events";
 import { useWorkspaceSync } from "./app/useWorkspaceSync";
 import { useTimelineHistory } from "./app/useTimelineHistory";
+import { useAppViewport } from "./app/useAppViewport";
 import { newRequestId } from "./identifiers";
 import type { MentionValue } from "../mention-editor.js";
 import type {
@@ -80,6 +82,7 @@ export default function App({
   const [config] = useState(() => suppliedConfig ?? defaultConfig());
   const t = useTranslation(appMessages);
   const tAuth = useTranslation(authMessages);
+  useAppViewport();
   // An invitation link carries its code as ?invite=CODE for the sign-in form.
   const [invitation] = useState(
     () => new URL(location.href).searchParams.get("invite") ?? "",
@@ -1003,6 +1006,18 @@ export default function App({
       });
     return () => controller.abort();
   }, [jump, roomId, session, events, api, notify]);
+
+  // Notifications stay quiet for the conversation on screen and clear once it is read.
+  useEffect(() => {
+    const shown = session && view === "chat" ? roomId : null;
+    const report = () => showConversation(shown);
+    report();
+    document.addEventListener("visibilitychange", report);
+    return () => {
+      document.removeEventListener("visibilitychange", report);
+      showConversation(null);
+    };
+  }, [roomId, session, view]);
 
   const openRoomFromNotification = useCallback(
     (targetRoomId: string, eventId?: string, expectedUserId?: string) => {
