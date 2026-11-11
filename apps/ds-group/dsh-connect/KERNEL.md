@@ -54,7 +54,7 @@ DSH 内已认证、同源的 `POST /api/dscord/kernel` 接收 `{endpoint,payload
 
 ## 前台、程序核心和工作者
 
-连接到 DSCord 的每个 Bot 分成三部分。前台是 Bot 原有的原生 Session，只保留沟通、回忆、派活和管自己的工具（`dispatch_work`、`task_join`、`task_status`、`task_cancel`、`task_note`、`ask_bot`，以及记忆、日程和改自己名称头像的 `update_profile`），其他工具在前台被拒绝，查网页也交给工作者。每件事只有一种做法：原生宿主自己的 Bot 通道、团队和群（`message_bot`、`list_bots`、`post_to_group`、`group_relay`、`read_group_chat`、`read_own_chat`、`create_bot`、`update_bot`、`stop_bot`、`create_group`、`update_group`、`delete_group`、`group_goal`）在前台和工作者里都被拒绝：找别的 Bot 用 `ask_bot`，有哪些 Bot 看 `contacts`，群就是 Matrix 房间，Bot 改自己的名称和头像用 `update_profile`（连接插件用 Bot 自己的中央会话调 `PATCH /api/me` 和 `/api/me/avatar`，几秒内同步到各聊天服务器和本机 Bot），其余设置由所属人在网页上管理。桌面卡片工具（`ask_user`、`ask_user_question`、`show_view`）在前台和工作者里都被拒绝：聊天里没人看得到卡片，一轮停在卡片上也没有可发的回复；前台把问题直接写在回复里，工作者用 `work_ask`。前台一轮正常结束却没有回复文字（例如停在某个工具上）时，桥接层提示它一次写出回复；再次没有回复文字就按空回复结束这次请求（记为失败），不会占住节点队列直到超时。程序核心是 `dsh-connect/work-core.mjs`，不调用模型，每个原生 Bot 一个：Bot 连着几台聊天服务器，各台的连接都在同一个核心里占一个席位（该服务器上的 Bot 账号和那里的通讯录），任务台账存在 `bots/<原生 Bot ID>/work.json`，任务记下请求是从哪个账号进来的（`origin.botId`），结果从同一台服务器交回，那台服务器暂时没连上就等它连上再交；核心维护任务台账、并发槽位（默认 3 个）、超时（默认 60 分钟）、取消、补充说明和交付文件核对。工作者是每个任务新建的一个 Session 和目录（连接数据目录下 `bots/<原生 Bot ID>/workers/<任务 ID>/`），有完整工具，只能用 `work_report` 汇报、用 `work_ask` 提问。
+连接到 DSCord 的每个 Bot 分成三部分。前台是 Bot 原有的原生 Session，只保留沟通、回忆、读房间、派活和管自己的工具（`dispatch_work`、`task_join`、`task_status`、`task_cancel`、`task_note`、`ask_bot`、`read_room`，以及记忆、日程和改自己名称头像的 `update_profile`），其他工具在前台被拒绝，查网页也交给工作者。每件事只有一种做法：原生宿主自己的 Bot 通道、团队和群（`message_bot`、`list_bots`、`post_to_group`、`group_relay`、`read_group_chat`、`read_own_chat`、`create_bot`、`update_bot`、`stop_bot`、`create_group`、`update_group`、`delete_group`、`group_goal`）在前台和工作者里都被拒绝：找别的 Bot 用 `ask_bot`，有哪些 Bot 看 `contacts`，群就是 Matrix 房间、里面的消息用 `read_room` 读，Bot 改自己的名称和头像用 `update_profile`（连接插件用 Bot 自己的中央会话调 `PATCH /api/me` 和 `/api/me/avatar`，几秒内同步到各聊天服务器和本机 Bot），其余设置由所属人在网页上管理。桌面卡片工具（`ask_user`、`ask_user_question`、`show_view`）在前台和工作者里都被拒绝：聊天里没人看得到卡片，一轮停在卡片上也没有可发的回复；前台把问题直接写在回复里，工作者用 `work_ask`。前台一轮正常结束却没有回复文字（例如停在某个工具上）时，桥接层提示它一次写出回复；再次没有回复文字就按空回复结束这次请求（记为失败），不会占住节点队列直到超时。程序核心是 `dsh-connect/work-core.mjs`，不调用模型，每个原生 Bot 一个：Bot 连着几台聊天服务器，各台的连接都在同一个核心里占一个席位（该服务器上的 Bot 账号和那里的通讯录），任务台账存在 `bots/<原生 Bot ID>/work.json`，任务记下请求是从哪个账号进来的（`origin.botId`），结果从同一台服务器交回，那台服务器暂时没连上就等它连上再交；核心维护任务台账、并发槽位（默认 3 个）、超时（默认 60 分钟）、取消、补充说明和交付文件核对。工作者是每个任务新建的一个 Session 和目录（连接数据目录下 `bots/<原生 Bot ID>/workers/<任务 ID>/`），有完整工具，只能用 `work_report` 汇报、用 `work_ask` 提问，读房间里的聊天原话和前台用同一个 `read_room`。
 
 前台规则对 Bot 原生 Session 的每一轮都生效；连接建立时即生效，不等第一条房间消息。前台怎么工作的说明（`src/front-prompt.mjs` 的 `FRONT_RULES`）是系统提示的一部分：DSCord 服务着的 Bot，身份段里用它代替原生团队规则（那些规则讲的 `message_bot`、`update_bot`、`list_bots` 和原生群在 DSCord 里都被拒绝），每条消息不再重复这些说明。
 
@@ -72,7 +72,7 @@ DSH 内已认证、同源的 `POST /api/dscord/kernel` 接收 `{endpoint,payload
 
 投递回执、名字来源、事件 ID、回复路由和注意力台账这些记账用的字段不进前台，留在节点记录和记忆里；回复发到哪里由节点按请求决定，不靠前台复述。
 
-一个 Session 对一条房间消息只读一次。`history` 按估算的 token 预算（`HISTORY_TOKEN_BUDGET`，默认 3000，按一个中文字一个 token、三个其他字符一个 token 估，偏保守）从最新往回装，装不下的计入 `earlierOmitted`，至少列一条。每个账号的代号、每个房间给它看过哪些消息，记在核心的 `work.json`（`reading`）里；一个 Bot 在几台服务器上共用这一份，所以一个代号在整个 Session 里、在哪个房间都指同一个账号。记录在前台真正接下这一轮时才写入，被取消、没送达或换了 Session 的一轮不算读过。宿主压缩了对话（`compaction/summary`）之后，各房间重新读一次，代号不变；换了新的分段（part）就从头开始。能请的 Bot（`contacts`）只在名单和上次给这个房间看的不一样时列出。
+一个 Session 对一条房间消息只读一次。`history` 按估算的 token 预算（`HISTORY_TOKEN_BUDGET`，默认 3000，按一个中文字一个 token、三个其他字符一个 token 估，偏保守）从最新往回装，装不下的计入 `earlierOmitted`，至少列一条。每个账号的代号、每个房间给它看过哪些消息，记在核心的 `work.json`（`reading`）里；一个 Bot 在几台服务器上共用这一份，所以一个代号在整个 Session 里、在哪个房间都指同一个账号。一轮的文字给出的代号当时就记下，之后读到的任何内容都接着用，不会把同一个代号再发给别人；这一轮给房间看了哪些消息，在前台真正接下这一轮时才记入，被取消、没送达或换了 Session 的一轮不算读过。宿主压缩了对话（`compaction/summary`）之后，各房间重新读一次，代号不变；换了新的分段（part）就从头开始。能请的 Bot（`contacts`）只在名单和上次给这个房间看的不一样时列出。
 
 每次请求在 `native-bridge.json` 的 `prompt` 里记下这一轮文字的字符数、估算 token 数、列出的历史条数和省略条数；模型返回的实际用量在同一条记录的 `calls[].usage` 里。
 
@@ -81,6 +81,18 @@ DSH 内已认证、同源的 `POST /api/dscord/kernel` 接收 `{endpoint,payload
 同一个人在同一房间连续发来的消息由节点合并给前台：前台还没开始回答时，排在后面的几条一起交给前台，前台在 `msg.merged` 里看到前几条，自己判断是一句话拆成几条还是几件事。判断模型（与自然发言共用）决定何时开口：`WAIT` 表示对方还没说完，再等最多 6 秒；`REPLY` 表示现在回答；前台回答途中又来一条时，`JOIN` 表示它和正在回答的是一回事，节点停下这次回答，把几条合起来重新回答，`REPLY` 则等这次答完再单独答。只读工具之外已经动手（例如派了工）的回答不会被打断。没有配置判断模型时，节点等对方最后一条消息过去 2 秒再回答，回答途中的追加消息按 `JOIN` 处理。
 
 Core 的 owner 管理接口通过节点通道访问本内核；网页不接收节点模型凭据。[人物和来源视图](../memory/当前上下文与回顾.md)
+
+### 前台和工作者自己读房间（`read_room`）
+
+一轮的文字只带这个房间里还没看过的最近消息。更早的消息、别的房间在说什么、房间里有谁，前台和工作者用同一个工具 `read_room`（`work-core.mjs` 的 `readRoom`）自己去看：
+
+- 能读的范围是 Bot 自己的账号所在的每一个房间，包括它在别的聊天服务器上的账号所在的房间，和这一轮是谁请它看的无关：不核对请求者是不是那个房间的成员。Bot 和人一样，自己在的房间自己能看；看到的内容怎么用由 Bot 自己判断。
+- 读的是各台服务器的节点在本机存下的消息（`src/room-reader.mjs` 读 `NodeStore`），也就是 Bot 加入房间之后收到的，不向服务器补取加入之前的历史。Bot 已经离开的房间不能读。
+- 参数：`room`（`list=rooms` 给出的 6 位房间 id、完整房间 ID，或只对应一个房间的名字；不填是这一轮请求所在的房间，工作者是原始请求所在的房间）、`before`（消息编号，读这条之前的）、`start`（消息编号，从这条读起往后读；或上一页结果里的 `next`）、`list`（`rooms` 列出所在的全部房间，`members` 列出房间的全部成员）。`before`、`start` 不带 `room` 时，编号先在这一轮的房间里找，再到其他房间里找。
+- 结果和一轮的文字是同一套写法：`room`、`people`（同一套代号）、`history`（同样的行和消息编号，`at` 是带日期的 UTC 时间），以及 `seenBefore`、`earlierOmitted`、`historyGap`、`withdrawn`；往后读的一页没读完时带 `laterOmitted` 和 `next`。读到的编号可以直接填回 `before`、`start`，也和之后各轮里的编号一致。
+- 一页不超过 `HISTORY_TOKEN_BUDGET`（估算 3000 token）和 `READING_CHARS`（8000 字符），装不下的计入 `earlierOmitted` 或 `laterOmitted`。8000 这个数来自宿主：DSH 在上下文吃紧时会把超过 8192 字符的工具结果裁掉中间（只留开头 4096 和结尾 1024 字符），而且不发 `compaction/summary`，超过这个长度，阅读记录里算读过的消息就可能已经不在上下文里。房间列表和成员列表同样分页（`roomsOmitted`、`membersOmitted` 和 `next`）。
+- 不带 `before`、`start` 时读最新的一页；这个 Session 读过的房间只列出之后的新消息，没有新消息就只回一句话。读到房间最新一条的一页记入阅读记录，之后的一轮和下一次读取都从它后面接着列；`before` 往回翻的一页不记。前台的记录就是每一轮用的那一份（`work.json` 的 `reading`），只有 Bot 当前的 Session 读的才写进去；工作者每个任务一份，只在内存里，任务结束就丢弃，工作者的 Session 被压缩后各房间重读。
+- 分工：`read_room` 按时间顺序读原话；不知道在哪个房间、什么时候说的，按内容找用记忆的 `recall`、`raw_source_query`。整理一长段聊天记录这类要翻很多页的事，前台派给工作者去读，不占前台的上下文。
 
 ## 单实例和原目录采用
 
@@ -101,8 +113,8 @@ DSCord 的聊天入口是 Matrix。吸收的其他 IM adapter 源码不等于提
 每个 Bot 有一本自己的通讯录（`src/contact-book.mjs`，存在连接数据目录下 `bots/<原生 Bot ID>/contacts.sqlite`），Bot 在几台聊天服务器上都共用这一本，路由只查它，不再各处猜：
 
 - 联系人以全局身份 ID（`用户名@中央域名`，来自聊天服务器 roster 的 `globalId`）为键，这也是记忆里人物档案的键；同一个人在几台服务器上各有一个 Matrix 账号，都记在这个联系人名下。服务器给不出全局身份的账号，以它的 Matrix ID 作身份。某人是谁、偏好什么、能做什么只记在人物档案里，通讯录不另记。
-- 房间和 Matrix 往来属于某一台服务器，节点通过 `on()` 按自己在那台服务器上的账号看这本通讯录：共同房间、`reach` 和 `ask_bot` 都只看这台服务器，请求发给对方在这台服务器上的账号；对方在这里没有账号就联系不上。前台看到的 `contacts` 里 `id` 是全局身份，`account` 是这台服务器上的账号。还没返回的外发请求按发出的服务器列出。
-- 共同房间来自房间 roster（只有成员读得到）和时间线里的成员变化；同一个 DSH 里的 Bot 由宿主告知（`work-core.mjs` 的 `localBot`），没碰过面也是联系人。Bot 之间的请求一律走 Matrix：`reach` 为 `room` 表示有共同房间，为 `direct` 表示没有，核心发请求时开一个私聊房间并邀请对方（对方节点自动加入），之后的请求沿用这个房间。前台每轮在 `contacts` 里看到能请的 Bot，不在其中的 Bot 联系不上。
+- 房间和 Matrix 往来属于某一台服务器，节点通过 `on()` 按自己在那台服务器上的账号看这本通讯录：共同房间、`reach` 和 `ask_bot` 都只看这台服务器，请求发给对方在这台服务器上的账号；对方在这里没有账号就联系不上。前台在一轮文字的 `contacts` 里看到的 `id` 是对方在这台服务器上的账号，`ask_bot` 的 `to` 填它。还没返回的外发请求按发出的服务器列出。
+- 共同房间来自房间 roster（只有成员读得到）和时间线里的成员变化；同一个 DSH 里的 Bot 由宿主告知（`work-core.mjs` 的 `localBot`），没碰过面也是联系人。Bot 之间的请求一律走 Matrix：`reach` 为 `room` 表示有共同房间，为 `direct` 表示没有，核心发请求时开一个私聊房间并邀请对方（对方节点自动加入），之后的请求沿用这个房间。前台在一轮文字的 `contacts` 里看到能请的 Bot（名单和上次给这个房间看的不一样时才再列一次），不在其中的 Bot 联系不上。
 - 跨节点受托时，前台这一轮如果派了工，它的回复只是受理（`reply` / `ack`，不唤醒对方），不算结果；工作者的结果作为对原请求的 `task.result` 交回请求方 Bot，带原任务号和来源链。
 - `ask_bot` 是找别的 Bot 的唯一方式，不管这一轮是在替人还是替另一个 Bot 办事：前台写 `to`（完整 ID、指向它的 Matrix 链接，或通讯录里只对应一个 Bot 的名字）、自足的 `body`，以及最终读者的 `audience`、`plain`（并进请求内容）。核心把请求记在这一轮上，这一轮正常结束时随回复一起交给节点（一轮最多 3 个、同一个 Bot 一次）；没正常结束的一轮不发。节点把每个请求作为 `task.request` 发到双方都在的房间（来源房间优先），没有就开私聊房间；开不了时在回复里如实说明这件事没交出去，发送彻底失败时在原消息下告诉请求方没有发出去。对方的结果作为 `task.result` 回到这个 Bot，由它的前台回复原请求者。回答别的 Bot 的请求就是那一轮的回复，不用 `ask_bot`。回复正文里的 JSON 字段或 “@名字” 行不会变成请求。对方节点读不到这个节点的文件路径：这条消息带的附件自动随请求发出，其他要交给对方的本地文件写进 `files`（最多 10 个），节点上传后只附在这个请求上。消息的 `hop` 是这件事在 Bot 之间转了几次：每个请求加一，回复和结果沿用请求的值；转到第 4 次后 `ask_bot` 拒绝再转，前台用手上的信息回复请求者，回来的结果仍然送达。一个请求只得到一份结果：同一轮里已经派工或 `task_join` 时 `ask_bot` 被拒绝（工作者的结果会直接交给请求者），已经 `ask_bot` 时派工和 `task_join` 被拒绝；前台等对方结果回来，再把结果和要求一起交给工作者。
 - 往来（exchange）记录每次 Bot 间请求：方向、对方、途径（`matrix`）、代表的源消息、状态（received → dispatched → delivered，或 sending → sent → returned，失败为 failed）和任务编号。主人通过 kernel 管理通道的 `contacts` 操作只读查看，按联系人过滤，按时间分页。

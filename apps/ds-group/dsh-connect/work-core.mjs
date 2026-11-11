@@ -2,7 +2,7 @@ import path from 'node:path';
 import { mkdir, readdir, readFile, stat } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import { MAX_ASK_DEPTH } from '../src/contact-book.mjs';
-import { FRONT_RULES } from '../src/front-prompt.mjs';
+import { FRONT_RULES, messageRef, roomList, roomMembers, roomReading, roomRef, withRoom } from '../src/front-prompt.mjs';
 import { readOptionalJson, savePrivateJson } from '../scripts/server-init.mjs';
 import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-plugin/work-files.mjs';
 
@@ -19,7 +19,7 @@ import { collectArtifacts, collectStagedArtifacts, MAX_ARTIFACTS } from '../dsh-
 // Each thing a Bot does has one way to do it: asking another Bot is ask_bot, a group is a Matrix room.
 export const FRONT_TOOLS = new Set([
   'dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot',
-  'recall', 'contacts', 'memory_source', 'raw_source_query', 'read_image',
+  'recall', 'contacts', 'memory_source', 'raw_source_query', 'read_image', 'read_room',
   // Quick Bot-level actions: memory, schedules and its own profile belong to the Bot itself.
   'remember', 'forget', 'review_memory', 'schedule_create', 'schedule_edit', 'update_profile',
 ]);
@@ -34,7 +34,7 @@ export const CARD_REFUSAL = '这里是聊天，没有卡片界面。要问对方
 // The native host's own team, groups and Bot-to-Bot channel: in DSCord each has one other way, so these are off for everyone.
 export const NATIVE_TEAM_TOOLS = new Set(['message_bot', 'list_bots', 'post_to_group', 'group_relay', 'read_group_chat', 'read_own_chat',
   'create_bot', 'update_bot', 'stop_bot', 'create_group', 'update_group', 'delete_group', 'group_goal']);
-export const NATIVE_TEAM_REFUSAL = 'DSCord 里不用这个工具：找别的 Bot 办事用 ask_bot（工作者用 work_ask 交给前台），有哪些 Bot 看 contacts，群就是 Matrix 房间，改你自己的名字和头像用 update_profile，其余 Bot 设置由主人在网页上管理。';
+export const NATIVE_TEAM_REFUSAL = 'DSCord 里不用这个工具：找别的 Bot 办事用 ask_bot（工作者用 work_ask 交给前台），有哪些 Bot 看 contacts，群就是 Matrix 房间、里面的消息用 read_room 读，改你自己的名字和头像用 update_profile，其余 Bot 设置由主人在网页上管理。';
 const ASKS_PER_TURN = 3;
 // The central server decides the real limit; this only keeps a stray path from reading a huge file.
 const AVATAR_READ_LIMIT = 20 * 1024 * 1024;
@@ -146,6 +146,8 @@ export class WorkCore {
     this.origin = null;
     // The Bot's accounts on its chat servers, each with that server's contact book and result delivery.
     this.seats = new Map();
+    // What each running worker has read of the rooms, by task: a worker Session lives only as long as its task.
+    this.workerReadings = new Map();
     this.writes = Promise.resolve();
   }
 
@@ -175,9 +177,9 @@ export class WorkCore {
     return this.writes;
   }
 
-  /** A connection's place in this core: its Bot account, contact book and result delivery. */
+  /** A connection's place in this core: its Bot account, with that server's contact book, rooms and result delivery. */
   seat(botId) {
-    if (!this.seats.has(botId)) this.seats.set(botId, { contacts: null, onResult: null });
+    if (!this.seats.has(botId)) this.seats.set(botId, { contacts: null, rooms: null, onResult: null });
     return this.seats.get(botId);
   }
 
@@ -285,7 +287,21 @@ export class WorkCore {
           clear_avatar: { type: 'boolean', description: '为 true 时去掉头像，恢复默认' },
         },
         execute: args => this.updateProfile(args) },
+      this.roomTool(),
     ];
+  }
+
+  /** Reading a room is one tool for the front and for a worker: both are this Bot, looking through its own accounts. */
+  roomTool() {
+    return { name: 'read_room', output,
+      description: '按时间顺序读你所在房间里的消息原话，一次一页；你自己的账号在的房间都能读，包括别的聊天服务器上的，但只有你加入之后收到的消息。返回 JSON：people 的键是代号，history 里用代号指人，id 才是完整账号；每条消息有编号 ref，at 是 UTC 时间。不填 before 和 start 时读最新的，读过的房间只列出之后的新消息（seenBefore）。earlierOmitted 是更早没列出的条数，用 before 往前翻；结果里有 next 表示后面还有，start 填 next 接着读。',
+      parameters: {
+        room: { type: 'string', description: '房间：list=rooms 给出的 id、完整房间 ID，或只对应一个房间的名字。不填是这次请求所在的房间' },
+        before: { type: 'string', description: '消息编号 ref：读这条消息之前的' },
+        start: { type: 'string', description: '消息编号 ref：从这条消息读起（含它），往后读；或上一页结果里的 next' },
+        list: { type: 'string', enum: ['rooms', 'members'], description: 'rooms：不读消息，列出你所在的全部房间；members：列出这个房间的全部成员' },
+      },
+      execute: (args, exec) => this.readRoom(args, exec) };
   }
 
   workerTools(task) {
@@ -303,6 +319,7 @@ export class WorkCore {
         description: '缺少必要信息时向前台提问。问题会转给前台；答复到达前不能交付，答复以“前台答复：”消息回到这里。',
         parameters: { question: { type: 'string', required: true } },
         execute: args => this.ask(task.id, args.question) },
+      this.roomTool(),
     ];
   }
 
@@ -391,6 +408,59 @@ export class WorkCore {
     const done = [changes.displayName !== undefined ? `名字是「${account?.displayName ?? changes.displayName}」` : '',
       changes.avatar === null ? '头像已去掉' : changes.avatar ? '头像已换上' : ''].filter(Boolean).join('，');
     return `已保存：${done}。几秒内各聊天服务器上都会显示新的资料。`;
+  }
+
+  /**
+   * The Bot looks at a room: which rooms it is in, who is in one, or a page of its messages in order. It reads
+   * through its own accounts: any room one of them is in, on any of its chat servers, whoever asked it to look.
+   */
+  async readRoom({ room, before, start, list } = {}, exec) {
+    [room, before, start, list] = [room, before, start, list].map(value => value === undefined || value === null ? '' : String(value).trim());
+    if (!list && before && start) return 'before 和 start 只填一个。';
+    const readers = [...this.seats].filter(([, seat]) => seat.rooms).map(([botId, seat]) => ({ botId, reader: seat.rooms }));
+    if (!readers.length) return '现在没有连上聊天服务器，读不了房间。';
+    const sessionId = exec?.agent?.session?.id ?? exec?.agent?.id;
+    const task = sessionId ? this.workerTask(sessionId) : undefined;
+    // The Bot's own Session keeps one reading record and each worker its own. Every wait comes before a record is
+    // looked at, so no other reading changes it in between.
+    const front = !task && Boolean(sessionId) && sessionId === (await this.native.bot(this.nativeBotId).catch(() => null))?.sessionId;
+    const origin = task ? task.origin : this.origin;
+    const here = origin?.roomId, home = readers.find(({ botId }) => botId === origin?.botId);
+    const rooms = () => [...new Map(readers.flatMap(({ botId, reader }) => reader.rooms().map(found => [found.id, { ...found, botId, reader }]))).values()];
+    if (list === 'rooms' || !list && !room && !before && !start && !here) return roomList({ rooms: rooms(), here, start: list ? start : '' }).text;
+
+    // A message's reference says which room it is in: the room being answered first, then any other.
+    const ref = list ? '' : before || start;
+    const named = eventId => messageRef(eventId) === ref;
+    let target, anchor;
+    if (room) {
+      const all = rooms(), known = all.filter(found => found.id === room || roomRef(found.id) === room);
+      const matches = known.length ? known : all.filter(found => found.name === room);
+      if (!matches.length) return `你不在「${room}」这个房间里。用 list=rooms 看你所在的房间。`;
+      if (matches.length > 1) return `有 ${matches.length} 个房间叫「${room}」，room 改填 id：${matches.map(found => `${roomRef(found.id)}（${found.members} 人，${found.id.slice(found.id.indexOf(':') + 1)}）`).join('、')}。`;
+      target = matches[0];
+      anchor = ref ? target.reader.find(named, target.id)?.eventId : undefined;
+      if (ref && !anchor) return `在「${target.name}」里找不到编号为 ${ref} 的消息。`;
+    } else if (ref) {
+      const found = [...(here && home ? [{ ...home, ...home.reader.find(named, here) }] : []),
+        ...readers.map(holder => ({ ...holder, ...holder.reader.find(named) }))].find(candidate => candidate.eventId);
+      if (!found) return `找不到编号为 ${ref} 的消息：你所在的房间里没有它。`;
+      target = { id: found.roomId, botId: found.botId, reader: found.reader };
+      anchor = found.eventId;
+    } else if (here) target = { id: here, ...(home || readers.find(({ reader }) => reader.room(here))) };
+    else return '要看哪个房间的成员？room 填房间的 id 或名字；用 list=rooms 看你所在的房间。';
+    const view = target.reader?.room(target.id);
+    if (!view) return '你的账号现在不在这个房间里，读不了。';
+
+    const self = target.botId, selfName = view.members.find(member => member.id === self)?.name || this.botName;
+    const reading = front ? this.readingOf(sessionId) : task ? this.workerReadings.get(task.id) : undefined;
+    const page = list ? undefined : target.reader.page(target.id, before ? { before: anchor } : start ? { from: anchor } : {});
+    const result = list ? roomMembers({ self, selfName, room: view, members: view.members, start, reading })
+      : roomReading({ self, selfName, room: { ...view, kind: page.kind }, members: view.members, messages: page.messages, earlier: page.earlier,
+        later: page.later, next: page.next, cursor: before ? 'before' : start ? 'start' : undefined, reading, holdsOwn: !task });
+    if (task) this.workerReadings.set(task.id, result.reading);
+    if (front) { this.state.reading = { sessionId, ...result.reading }; await this.save(); }
+    return result.text;
   }
 
   /** Tasks started or joined for this request: each delivers its result to the requester on its own. */
@@ -488,6 +558,7 @@ export class WorkCore {
       '交付文件放在当前目录的 outputs/ 下，或在 work_report 的 files 里列出路径；这些文件都会交给提出请求的人，不该给对方看的材料（原始日志、分析草稿）放在 outputs/ 以外，也不要列进 files。只写已核实的事实，不把输入里没有的推断写成结论。',
       '没有人会回应权限申请，申请扩大权限会被直接拒绝。要改当前目录以外的文件时，把改好的版本放进 outputs/ 交付，不要原地修改。',
       '只在说明里给出的路径、输入文件和当前目录里找资料；给定的路径不存在就如实说找不到，不要在整台机器上搜索，也不要在汇报里列出无关的本机文件和目录。',
+      '要看房间里的聊天原话时用 read_room：不填 room 读的是原始请求所在的房间，一页读不完就按结果里的 earlierOmitted、next 翻页。',
       '',
       '## 任务说明',
       task.brief,
@@ -600,6 +671,8 @@ export class WorkCore {
     const task = this.workerTask(session.id);
     if (!task) return false;
     if (event.type === 'turn/start') task.busy = true;
+    // A condensed worker Session reads each room again, as the front does.
+    if (event.type === 'compaction/summary' && this.workerReadings.has(task.id)) this.workerReadings.get(task.id).rooms = {};
     if (event.type === 'user/message' && /^前台(?:补充|答复)：/.test(textOf(event.data?.message || event.data)) && task.unread > 0) task.unread--;
     if (event.type === 'assistant/message') { const text = textOf(event.data?.message); if (text) task.lastText = text.slice(-2000); }
     if (event.type === 'tool/call') {
@@ -626,6 +699,7 @@ export class WorkCore {
   async finish(task, { status, summary, reply, artifacts = [] }, { notify = true, by = 'core' } = {}) {
     clearTimeout(this.timers.get(task.id));
     this.timers.delete(task.id);
+    this.workerReadings.delete(task.id);
     // reply goes to the requester as written; summary is the front's record. Results the core writes itself are both.
     mark(task, status, by, { summary: String(summary || '').slice(0, 6000), ...(reply ? { reply: String(reply).slice(0, 6000) } : {}),
       artifacts, finishedAt: new Date().toISOString(), notified: !notify });
@@ -717,10 +791,19 @@ export class WorkCore {
     return this.state.reading?.sessionId === sessionId ? this.state.reading : undefined;
   }
 
-  /** The Session holds a turn: what that turn showed it is read. */
-  read(reading) {
-    this.state.reading = reading;
+  /** A code a text gives a person stands from that moment, whether or not the text reaches the Session: the next text builds on it. */
+  codes(sessionId, people) {
+    if (this.state.reading?.sessionId !== sessionId) this.state.reading = { sessionId, people: {}, rooms: {} };
+    this.state.reading.people = people;
     return this.save();
+  }
+
+  /** The Session holds a turn: what that turn showed it of its room is read. */
+  async read(sessionId, roomId, shown) {
+    const reading = this.readingOf(sessionId);
+    if (!reading) return;
+    reading.rooms = withRoom(reading.rooms, roomId, shown);
+    await this.save();
   }
 
   /** A condensed Session no longer holds its room messages word for word: it reads each room again. People keep their codes. */

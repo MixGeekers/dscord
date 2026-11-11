@@ -24,7 +24,7 @@ test('front and worker tools register as object JSON Schemas under the pinned DS
   await core.serveFront(agent('front'));
   core.origin = { roomId: '!room', eventId: '$ask', senderId: '@ann' };
   await core.dispatch({ title: 'x', brief: 'y' });
-  const names = ['dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot', 'update_profile', 'work_report', 'work_ask'];
+  const names = ['dispatch_work', 'task_join', 'task_status', 'task_cancel', 'task_note', 'ask_bot', 'update_profile', 'read_room', 'work_report', 'work_ask'];
   assert.deepEqual([...registered.keys()].sort(), [...names].sort());
   for (const name of names) {
     const schema = projectToolSchema(registered.get(name), true).parameters;
@@ -32,4 +32,7 @@ test('front and worker tools register as object JSON Schemas under the pinned DS
     assert.equal(schema.type, 'object', name);
   }
   assert.deepEqual(projectToolSchema(registered.get('dispatch_work'), true).parameters.required.sort(), ['audience', 'brief', 'title']);
+  // Reading a room needs no argument: it reads the room being answered.
+  const reading = projectToolSchema(registered.get('read_room'), true).parameters;
+  assert.deepEqual([Object.keys(reading.properties).sort(), reading.required || [], reading.properties.list.enum], [['before', 'list', 'room', 'start'], [], ['rooms', 'members']]);
 });

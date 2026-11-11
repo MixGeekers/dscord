@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { estimateTokens, frontMessage, FRONT_RULES, HISTORY_TOKEN_BUDGET, messageRef, requestMarker } from '../src/front-prompt.mjs';
-import { conversationContext, messageSource } from '../src/message-context.mjs';
+import { estimateTokens, frontMessage, FRONT_RULES, HISTORY_TOKEN_BUDGET, messageRef, READING_CHARS, requestMarker, roomList, roomMembers, roomReading,
+  roomRef } from '../src/front-prompt.mjs';
+import { conversationContext, messageSource, speakerOf } from '../src/message-context.mjs';
 import { projectNativeRequestMessage } from '../src/native-request.mjs';
 import { install } from '../vendor/ds-bot/src/host/prompt.js';
 
@@ -265,6 +266,8 @@ test('the standing rules explain every field a turn can carry and are safe as a 
   for (const tool of ['message_bot', 'list_bots', 'update_bot', 'ask_user', 'show_view', 'read_own_chat', 'create_group'])
     assert.equal(FRONT_RULES.includes(tool), false, tool);
   assert.ok(FRONT_RULES.length < 3200);
+  // What a turn does not list has one way to be read.
+  assert.match(FRONT_RULES, /read_room/);
 });
 
 test('a Bot served by DSCord works by the front rules; other Bots keep the native team rules', () => {
@@ -281,4 +284,141 @@ test('a Bot served by DSCord works by the front rules; other Bots keep the nativ
   const local = section.text({ agent: { id: 'local:session' } });
   assert.ok(local.includes('## You are the Main Bot')); assert.ok(local.includes('message_bot')); assert.equal(local.includes('DSCord'), false);
   assert.equal(section.text({ agent: { id: 'nobody:session' } }), '');
+});
+
+// What read_room is given: the room as the node knows it now, and a page of its messages as a request's history carries them.
+const members = room.members.map(id => speakerOf(id, people, room));
+const here = { id: ROOM, name: room.name, topic: '', creatorId: ANN, kind: 'group' };
+const read = (events, options = {}) => roomReading({ self: SELF, selfName: '小林', room: here, members, messages: events.map(item), ...options });
+const undated = ({ at, ...line }) => line;
+
+test('a room reading carries the lines, people and references of a turn, with the whole date', () => {
+  const turn = turnOf(frontMessage({ input: request(chat) }));
+  const result = read(chat);
+  const reading = JSON.parse(result.text);
+  assert.deepEqual(Object.keys(reading), ['room', 'people', 'history']);
+  assert.deepEqual(reading.room, { id: roomRef(ROOM), name: '项目群', kind: 'group', creator: 'P3' });
+  assert.deepEqual(reading.people, turn.people);
+  assert.deepEqual(reading.history.map(undated), [...turn.history, turn.msg].map(undated));
+  assert.deepEqual(reading.history.map(line => line.at), [0, 1, 2, 3, 4].map(minute => `2026-11-11 20:0${minute}`));
+  for (const bookkeeping of ['$event-', ROOM, 'identitySource', 'nameEventId', 'transport'])
+    assert.equal(result.text.includes(bookkeeping), false, bookkeeping);
+  // The newest messages of the room are read: the record is the one a turn would have left.
+  assert.deepEqual(result.reading.rooms[ROOM].refs, chat.map(event => messageRef(event.event_id)));
+  assert.deepEqual(result.reading.people, { [SELF]: 1, [PEER]: 2, [ANN]: 3, [GUEST]: 4 });
+  assert.equal(read([]).text, '「项目群」里还没有消息。');
+});
+
+test('a room the Session has read lists what is new, and turns and readings share one record', () => {
+  const first = frontMessage({ input: request(chat) });
+  const next = [...chat, said(5, SELF, '我来整理，今天下班前给你。', { replyTo: 4 }), said(6, PEER, '我可以帮忙核对数字。', { replyTo: 4 }), said(7, ANN, '那我明天上午来看')];
+  const caught = read(next, { reading: first.reading });
+  assert.deepEqual(JSON.parse(caught.text), {
+    room: { id: roomRef(ROOM), name: '项目群', kind: 'group' },
+    // The same accounts under the same codes; what the front said itself is in its Session already.
+    people: { P2: { name: '小周', kind: 'bot', id: PEER, gid: 'zhou@id.test', owner: 'P3' }, P3: { name: 'Ann', kind: 'human', id: ANN, gid: 'ann@id.test' } },
+    history: [{ ref: messageRef(id(6)), from: 'P2', at: '2026-11-11 20:06', text: '我可以帮忙核对数字。', replyTo: messageRef(id(4)) },
+      { ref: messageRef(id(7)), from: 'P3', at: '2026-11-11 20:07', text: '那我明天上午来看' }],
+    seenBefore: true,
+  });
+  // A worker did not write what the Bot said: its reading keeps those lines.
+  assert.deepEqual(JSON.parse(read(next, { reading: first.reading, holdsOwn: false }).text).history.map(line => line.from), ['P1', 'P2', 'P3']);
+  // The turn that follows the reading lists nothing again, and a second reading has nothing new.
+  const turn = turnOf(frontMessage({ input: request([...next, said(8, ANN, '在吗')]), reading: caught.reading }));
+  assert.equal(turn.history, undefined); assert.equal(turn.seenBefore, true);
+  const again = read(next, { reading: caught.reading });
+  assert.equal(again.text, `「项目群」没有新消息。最新一条是 ${messageRef(id(7))}（2026-11-11 20:07）；要重看之前的，before 或 start 填消息编号。`);
+  assert.deepEqual(again.reading, caught.reading);
+  // A message the Session was shown and that is withdrawn afterwards is named, once.
+  const withdrawn = next.map(item);
+  Object.assign(withdrawn[6], { body: '[message withdrawn]', source: { ...withdrawn[6].source, withdrawn: true } });
+  const told = roomReading({ self: SELF, selfName: '小林', room: here, members, messages: withdrawn, reading: caught.reading });
+  assert.deepEqual([JSON.parse(told.text).history, JSON.parse(told.text).withdrawn], [[], [messageRef(id(6))]]);
+  assert.match(roomReading({ self: SELF, selfName: '小林', room: here, members, messages: withdrawn, reading: told.reading }).text, /没有新消息/);
+});
+
+test('a reading is a page: what does not fit is counted, and the pages before and after are asked for by reference', () => {
+  const events = Array.from({ length: 60 }, (_, index) => said(index, index % 2 ? PEER : ANN, `${index}：${'可以，下午三点前给你初稿。'.repeat(10)}`));
+  const latest = read(events.slice(10), { earlier: 10 });
+  const page = JSON.parse(latest.text);
+  assert.ok(page.history.length > 5 && page.history.length < 50);
+  assert.equal(page.history.at(-1).ref, messageRef(id(59)));
+  assert.equal(page.earlierOmitted, 60 - page.history.length);
+  assert.ok(estimateTokens(JSON.stringify(page.history)) <= HISTORY_TOKEN_BUDGET * 1.1);
+  // The page before the oldest line shown: it is not the newest of the room, so the record stays where it was.
+  const oldest = 60 - page.history.length;
+  const back = read(events.slice(0, oldest), { cursor: 'before', later: 60 - oldest, reading: latest.reading });
+  const earlier = JSON.parse(back.text);
+  assert.equal(earlier.history.at(-1).ref, messageRef(id(oldest - 1)));
+  assert.equal(earlier.earlierOmitted, oldest - earlier.history.length);
+  assert.equal(earlier.seenBefore, undefined); assert.equal(earlier.room.creator, undefined);
+  assert.deepEqual(back.reading.rooms, latest.reading.rooms);
+  assert.equal(read([], { cursor: 'before', reading: latest.reading }).text, '「项目群」里这条消息之前没有更早的消息了：这里只有你加入房间之后收到的消息。');
+  // Reading on from a message keeps the oldest lines and says where to go on.
+  const on = read(events.slice(0, 50), { cursor: 'start', later: 10, next: id(50), reading: latest.reading });
+  const forward = JSON.parse(on.text);
+  assert.equal(forward.history[0].ref, messageRef(id(0)));
+  assert.deepEqual([forward.laterOmitted, forward.next], [60 - forward.history.length, messageRef(id(forward.history.length))]);
+  assert.deepEqual(on.reading.rooms, latest.reading.rooms);
+  const whole = JSON.parse(read(events.slice(0, 3), { cursor: 'start', later: 57, next: id(3) }).text);
+  assert.deepEqual([whole.history.length, whole.laterOmitted, whole.next], [3, 57, messageRef(id(3))]);
+  // A page that reaches the newest message is read up to there.
+  const end = read(events.slice(55), { cursor: 'start', earlier: 55 });
+  assert.equal(JSON.parse(end.text).next, undefined);
+  assert.equal(end.reading.rooms[ROOM].refs.at(-1), messageRef(id(59)));
+  // A room read long ago: what is listed does not join up with what the Session was shown.
+  const stale = { people: latest.reading.people, rooms: { [ROOM]: { refs: [messageRef(id(2))] } } };
+  const apart = JSON.parse(read(events.slice(40), { earlier: 40, reading: stale }).text);
+  assert.deepEqual([apart.seenBefore, apart.historyGap, apart.earlierOmitted], [true, true, 20 - apart.history.length]);
+  // The host cuts the middle out of a longer tool result: a reading stays under that whatever its script.
+  const latin = Array.from({ length: 20 }, (_, index) => said(index, ANN, `${index} ${'word '.repeat(230)}`));
+  const capped = read(latin);
+  assert.ok(capped.text.length <= READING_CHARS);
+  assert.ok(JSON.parse(capped.text).history.length >= 5);
+  assert.equal(JSON.parse(capped.text).earlierOmitted, 20 - JSON.parse(capped.text).history.length);
+  const crowd = Array.from({ length: 12 }, (_, index) => ({ id: `@member${index}:chat.test`, name: `成员 ${index}`, kind: 'human', identitySource: 'account-directory' }));
+  const busy = roomReading({ self: SELF, selfName: '小林', room: here, members: [...members.slice(0, 1), ...crowd.slice(0, 11)], chars: 2500,
+    messages: crowd.map((person, index) => item({ ...said(index, person.id, '在'.repeat(100)), sender: person.id })) });
+  assert.ok(busy.text.length <= 2500); assert.ok(JSON.parse(busy.text).history.length >= 1);
+});
+
+test('members and rooms are listed as many at a time as fit', () => {
+  const crowd = Array.from({ length: 30 }, (_, index) => ({ id: `@member${index}:chat.test`, name: `成员 ${index}`, kind: 'human', identitySource: 'account-directory' }));
+  const everyone = [...members, ...crowd];
+  const whole = roomMembers({ self: SELF, selfName: '小林', room: here, members: everyone });
+  const listed = JSON.parse(whole.text);
+  assert.deepEqual(listed.room, { id: roomRef(ROOM), name: '项目群', members: 34 });
+  assert.equal(Object.keys(listed.people).length, 34); assert.equal(listed.next, undefined);
+  assert.deepEqual(listed.people.P1, { name: '小周', kind: 'bot', id: PEER, gid: 'zhou@id.test', owner: 'P3' });
+  // Each member keeps the code the listing gave, in the turns and readings that follow.
+  assert.equal(whole.reading.people[crowd[29].id], 34);
+  assert.equal(turnOf(frontMessage({ input: request(chat), reading: whole.reading })).people.P2.id, SELF);
+  const first = roomMembers({ self: SELF, selfName: '小林', room: here, members: everyone, chars: 1500 });
+  const page = JSON.parse(first.text);
+  const count = Number(page.next);
+  assert.ok(first.text.length <= 1500 && count >= 5 && count < 34);
+  assert.equal(page.membersOmitted, 34 - count);
+  const second = JSON.parse(roomMembers({ self: SELF, selfName: '小林', room: here, members: everyone, start: page.next, reading: first.reading }).text);
+  assert.equal(Object.values(second.people).some(person => person.id === everyone[count].id), true);
+  assert.equal(Object.values(second.people).some(person => person.id === PEER), false);
+  assert.equal(roomMembers({ self: SELF, selfName: '小林', room: here, members: everyone, start: '34' }).text, '「项目群」一共 34 个成员，已经列完。');
+
+  const rooms = [{ id: '!quiet:chat.test', name: '安静的群', topic: '', members: 3, latestAt: null },
+    { id: ROOM, name: '项目群', topic: '每周五同步', members: 4, latestAt: T0 },
+    { id: '!dm:chat.test', name: 'Ann', topic: '', members: 2, latestAt: T0 + 60_000 }];
+  assert.deepEqual(JSON.parse(roomList({ rooms, here: ROOM }).text), { rooms: [
+    { id: roomRef('!dm:chat.test'), name: 'Ann', members: 2, last: '2026-11-11 20:01' },
+    { id: roomRef(ROOM), name: '项目群', topic: '每周五同步', members: 4, last: '2026-11-11 20:00', here: true },
+    { id: roomRef('!quiet:chat.test'), name: '安静的群', members: 3 }] });
+  // A Bot on several chat servers sees which server each room is on.
+  const elsewhere = JSON.parse(roomList({ rooms: [...rooms, { id: '!team:other.test', name: '项目群', topic: '', members: 9, latestAt: T0 - 1 }] }).text);
+  assert.deepEqual(elsewhere.rooms.map(found => found.server), ['chat.test', 'chat.test', 'other.test', 'chat.test']);
+  const many = Array.from({ length: 200 }, (_, index) => ({ id: `!room${index}:chat.test`, name: `房间 ${index}`, topic: '', members: 5, latestAt: T0 - index }));
+  const some = roomList({ rooms: many });
+  const shown = JSON.parse(some.text);
+  assert.ok(some.text.length <= READING_CHARS);
+  assert.deepEqual([shown.rooms[0].name, shown.roomsOmitted, shown.next], ['房间 0', 200 - shown.rooms.length, String(shown.rooms.length)]);
+  assert.equal(JSON.parse(roomList({ rooms: many, start: shown.next }).text).rooms[0].name, `房间 ${shown.rooms.length}`);
+  assert.equal(roomList({ rooms: many, start: '200' }).text, '你一共在 200 个房间里，已经列完。');
+  assert.equal(roomList({ rooms: [] }).text, '你现在不在任何房间里。');
 });

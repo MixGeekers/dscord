@@ -7,6 +7,9 @@ import { DatabaseSync } from 'node:sqlite';
 import { WorkCore, CARD_REFUSAL, CARD_TOOLS, FRONT_REFUSAL, FRONT_TOOLS, NATIVE_TEAM_REFUSAL, NATIVE_TEAM_TOOLS, WORKER_DENY, frontRules, localBot } from '../dsh-connect/work-core.mjs';
 import { FRONT_RULES } from '../src/front-prompt.mjs';
 import { ContactBook } from '../src/contact-book.mjs';
+import { NodeStore } from '../src/node-store.mjs';
+import { BotNode } from '../src/bot-node.mjs';
+import { messageRef, READING_CHARS, roomRef } from '../src/front-prompt.mjs';
 
 async function fixture(t, options = {}) {
   const directory = await mkdtemp(path.join(os.tmpdir(), 'work-core-'));
@@ -419,7 +422,11 @@ test('a Bot with a core works by the front rules, and its Session has one readin
   const f = await fixture(t, { nativeBotId: 'reader' });
   assert.equal(frontRules('reader'), FRONT_RULES); assert.equal(frontRules('not-served'), undefined);
   assert.equal(f.core.readingOf('front'), undefined);
-  await f.core.read({ sessionId: 'front', people: { '@ann:dsh.test': 1 }, rooms: { '!room': { refs: ['abc123'] } } });
+  // A person has a code as soon as a text gives one; a room is read once the Session holds what it was shown.
+  await f.core.codes('front', { '@ann:dsh.test': 1 });
+  assert.deepEqual(f.core.readingOf('front'), { sessionId: 'front', people: { '@ann:dsh.test': 1 }, rooms: {} });
+  await f.core.read('front', '!room', { refs: ['abc123'] });
+  await f.core.read('next-part', '!room', { refs: ['zzz999'] });
   assert.equal(f.core.readingOf('next-part'), undefined, 'a new part of the Session has read nothing');
   f.core.dispose();
   assert.equal(frontRules('reader'), undefined, 'a Bot DSCord no longer serves is back on the native rules');
@@ -451,4 +458,146 @@ test('a Session is shown only the tools it may use, and a call it starts is coun
   assert.equal(f.stream({ tools }), 'passed', 'a call of no Session is not mistaken for a worker that has not started');
   f.core.dispose();
   assert.equal(f.stream({ sessionId: 'front', tools }), 'passed');
+});
+
+// A chat server as the Bot's node on it holds it: the Bot's account, the rooms it is in and what was said there.
+const HOME = 'dsh.test', ANN = `@ann:${HOME}`, LIN = `@native:${HOME}`, ZHOU = `@zhou:${HOME}`;
+const T0 = Date.UTC(2026, 10, 11, 9, 0);
+function chatServer(t, { botId = LIN, people = [], rooms = [] }) {
+  const store = new NodeStore(':memory:', botId);
+  t.after(() => { try { store.close(); } catch { /* closed */ } });
+  const participants = [{ id: botId, localpart: 'native', name: '小林', kind: 'bot', ownerId: ANN }, ...people];
+  const node = new BotNode({ participant: participants[0], participants, roomId: rooms[0]?.id, store, matrix: {}, bridge: {}, heartbeat: async () => {}, onError: () => {} });
+  let minute = 0;
+  for (const { id, name, members = [], said = [], left = false } of rooms) {
+    store.noteRoomState(id, [...(name ? [{ type: 'm.room.name', content: { name } }] : []), { type: 'm.room.create', sender: members[0] || botId, content: {} },
+      ...[botId, ...members].map(member => ({ type: 'm.room.member', state_key: member, sender: member, event_id: `$member-${id}-${member}`,
+        content: { membership: 'join', displayname: participants.find(person => person.id === member)?.name || member } }))]);
+    store.noteRoomMembership(id, left ? 'leave' : 'join');
+    store.ingest(said.map(([eventId, sender, body, extra = {}]) => ({ type: 'm.room.message', event_id: eventId, room_id: id, sender,
+      origin_server_ts: T0 + 60_000 * minute++, content: { body, ...extra } })));
+  }
+  return node;
+}
+const PROJECT = `!project:${HOME}`, OPS = `!ops:${HOME}`, OLD = `!old:${HOME}`;
+const homePeople = [{ id: ANN, name: 'Ann', kind: 'human' }, { id: ZHOU, name: '小周', kind: 'bot', ownerId: ANN }, { id: `@wei:${HOME}`, name: '小魏', kind: 'human' }];
+const talk = (prefix, count, speakers) => Array.from({ length: count }, (_, index) => [`$${prefix}${index}`, speakers[index % speakers.length], `${prefix} 第 ${index} 条`]);
+const homeRooms = () => [
+  { id: PROJECT, name: '项目群', members: [ANN, ZHOU], said: [...talk('p', 6, [ANN, ZHOU]), ['$p-own', LIN, '我来整理。'], ['$p-last', ANN, '好，辛苦']] },
+  { id: OPS, name: '运营群', members: [`@wei:${HOME}`], said: talk('o', 3, [`@wei:${HOME}`]) },
+  { id: OLD, name: '旧群', members: [ANN], said: talk('x', 2, [ANN]), left: true }];
+const parsed = async (...args) => JSON.parse(await run(...args));
+
+test('read_room shows the front the room it is answering in, a page at a time, and what it read is read', async t => {
+  const f = await fixture(t, { origin: { roomId: PROJECT, eventId: '$p-last', senderId: ANN } });
+  await f.core.serveFront(f.agentFor('front'));
+  assert.ok(FRONT_TOOLS.has('read_room')); assert.equal(f.guard({ agent: f.agentFor('front'), name: 'read_room' }), undefined);
+  assert.match(NATIVE_TEAM_REFUSAL, /read_room/, 'the native read_group_chat refusal points to the one way to read a room');
+  assert.match(await run(f, 'front', 'read_room', {}), /没有连上聊天服务器/);
+  f.core.seat(f.id).rooms = chatServer(t, { people: homePeople, rooms: homeRooms() }).rooms;
+
+  const first = await parsed(f, 'front', 'read_room', {});
+  assert.deepEqual(first.room, { id: roomRef(PROJECT), name: '项目群', kind: 'group', creator: 'P2' });
+  assert.deepEqual(first.people, { P1: { name: '小林', self: true, kind: 'bot', id: LIN, owner: 'P2' }, P2: { name: 'Ann', kind: 'human', id: ANN },
+    P3: { name: '小周', kind: 'bot', id: ZHOU, owner: 'P2' } });
+  assert.deepEqual(first.history.map(line => line.text), [...talk('p', 6, []).map(([, , body]) => body), '我来整理。', '好，辛苦']);
+  assert.deepEqual(first.history[0], { ref: messageRef('$p0'), from: 'P2', at: '2026-11-11 09:00', text: 'p 第 0 条' });
+  assert.deepEqual(f.state.reading, { sessionId: 'front', people: { [LIN]: 1, [ANN]: 2, [ZHOU]: 3 }, rooms: { [PROJECT]: { refs: first.history.map(line => line.ref) } } });
+  assert.match(await run(f, 'front', 'read_room', {}), /^「项目群」没有新消息。最新一条是 /);
+
+  // The pages before and from a message it names; a page that is not the newest leaves the record alone.
+  const earlier = await parsed(f, 'front', 'read_room', { before: messageRef('$p2') });
+  assert.deepEqual(earlier.history.map(line => line.text), ['p 第 0 条', 'p 第 1 条']); assert.equal(earlier.seenBefore, undefined);
+  const onward = await parsed(f, 'front', 'read_room', { room: '项目群', start: messageRef('$p5') });
+  assert.deepEqual(onward.history.map(line => line.text), ['p 第 5 条', '我来整理。', '好，辛苦']);
+  assert.match(await run(f, 'front', 'read_room', { before: messageRef('$p0') }), /没有更早的消息了/);
+  assert.match(await run(f, 'front', 'read_room', { before: 'zzzzzz' }), /找不到编号为 zzzzzz 的消息/);
+  assert.match(await run(f, 'front', 'read_room', { room: '运营群', start: messageRef('$p0') }), /在「运营群」里找不到编号为/);
+  assert.match(await run(f, 'front', 'read_room', { before: messageRef('$p2'), start: messageRef('$p0') }), /只填一个/);
+  await assert.rejects(run(f, 'front', 'read_room', { list: 'everything' }), /"list" must be one of/);
+  assert.deepEqual(f.state.reading.rooms[PROJECT].refs, first.history.map(line => line.ref));
+
+  // What arrives afterwards is what the next reading lists.
+  f.core.seat(f.id).rooms.node.store.ingest([{ type: 'm.room.message', event_id: '$p-new', room_id: PROJECT, sender: ZHOU, origin_server_ts: T0 + 3_600_000, content: { body: '我核对完了' } }]);
+  const caught = await parsed(f, 'front', 'read_room', {});
+  assert.deepEqual([caught.history.map(line => line.text), caught.seenBefore, caught.people], [['我核对完了'], true, { P2: first.people.P2, P3: first.people.P3 }]);
+  // The record survives a restart of the host with the rest of the core's state.
+  f.core.dispose();
+  const again = await fixture(t, { directory: f.directory, origin: { roomId: PROJECT, eventId: '$p-last', senderId: ANN } });
+  assert.equal(again.core.readingOf('front').rooms[PROJECT].refs.at(-1), messageRef('$p-new'));
+});
+
+test('a Bot reads every room its own accounts are in, on every chat server, whoever asks it to look', async t => {
+  const f = await fixture(t, { origin: { roomId: PROJECT, eventId: '$p-last', senderId: ANN } });
+  await f.core.serveFront(f.agentFor('front'));
+  const home = chatServer(t, { people: homePeople, rooms: homeRooms() });
+  const AWAY = '@lin:away.test', TEAM = '!team:away.test', TWIN = '!twin:away.test';
+  const away = chatServer(t, { botId: AWAY, people: [{ id: '@bo:away.test', name: 'Bo', kind: 'human' }],
+    rooms: [{ id: TEAM, name: '外部协作', members: ['@bo:away.test'], said: talk('t', 2, ['@bo:away.test']) }, { id: TWIN, name: '运营群', members: [], said: [] }] });
+  f.core.seat(f.id).rooms = home.rooms;
+  f.core.seat(AWAY).rooms = away.rooms;
+
+  const listed = await parsed(f, 'front', 'read_room', { list: 'rooms' });
+  // The room that was active last comes first, whichever server it is on.
+  assert.deepEqual(listed.rooms.map(room => [room.name, room.members, room.server, room.here]), [['运营群', 2, HOME, undefined],
+    ['项目群', 3, HOME, true], ['外部协作', 2, 'away.test', undefined], ['运营群', 1, 'away.test', undefined]]);
+  assert.equal(JSON.stringify(listed).includes('旧群'), false, 'a room the account has left is not one it reads');
+  // Ann asks from the project room and is not in the operations room: the Bot is, so it reads it.
+  assert.equal(home.rooms.room(OPS).members.some(member => member.id === ANN), false);
+  const ops = await parsed(f, 'front', 'read_room', { room: roomRef(OPS) });
+  assert.deepEqual([ops.room.name, ops.history.map(line => line.text)], ['运营群', talk('o', 3, []).map(([, , body]) => body)]);
+  // On another server the Bot is another account: it reads that room as that account, under a code of its own.
+  const team = await parsed(f, 'front', 'read_room', { room: TEAM });
+  assert.deepEqual(Object.values(team.people).find(person => person.self), { name: '小林', self: true, kind: 'bot', id: AWAY, owner: ANN });
+  assert.equal(team.people.P1, undefined);
+  assert.equal((await parsed(f, 'front', 'read_room', { room: '外部协作', before: messageRef('$t1') })).history.length, 1);
+  // A message's reference says which room it is in.
+  assert.equal((await parsed(f, 'front', 'read_room', { start: messageRef('$t1') })).room.name, '外部协作');
+  assert.match(await run(f, 'front', 'read_room', { room: '运营群' }), new RegExp(`^有 2 个房间叫「运营群」，room 改填 id：.*${roomRef(OPS)}（2 人，${HOME}）.*${roomRef(TWIN)}（1 人，away\\.test）`));
+  assert.match(await run(f, 'front', 'read_room', { room: '旧群' }), /你不在「旧群」这个房间里/);
+  assert.match(await run(f, 'front', 'read_room', { room: OLD }), /你不在/);
+  assert.match(await run(f, 'front', 'read_room', { start: messageRef('$x0') }), /找不到编号为/);
+
+  const members = await parsed(f, 'front', 'read_room', { room: '项目群', list: 'members' });
+  assert.deepEqual(members.room, { id: roomRef(PROJECT), name: '项目群', members: 3 });
+  assert.deepEqual(Object.values(members.people).map(person => person.id).sort(), [ANN, LIN, ZHOU].sort());
+  // People keep one code across rooms, servers and kinds of reading.
+  const codes = f.state.reading.people;
+  assert.equal(members.people[`P${codes[ZHOU]}`].id, ZHOU); assert.equal(new Set(Object.values(codes)).size, Object.keys(codes).length);
+  for (const text of [JSON.stringify(listed), JSON.stringify(ops), JSON.stringify(members)]) assert.ok(text.length <= READING_CHARS);
+
+  // Talking with its owner on the DSH itself, the Bot answers no room: it is shown where it could look.
+  f.core.origin = null;
+  assert.deepEqual((await parsed(f, 'front', 'read_room', {})).rooms.map(room => room.here), [undefined, undefined, undefined, undefined]);
+  assert.match(await run(f, 'front', 'read_room', { list: 'members' }), /要看哪个房间的成员/);
+  assert.equal((await parsed(f, 'front', 'read_room', { room: '项目群', list: 'members' })).room.members, 3);
+  // A Session that is not the Bot's current one reads the same rooms and leaves the record alone.
+  const before = structuredClone(f.state.reading);
+  await f.core.serveFront(f.agentFor('earlier-part'));
+  assert.equal((await parsed(f, 'earlier-part', 'read_room', { room: '外部协作' })).history.length, 2);
+  assert.deepEqual(f.state.reading, before);
+});
+
+test('a worker reads rooms with the same tool and keeps its own record of them', async t => {
+  const f = await fixture(t, { origin: { roomId: PROJECT, eventId: '$p-last', senderId: ANN, senderName: 'Ann', body: '把这周的讨论整理成纪要' } });
+  await f.core.serveFront(f.agentFor('front'));
+  f.core.seat(f.id).rooms = chatServer(t, { people: homePeople, rooms: homeRooms() }).rooms;
+  await run(f, 'front', 'dispatch_work', { audience: 'Ann', title: '整理纪要', brief: '读项目群这周的讨论，写成纪要' });
+  const worker = f.agentFor('worker-1');
+  assert.ok(worker.tools.has('read_room')); assert.equal(f.guard({ agent: worker, name: 'read_room' }), undefined);
+  assert.match(f.prompts[0].text, /read_room/);
+  // With no room named it reads the room its task came from, the Bot's own words included.
+  const first = await parsed(f, 'worker-1', 'read_room', {});
+  assert.equal(first.room.name, '项目群'); assert.equal(first.history.length, 8); assert.equal(first.people.P1.self, true);
+  assert.equal(f.state.reading, undefined, 'the front\'s record is its own');
+  const store = f.core.seat(f.id).rooms.node.store;
+  store.ingest([{ type: 'm.room.message', event_id: '$p-more', room_id: PROJECT, sender: LIN, origin_server_ts: T0 + 3_600_000, content: { body: '纪要我在写了' } }]);
+  const next = await parsed(f, 'worker-1', 'read_room', {});
+  assert.deepEqual([next.history.map(line => line.text), next.seenBefore], [['纪要我在写了'], true]);
+  assert.equal((await parsed(f, 'worker-1', 'read_room', { room: '运营群' })).history.length, 3);
+  // A condensed worker Session reads its rooms again, and its record ends with its task.
+  await f.core.event({ id: 'worker-1' }, { type: 'compaction/summary', data: {} });
+  assert.equal((await parsed(f, 'worker-1', 'read_room', {})).history.length, 9);
+  await run(f, 'worker-1', 'work_report', { status: 'done', reply: '纪要写好了', summary: '读了 9 条' });
+  assert.equal(f.core.workerReadings.size, 0);
 });

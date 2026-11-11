@@ -10,7 +10,7 @@ import { HANDOFF_ACK } from '../vendor/ds-bot/src/host/constants.js';
 import { isModelQuotaFailure } from '../src/model-failure.mjs';
 
 // Front tools that only read: an answer that used nothing else can be restarted.
-const READ_ONLY_FRONT_TOOLS = new Set(['recall', 'contacts', 'memory_source', 'raw_source_query', 'read_image', 'task_status', 'review_memory']);
+const READ_ONLY_FRONT_TOOLS = new Set(['recall', 'contacts', 'memory_source', 'raw_source_query', 'read_image', 'read_room', 'task_status', 'review_memory']);
 const textOf = message => (message?.content || []).filter(block => block.type === 'text').map(block => block.text).join('');
 const terminal = record => ['completed', 'failed', 'cancelled', 'unknown'].includes(record?.status);
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -165,7 +165,7 @@ export class NativeBridge {
     // A Session the host has condensed no longer holds the room messages it was shown word for word:
     // its next turn in each room reads the recent messages again.
     if (event.type === 'compaction/summary') {
-      if (this.run?.reading?.sessionId === session.id) this.run.reading.rooms = {};
+      if (this.run?.reading?.sessionId === session.id) this.run.reading = null;
       await this.core.condensed(session.id).catch(() => {});
     }
     const run = this.run;
@@ -187,9 +187,13 @@ export class NativeBridge {
         run.turn = run.currentTurn;
         run.partContinuation = false;
       }
-      // The Session now holds this turn. A turn that moved on to another part was written for the part before it,
-      // so that part's reading is not this one's.
-      if (own && run.reading?.sessionId === session.id) await this.core.read(run.reading).catch(() => {});
+      // The Session now holds this turn, once: a later reminder under the same marker shows it nothing more. A turn
+      // that moved on to another part was written for the part before it, so that part's reading is not this one's.
+      if (own && run.reading?.sessionId === session.id) {
+        const { roomId, shown } = run.reading;
+        run.reading = null;
+        await this.core.read(session.id, roomId, shown).catch(() => {});
+      }
     }
     if (!run.seen) return;
     if (event.data?.turn !== undefined && event.data.turn !== run.turn) return;
@@ -374,7 +378,10 @@ export class NativeBridge {
       const front = frontMessage({ input: { ...input, workResults }, bot, files, reading: this.core.readingOf(bot.sessionId),
         ...(this.historyTokens ? { historyTokens: this.historyTokens } : {}) });
       record.prompt = front.size;
-      run.reading = { sessionId: bot.sessionId, ...front.reading };
+      // The codes this turn gives people stand at once, so that nothing read meanwhile gives them out again; what
+      // it shows of the room is read once the Session holds the turn.
+      await this.core.codes(bot.sessionId, front.reading.people);
+      run.reading = { sessionId: bot.sessionId, roomId: input.event.roomId, shown: front.reading.rooms[input.event.roomId] };
       await this.native.call('send', { sessionId: bot.id, requestId: input.requestId, text: front.text,
         source: input.context?.source || { sender: { id: input.event.senderId,
           name: input.event.senderName || input.event.senderId, kind: input.event.senderKind || 'human' },
