@@ -313,7 +313,9 @@ export default function App({
   }, [config, resetConversation]);
 
   // What each owned Bot is doing, for the Bot list; one request covers them all.
+  // Bot homes read the same statuses, so the list and a Bot's page never disagree.
   const hasOwnedBots = ownedBots.length > 0;
+  const pollBotStatuses = useRef<() => void>(() => {});
   useEffect(() => {
     if (!session || !hasOwnedBots) return;
     const account = session;
@@ -329,10 +331,12 @@ export default function App({
           );
         })
         .catch(() => {});
+    pollBotStatuses.current = poll;
     poll();
     const timer = setInterval(poll, 10000);
     return () => {
       stopped = true;
+      pollBotStatuses.current = () => {};
       clearInterval(timer);
     };
   }, [api, session, hasOwnedBots]);
@@ -1068,6 +1072,8 @@ export default function App({
       session={session}
       api={api}
       status={status}
+      live={botStatuses[homeBotParticipant.id]}
+      onRefreshLive={() => pollBotStatuses.current()}
       rooms={spaces.flatMap((space) => roomsInSpace(allRooms, space))}
       participants={participants}
       opening={openingDirectId === homeBotParticipant.id}

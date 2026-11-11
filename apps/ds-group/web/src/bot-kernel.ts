@@ -233,19 +233,3 @@ export function connectionLabel(status: string | undefined) {
   if (status === "offline" || status === "disconnected") return "offline";
   return "unknown";
 }
-
-export function kernelActivity(
-  view: BotKernelView | null,
-): BotActivity | "unknown" {
-  const value = view?.attention?.activity ?? view?.attention?.status;
-  if (["listening", "waiting", "working", "speaking"].includes(value ?? ""))
-    return value as BotActivity;
-  if (typeof view?.work?.activeTasks === "number" && view.work.activeTasks > 0)
-    return "working";
-  if (
-    view?.work?.waiting === true ||
-    (typeof view?.work?.waiting === "number" && view.work.waiting > 0)
-  )
-    return "waiting";
-  return "unknown";
-}

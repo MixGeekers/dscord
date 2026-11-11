@@ -95,6 +95,17 @@ export function Timeline(props: TimelineProps) {
   shownRef.current = shown;
   const [confirmWithdraw, setConfirmWithdraw] = useState<string | null>(null);
   const unreadEventId = history?.unreadEventId ?? null;
+  // Mentions stand out only while unread: what was unread when the room opened. Once read, coming back
+  // shows them like any other message.
+  const unreadIds = useMemo(() => {
+    if (!unreadEventId) return new Set<string>();
+    const start = props.events.findIndex(
+      (event) => event.event_id === unreadEventId,
+    );
+    return new Set(
+      props.events.slice(Math.max(start, 0)).map((event) => event.event_id),
+    );
+  }, [props.events, unreadEventId]);
   const [copyStatus, setCopyStatus] = useState("");
   const copyTimer = useRef<ReturnType<typeof setTimeout> | undefined>(
     undefined,
@@ -385,6 +396,7 @@ export function Timeline(props: TimelineProps) {
               event.content.body &&
               !attachments.some((file) => file.name === event.content.body);
             const mentioned =
+              unreadIds.has(event.event_id) &&
               event.sender !== props.session?.user_id &&
               mentionKindsFor(event, props.session?.user_id).length > 0;
             const own = event.sender === props.session?.user_id;
