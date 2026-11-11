@@ -1,5 +1,6 @@
 export const adminMessages = {
   en: {
+    serverUpdates: "Server updates",
     title: "Server administration",
     subtitle: "Manage this DSCord instance",
     policyStatus: "Policy status and actions",
@@ -192,6 +193,7 @@ export const adminMessages = {
     applying: "Applying",
   },
   "zh-CN": {
+    serverUpdates: "服务器更新",
     title: "服务端管理",
     subtitle: "管理当前 DSCord 实例",
     policyStatus: "策略状态与操作",

@@ -134,6 +134,7 @@ export class NativeConnections {
             if (answer.protocol) this.updates?.observeProtocol(answer.protocol, { compatible: false });
           }
           if (!response.ok) throw new Error(`Core heartbeat HTTP ${response.status}`);
+          return response.json();
         },
       });
       Object.assign(entry, { bridge, botNode });

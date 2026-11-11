@@ -109,9 +109,11 @@ services:
       DS_GROUP_HOST: 0.0.0.0
       DS_GROUP_PORT: "18100"
       DS_GROUP_CENTRAL_FETCH_URL: ${DS_GROUP_CENTRAL_FETCH_URL:-http://central:18200}
+      DS_GROUP_UPDATE_CONTROL_DIR: /run/dscord-updater
     volumes:
       - core-data:/data
       - governance-data:/dscord-policy
+      - update-control:/run/dscord-updater:ro
     ports:
       - "${DS_GROUP_BIND:-127.0.0.1}:${DS_GROUP_HTTP_PORT:-18100}:18100"
     depends_on:
@@ -129,10 +131,12 @@ services:
       DS_GROUP_ADMIN_HOST: 0.0.0.0
       DS_GROUP_ADMIN_PORT: "18110"
       DS_GROUP_CENTRAL_FETCH_URL: ${DS_GROUP_CENTRAL_FETCH_URL:-http://central:18200}
+      DS_GROUP_UPDATE_CONTROL_DIR: /run/dscord-updater
     volumes:
       - core-data:/data
       - synapse-data:/synapse
       - governance-data:/dscord-policy
+      - update-control:/run/dscord-updater:ro
     ports:
       - "127.0.0.1:${DS_GROUP_ADMIN_PORT:-18110}:18110"
     depends_on:
@@ -143,8 +147,34 @@ services:
     restart: unless-stopped
     stop_grace_period: 15s
 
+  # Only this service controls Docker. It resolves its project from its own Compose labels.
+  updater:
+    <<: *app
+    user: "0:0"
+    command: ["node", "scripts/server-updater.mjs"]
+    volumes:
+      - ${DS_GROUP_DOCKER_SOCKET:-/var/run/docker.sock}:/var/run/docker.sock
+      - update-control:/run/dscord-updater
+      - ./updater-state:/updates
+      - core-data:/snapshot/core:ro
+      - synapse-data:/snapshot/synapse:ro
+      - governance-data:/snapshot/governance:ro
+    depends_on:
+      core:
+        condition: service_healthy
+      administration:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('node:http').get({socketPath:'/run/dscord-updater/updater.sock',path:'/status'},r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 4
+    restart: unless-stopped
+    stop_grace_period: 15s
+
 volumes:
   central-data:
   core-data:
   synapse-data:
   governance-data:
+  update-control:

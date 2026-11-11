@@ -14,10 +14,12 @@ const publicDocuments = new Set([
   'admin/README.md', 'central/README.md', 'central/avatars.md', 'dsh-plugin/README.md', 'dsh-connect/KERNEL.md',
   'memory/复用与运行.md', 'memory/当前上下文与回顾.md',
   'deploy/README.md', 'deploy/npm.md', 'deploy/api-only.md', 'deploy/kernel-runtime.md', 'deploy/releasing.md',
+  'deploy/updates.md',
   'deploy/client/README.md', 'deploy/storage/README.md', 'deploy/systemd/README.md',
 ]);
 const deployFiles = new Set([
   'deploy/.env.example', 'deploy/Caddyfile', 'deploy/compose.yaml', 'deploy/compose.https.yaml',
+  'deploy/server-update-policy.json',
   'deploy/synapse/dscord_guard.py', 'deploy/client/nginx.conf', 'deploy/client/client-config.example.json',
   'deploy/storage/Dockerfile.synapse-s3', 'deploy/storage/compose.s3.yaml', 'deploy/storage/compose.rclone.yaml',
   'deploy/systemd/ds-group-bot@.service', 'deploy/systemd/ds-group-dsh@.service',
