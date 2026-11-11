@@ -259,6 +259,13 @@ export function createMentionEditor({ element, popup, getMentionables = () => ({
       avatar.className = `mention-suggestion-avatar ${item.memberKind === 'bot' ? 'is-bot' : ''}`;
       avatar.textContent = item.kind === 'role' ? '@' : item.kind === 'user' ? [...(item.name || item.localpart || '?')][0] : '#';
       avatar.setAttribute('aria-hidden', 'true');
+      if (item.kind === 'user' && /^https?:\/\//.test(item.avatar?.url || '')) {
+        const picture = document.createElement('img');
+        picture.src = item.avatar.sizes?.[64] || item.avatar.url;
+        picture.alt = ''; picture.draggable = false;
+        picture.addEventListener('error', () => { avatar.textContent = [...(item.name || '?')][0]; });
+        avatar.replaceChildren(picture);
+      }
       const label = document.createElement('span');
       label.className = 'mention-suggestion-name';
       label.textContent = item.name || item.localpart || item.id;

@@ -1,3 +1,5 @@
+import { AvatarEditor } from "./AvatarEditor";
+import { Avatar } from "./Avatar";
 import { Button, Radio, RadioGroup } from "../../../ui/controls";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, messageOf } from "../api";
@@ -38,6 +40,7 @@ type Translate = (
   values?: Record<string, string | number>,
 ) => string;
 type Names = {
+  member(id: string): Participant | undefined;
   person(id?: string | null): string;
   room(id?: string | null): string;
 };
@@ -126,6 +129,7 @@ export function BotHome({
   }, [tab, owned]);
 
   const names: Names = {
+    member: (id) => participants.find((person) => person.id === id),
     person: (id) =>
       (id && participants.find((person) => person.id === id)?.name) ||
       id ||
@@ -146,9 +150,7 @@ export function BotHome({
   return (
     <section className="bot-home" data-bot-home={bot.id}>
       <header className="bot-home-header">
-        <span className="avatar avatar-bot" aria-hidden="true">
-          {bot.name.slice(0, 1)}
-        </span>
+        <Avatar member={bot} size={512} />
         <div className="bot-home-identity">
           <h2>{bot.name}</h2>
           <small className="member-full-id">{bot.id}</small>
@@ -200,6 +202,9 @@ export function BotHome({
         ))}
       </nav>
       <div className="bot-home-content">
+        {tab === "settings" && session && (
+          <AvatarEditor key={bot.id} session={session} member={bot} />
+        )}
         {error && (
           <p className="bot-settings-error" role="alert">
             {k(error.key, { error: error.message })}
@@ -660,12 +665,13 @@ function ConversationsPanel({
             title={person.id}
             onClick={() => setContact(person.id)}
           >
-            <span
-              className={`avatar${person.kind === "bot" ? " avatar-bot" : ""}`}
-              aria-hidden="true"
-            >
-              {(person.name || person.id).slice(0, 1)}
-            </span>
+            <Avatar
+              member={{
+                ...names.member(person.id),
+                ...person,
+                kind: person.kind === "bot" ? "bot" : "human",
+              }}
+            />
             <span className="bot-contact-name">
               <strong>{person.name || names.person(person.id)}</strong>
               <small className="muted">

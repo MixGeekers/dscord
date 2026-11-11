@@ -1340,6 +1340,8 @@ export default function App({
         }}
       />
       <SettingsDialog
+        currentUser={currentUser}
+        onProfileChanged={refresh}
         tab={settingsTab}
         onTab={setSettingsTab}
         onClose={() => setSettingsTab(null)}

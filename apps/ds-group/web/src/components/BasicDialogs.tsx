@@ -1,3 +1,5 @@
+import { AvatarEditor } from "./AvatarEditor";
+import { Avatar } from "./Avatar";
 import { Button, Checkbox, Input } from "../../../ui/controls";
 import { useEffect, useRef, useState } from "react";
 import type {
@@ -235,12 +237,7 @@ export function RoomDialog({
                     toggleMember(person.id, checked)
                   }
                 />
-                <span
-                  className={`avatar avatar-${person.kind}`}
-                  aria-hidden="true"
-                >
-                  {person.name.slice(0, 1)}
-                </span>
+                <Avatar member={person} />
                 <span className="room-choice-identity">
                   <span>{person.name}</span>
                   <small className="member-full-id">{person.id}</small>
@@ -338,13 +335,14 @@ export function MemberDialog({
       </Button>
       <div className="dialog-scroll-region">
         <div id="member-dialog-avatar">
-          <span
-            className={`avatar avatar-${member?.kind ?? "human"}`}
-            aria-hidden="true"
-          >
-            {member?.name.slice(0, 1)}
-          </span>
+          <Avatar member={member} size={512} />
         </div>
+        {member &&
+          session &&
+          (member.id === session.user_id ||
+            (member.kind === "bot" && member.ownerId === session.user_id)) && (
+            <AvatarEditor key={member.id} session={session} member={member} />
+          )}
         <h2 id="member-dialog-name">{member?.name}</h2>
         <p id="member-dialog-id">{member?.id}</p>
         {member?.kind === "bot" && (

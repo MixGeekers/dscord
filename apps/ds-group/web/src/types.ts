@@ -16,6 +16,17 @@ export interface Session {
   /** The central session from signing in, kept to make DSH connection keys. */
   central?: { token: string };
 }
+export interface AvatarImage {
+  id: string;
+  url: string;
+  sizes: Record<number, string>;
+}
+export interface AvatarProfile {
+  id: string;
+  globalId: string;
+  profileVersion: number;
+  avatar: AvatarImage | null;
+}
 export interface Participant {
   id: string;
   name: string;
@@ -24,6 +35,8 @@ export interface Participant {
   ownerId?: string;
   /** The central account behind this participant, the same on every chat server. */
   globalId?: string;
+  avatar?: AvatarImage | null;
+  profileVersion?: number;
   status?: string;
   nativeBinding?: { hostId: string; nativeBotId: string; botId: string };
 }

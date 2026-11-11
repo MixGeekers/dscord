@@ -1,6 +1,6 @@
 # DSCord Central（中央服务器）
 
-中央服务器管四件事：账号、签发身份、服务器索引，以及每个人名下 Bot 的设置和运行它们的设备。它不存消息和文件，不转发聊天，也不持有任何 Matrix token。聊天服务器（Core + Synapse）接入一台中央，人和 Bot 都用中央账号登录聊天服务器。整体方案见项目文档《DSCord 中央身份与聊天服务器方案》。
+中央服务器管四件事：账号、签发身份、服务器索引，以及每个人名下 Bot 的设置和运行它们的设备。它保存账号头像等身份资料，不存聊天消息和任务附件，不转发聊天，也不持有任何 Matrix token。聊天服务器（Core + Synapse）接入一台中央，人和 Bot 都用中央账号登录聊天服务器。整体方案见项目文档《DSCord 中央身份与聊天服务器方案》。
 
 已经完成：账号、账号规则、身份令牌、Bot 节点授权（第一期），聊天服务器只认中央账号（第二期，见下文“聊天服务器怎样接入”），服务器索引和中央管理面板（第四期，见下文“服务器索引”和“管理面板”）。
 
@@ -36,6 +36,10 @@ npm run central
 配置文件不存在时，可以用环境变量 `DSCORD_CENTRAL_ISSUER`、`DSCORD_CENTRAL_REGISTRATION`、`DSCORD_CENTRAL_LISTING`、`DSCORD_CENTRAL_ADMINS`（逗号分隔的用户名）、`DSCORD_CENTRAL_CLIENT_ORIGINS`（逗号分隔）、`DSCORD_CENTRAL_SERVER_FETCH_URLS`（逗号分隔的 `origin=地址`）在第一次启动时生成它；之后以文件为准，改环境变量不再生效。Compose 自带的 `central` 服务就是这样启动的。
 
 数据目录里的 `signing-key.json` 是签名私钥（权限 `0600`），`central.sqlite` 是账号库。备份时两者都要保留；换掉私钥后，聊天服务器要重新读取公钥。
+
+## 自定义头像
+
+用户可修改自己和名下 Bot 的头像，跨服务器同步，Bot 离线时也可设置。默认复用中央数据卷；入口、配置、备份和接口见[自定义头像](avatars.md)。
 
 ## 账号格式
 

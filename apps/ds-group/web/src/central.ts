@@ -163,6 +163,8 @@ export type BotConnection = "offline" | "connecting" | "online" | "error";
 
 /** A Bot the person owns, as the central server keeps it and as the device that runs it last reported. */
 export interface ManagedBot {
+  avatar?: import("./types").AvatarImage | null;
+  profileVersion?: number;
   id: string;
   username: string;
   globalId: string;
