@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { startNativeTeam } from '../../dsh-connect/native-team.mjs';
 import { NativeBots } from '../../dsh-connect/native-bots.mjs';
 import { NativeBridge } from '../../dsh-connect/native-bridge.mjs';
+import { BotNode } from '../../src/bot-node.mjs';
+import { NodeStore } from '../../src/node-store.mjs';
 import { legacyNativeRequest, requestEnvelope } from './legacy-native-request.mjs';
 export { inject } from '../../dsh-plugin/index.mjs';
 
@@ -77,16 +79,30 @@ export async function apply(ctx, config) {
         agent.session.append('user/message', message, { surfaceOp: 'append' });
         value = await inspect(input.botId);
       } else if (action === 'bridge-turn') {
+        const account = '@bridge:snapshot.local', roomId = '!south:snapshot.local', senderId = '@bob:snapshot.local';
+        const requestId = 'normal-bridge-request', eventId = '$normal-bridge-request', body = 'Keep the human literal "memoryView": {"keep":true}.';
         const bridge = await new NativeBridge({ ctx, native: new NativeBots(ctx),
-          node: { id: '@bridge:snapshot.local', nativeBotId: input.botId, directory: join(config.botHome, 'bridge-test') } }).initialize();
+          node: { id: account, nativeBotId: input.botId, directory: join(config.botHome, 'bridge-test') } }).initialize();
+        // The account's node on its chat server holds the room: what was said before the request, the request, and a line after it.
+        const store = new NodeStore(':memory:', account);
+        const people = [{ id: account, localpart: 'bridge', name: 'Snapshot Bot', kind: 'bot', ownerId: '@owner:snapshot.local' },
+          { id: senderId, localpart: 'bob', name: 'Bob', kind: 'human' }];
+        const botNode = new BotNode({ participant: people[0], participants: people, roomId, store, matrix: {}, bridge: {}, heartbeat: async () => {}, onError: () => {} });
+        store.noteRoomState(roomId, [{ type: 'm.room.name', content: { name: 'South' } }, { type: 'm.room.create', sender: senderId, content: {} },
+          ...people.map(person => ({ type: 'm.room.member', state_key: person.id, sender: person.id, event_id: `$member-${person.localpart}`,
+            content: { membership: 'join', displayname: person.name } }))]);
+        store.noteRoomMembership(roomId, 'join');
+        store.ingest([['$south-earlier-one', 'Earlier room line one.'], ['$south-earlier-two', 'Earlier room line two.'], [eventId, body],
+          ['$south-later', 'A room line that came after the request.']].map(([id, text], index) => ({ type: 'm.room.message', event_id: id, room_id: roomId,
+          sender: senderId, origin_server_ts: Date.UTC(2026, 0, 5, 9, index), content: { body: text } })));
+        bridge.core.seat(account).rooms = botNode.rooms;
         try {
-          const requestId = 'normal-bridge-request', roomId = '!south:snapshot.local', senderId = '@bob:snapshot.local', eventId = '$normal-bridge-request';
           const source = { transport: 'matrix', eventId, roomId, sender: { id: senderId, kind: 'human' } };
-          const receipt = await bridge.turn({ requestId, botId: '@bridge:snapshot.local',
-            event: { eventId, roomId, senderId, senderKind: 'human', body: 'Keep the human literal "memoryView": {"keep":true}.' },
+          const receipt = await bridge.turn({ requestId, botId: account,
+            event: { eventId, roomId, senderId, senderKind: 'human', body },
             context: { version: 1, room: { id: roomId }, source, attention: { participationOnly: false, memoryView: { marker: 'obsolete-derived-view-attention' } } } });
-          value = { receipt, ...await inspect(input.botId) };
-        } finally { await bridge.detach(); }
+          value = { receipt, reading: structuredClone(bridge.core.state.reading), ...await inspect(input.botId) };
+        } finally { await bridge.detach(); store.close(); }
       } else if (action === 'seed') {
         const agent = await rt.resolveAgent(rt.chatOf(input.botId)); await agent.whenIdle();
         for (let n = 0; n < input.count; n++) agent.session.append('user/message', createUserMessage({

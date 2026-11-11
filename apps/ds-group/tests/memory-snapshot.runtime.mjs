@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { packageRoot } from '../src/paths.mjs';
+import { messageRef, READING_CHARS } from '../src/front-prompt.mjs';
 import { prepareRuntimeDependencies } from '../scripts/runtime-dependencies.mjs';
 import { DSH_VERSION, resolveDsh } from '../scripts/runtime-config.mjs';
 
@@ -26,7 +27,7 @@ const report = { schemaVersion: 1, checkedAt: new Date().toISOString(), level: '
   ] };
 const calls = [], requests = [];
 const textOf = message => typeof message.content === 'string' ? message.content : (message.content ?? []).filter(block => block.type === 'text').map(block => block.text).join('\n');
-let toolUsed = false;
+let toolUsed = false, roomReads = 0;
 const provider = createServer(async (request, response) => {
   try {
     assert.equal(request.url, '/v1/chat/completions');
@@ -39,19 +40,26 @@ const provider = createServer(async (request, response) => {
     const steward = text.includes("You are the context steward of an AI assistant's long-running conversation.");
     const useTool = !checkpoint && !toolUsed && text.includes('human-two-tool');
     if (useTool) toolUsed = true;
+    const toolNames = input.tools?.map(tool => tool.function.name) ?? [];
+    // Answering in a room, the front looks at it on its own: first what was said before the request, then what is new there.
+    const readRoom = !checkpoint && !steward && !useTool && roomReads < 2 && text.includes('Keep the human literal')
+      && toolNames.includes('read_room') && !toolNames.includes('bash');
+    if (readRoom) roomReads++;
+    const tool = useTool ? { id: 'snapshot-file-read', name: 'read', args: { file_path: path.join(workspace, 'evidence.txt') } }
+      : readRoom ? { id: `snapshot-room-read-${roomReads}`, name: 'read_room', args: roomReads === 1 ? { before: messageRef('$normal-bridge-request') } : {} } : null;
     calls.push({ index: calls.length + 1, checkpoint, steward, snapshots, messageCount: input.messages.length,
       toolResults: input.messages.filter(message => message.role === 'tool').map(textOf),
       hasHumanOne: text.includes('human-one-history'), hasPeer: text.includes('peer-relay-history'), hasHumanTwo: text.includes('human-two-tool'),
-      toolNames: input.tools?.map(tool => tool.function.name) ?? [],
+      toolNames,
       teamRules: text.includes('## How your Bot team works'), frontRules: text.includes('## 你在 DSCord 里的工作方式') });
     const chunk = delta => ({ id: `snapshot-${calls.length}`, object: 'chat.completion.chunk', created: 1, model: 'chat', choices: [{ index: 0, delta, finish_reason: null }] });
     response.writeHead(200, { 'content-type': 'text/event-stream' });
-    const delta = useTool ? { role: 'assistant', tool_calls: [{ index: 0, id: 'snapshot-file-read', type: 'function',
-      function: { name: 'read', arguments: JSON.stringify({ file_path: path.join(workspace, 'evidence.txt') }) } }] }
+    const delta = tool ? { role: 'assistant', tool_calls: [{ index: 0, id: tool.id, type: 'function',
+      function: { name: tool.name, arguments: JSON.stringify(tool.args) } }] }
       : { role: 'assistant', content: steward ? '{"action":"compact","reason":"The synthetic work continues."}'
         : checkpoint ? 'Synthetic checkpoint: human-one-history, peer-relay-history, human-two-tool; actual tool evidence retained.' : 'Acknowledged current request.' };
     response.write(`data: ${JSON.stringify(chunk(delta))}\n\n`);
-    const finish = chunk({}); finish.choices[0].finish_reason = useTool ? 'tool_calls' : 'stop';
+    const finish = chunk({}); finish.choices[0].finish_reason = tool ? 'tool_calls' : 'stop';
     finish.usage = { prompt_tokens: 100, completion_tokens: 20, total_tokens: 120 };
     response.end(`data: ${JSON.stringify(finish)}\n\ndata: [DONE]\n\n`);
   } catch (error) { report.providerError = error.stack; response.writeHead(500); response.end('{}'); }
@@ -223,11 +231,25 @@ export const inject=plugin.inject; export const apply=plugin.apply;
   const served = calls.at(-1), native = calls[0];
   assert.ok(native.teamRules && !native.frontRules); assert.ok(native.toolNames.includes('message_bot'));
   assert.ok(served.frontRules && !served.teamRules, 'A served Bot must read the front rules in place of the native team rules');
-  assert.ok(served.toolNames.includes('dispatch_work') && served.toolNames.includes('recall'));
+  assert.ok(served.toolNames.includes('dispatch_work') && served.toolNames.includes('recall') && served.toolNames.includes('read_room'));
   assert.deepEqual(served.toolNames.filter(name => ['bash', 'message_bot', 'update_bot', 'ask_user', 'show_view', 'create_group'].includes(name)), [],
     'The front must be offered only the tools it may use');
-  assert.equal(state.receipt.calls.length, 1, 'A request that starts over without the refused tools is still one call');
+  assert.equal(state.receipt.calls.length, 3, 'A request that starts over without the refused tools is still one call: two that read the room and the reply');
   report.checks.push('servedBotReadsFrontRulesAndIsOfferedOnlyFrontTools');
+  // In that turn the front read the room it answers in through the account's own node: the page before the request,
+  // then what came after it, in the lines and references of a turn. What it read up to the newest message is read.
+  assert.deepEqual(state.receipt.toolReceipts.map(receipt => receipt.name), ['read_room', 'read_room']);
+  const south = '!south:snapshot.local';
+  const pages = served.toolResults.filter(result => result.startsWith('{"room":')).map(result => JSON.parse(result));
+  assert.deepEqual(pages.map(page => [page.room.name, page.seenBefore, page.history.map(line => line.text)]),
+    [['South', undefined, ['Earlier room line one.', 'Earlier room line two.']], ['South', true, ['A room line that came after the request.']]]);
+  assert.deepEqual(pages[0].history.map(line => [line.ref, line.at]), [[messageRef('$south-earlier-one'), '2026-01-05 09:00'], [messageRef('$south-earlier-two'), '2026-01-05 09:01']]);
+  assert.equal(pages[0].people[pages[0].history[0].from].id, '@bob:snapshot.local');
+  assert.ok(served.toolResults.every(result => !result.startsWith('{"room":') || result.length <= READING_CHARS));
+  assert.equal(state.reading.sessionId, state.sessionId);
+  assert.deepEqual(state.reading.rooms[south].refs, [messageRef('$normal-bridge-request'), messageRef('$south-later')]);
+  assert.deepEqual(Object.keys(state.reading.people).sort(), ['@bob:snapshot.local', '@bridge:snapshot.local']);
+  report.checks.push('servedFrontReadsItsRoomOnItsOwnAndWhatItReadIsRecorded');
   report.status = 'passed';
 } catch (error) { report.error = error.stack; report.diagnosticDirectory = directory; process.exitCode = 1; }
 finally {
