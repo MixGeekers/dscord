@@ -55,7 +55,8 @@ export class DecisionSettings {
       available: !this.config.enabled || !this.provider ? false
         : health?.health === 'ok' ? true : health?.health === 'error' ? false : null,
       preset: this.config.preset, model: this.provider?.model || options.model, health: health?.status || health?.health || 'unknown',
-      ...(health?.lastErrorCode ? { error: health.lastErrorCode } : {}) };
+      ...(health?.lastErrorCode ? { error: health.lastErrorCode } : {}),
+      ...(health?.lastErrorDetail ? { errorDetail: health.lastErrorDetail } : {}) };
   }
 
   form() {

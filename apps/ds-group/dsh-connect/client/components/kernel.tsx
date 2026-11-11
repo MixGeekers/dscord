@@ -141,10 +141,15 @@ export function DecisionPanel({
       setEndpoint(cloudflareEndpoint(value, model));
     setAccountId(value);
   }
+  const tooLong = /max_tokens|context.length|too long/i.test(
+    status?.errorDetail ?? "",
+  );
   const reason = status?.error
     ? t(
-        ERRORS.find(([pattern]) => pattern.test(status.error!))?.[1] ??
-          "decisionErrorOther",
+        tooLong
+          ? "decisionErrorTooLong"
+          : (ERRORS.find(([pattern]) => pattern.test(status.error!))?.[1] ??
+              "decisionErrorOther"),
         { code: status.error },
       )
     : null;
@@ -346,7 +351,8 @@ export function DecisionPanel({
           {error}
         </p>
       )}
-      {saved && (
+      {/* A save reports what the check found then; once the live state moves on, the note would contradict it. */}
+      {saved && SAVED_TEXT[saved] === SAVED_TEXT[state] && (
         <p
           role="status"
           className={
@@ -361,6 +367,12 @@ export function DecisionPanel({
       {state === "failed" && reason && (
         <p role="alert" className="dc-error dc-small">
           {reason}
+          {status?.errorDetail && (
+            <>
+              <br />
+              {t("decisionErrorDetail", { detail: status.errorDetail })}
+            </>
+          )}
         </p>
       )}
       {working ? (

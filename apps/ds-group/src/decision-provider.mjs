@@ -1,10 +1,38 @@
+import { decisionState } from './decision-state.mjs';
+
 /** A decision is a participation choice, never an execution authorization. */
 export const ATTENTION_ACTIONS = Object.freeze(['LISTEN', 'WAIT', 'SPEAK']);
 export const ATTENTION_POLICY_VERSION = 'dscord-attention-v1';
 export const DECISION_DEFAULTS = Object.freeze({ endpoint: 'https://api.openai.com/v1/decisions', model: 'gpt-6-luna' });
 
 export class DecisionError extends Error {
-  constructor(code, message = code) { super(message); this.name = 'DecisionError'; this.code = code; }
+  constructor(code, message = code, detail) {
+    super(message); this.name = 'DecisionError'; this.code = code;
+    if (detail) this.detail = detail;
+  }
+}
+
+/** What a service's error body says, in one bounded line, for the owner to act on. */
+function errorDetail(body) {
+  const detail = body?.detail;
+  if (typeof detail === 'string') return detail;
+  if (Array.isArray(detail)) return detail.map(item => [Array.isArray(item?.loc) ? item.loc.join('.') : '', item?.msg].filter(Boolean).join(': ')).join('; ');
+  const named = value => typeof value === 'string' ? value
+    : [value?.type || value?.code, value?.message || value?.msg].filter(Boolean).join(': ');
+  if (detail && typeof detail === 'object') return named(detail) || JSON.stringify(detail);
+  if (body?.error) return named(body.error);
+  if (Array.isArray(body?.errors)) return body.errors.map(named).filter(Boolean).join('; ');
+  return typeof body === 'string' ? body : JSON.stringify(body);
+}
+
+/** The service's own explanation of a refusal, with the key and any bearer token removed in case it is echoed. */
+export async function serviceErrorDetail(response, apiKey = '') {
+  let text;
+  try { text = (await response.text()).slice(0, 8000); } catch { return ''; }
+  let detail = text;
+  try { detail = errorDetail(JSON.parse(text)); } catch { /* A plain-text body is its own detail. */ }
+  if (apiKey) detail = String(detail).split(apiKey).join('***');
+  return String(detail).replace(/Bearer\s+\S+/gi, 'Bearer ***').replace(/\s+/g, ' ').trim().slice(0, 300);
 }
 
 export function decisionProviderConfiguration({ endpoint = DECISION_DEFAULTS.endpoint, model = DECISION_DEFAULTS.model } = {}) {
@@ -75,11 +103,14 @@ export const turnQuestion = Object.freeze({ type: 'choice', name: 'turn_taking',
     { value: 'REPLY', description: '消息已完整：before 时现在开始回答；during 时等当前回答结束后单独回答。' },
   ] });
 
-/** One bounded HTTP request for the dedicated decision protocols, without retries or chat Sessions. */
+/**
+ * One bounded HTTP request for the dedicated decision protocols, without retries or chat Sessions.
+ * The service reads the compact decision state, never the node's full bookkeeping record.
+ */
 function createHttpDecisionProvider({ id, apiKey, endpoint, model, encode, decode, fetchImpl = fetch, timeoutMs = 5000 }) {
   const key = typeof apiKey === 'string' ? apiKey.trim() : '';
   const configured = Boolean(key && endpoint);
-  let health = { health: configured ? 'unknown' : 'unconfigured', lastErrorCode: null, lastSuccessAt: null };
+  let health = { health: configured ? 'unknown' : 'unconfigured', lastErrorCode: null, lastErrorDetail: null, lastSuccessAt: null };
   return {
     id, model, configured,
     health: () => ({ ...health }),
@@ -90,22 +121,24 @@ function createHttpDecisionProvider({ id, apiKey, endpoint, model, encode, decod
       try {
         const response = await fetchImpl(endpoint, {
           method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
-          body: JSON.stringify(encode(input, question)),
+          body: JSON.stringify(encode(decisionState(input), question)),
           signal: signal ? AbortSignal.any([signal, deadline]) : deadline,
         });
-        // Do not forward service error text: a proxy may echo credentials.
-        if (!response.ok) throw new DecisionError(`ATTENTION_HTTP_${response.status}`, `Decision service HTTP ${response.status}`);
+        if (!response.ok) {
+          throw new DecisionError(`ATTENTION_HTTP_${response.status}`, `Decision service HTTP ${response.status}`,
+            await serviceErrorDetail(response, key));
+        }
         let body;
         try { body = await response.json(); }
         catch { throw new DecisionError('ATTENTION_INVALID_RESPONSE', 'Decision service returned unreadable JSON'); }
         const result = validateDecision(decode(body, question, actions), actions);
-        health = { health: 'ok', lastErrorCode: null, lastSuccessAt: Date.now() };
+        health = { health: 'ok', lastErrorCode: null, lastErrorDetail: null, lastSuccessAt: Date.now() };
         return result;
       } catch (error) {
         const safe = error instanceof DecisionError ? error : new DecisionError(
           deadline.aborted || error.name === 'TimeoutError' ? 'ATTENTION_TIMEOUT'
             : signal?.aborted ? 'ATTENTION_ABORTED' : 'ATTENTION_PROVIDER_ERROR', 'Decision request did not complete');
-        health = { ...health, health: 'error', lastErrorCode: safe.code };
+        health = { ...health, health: 'error', lastErrorCode: safe.code, lastErrorDetail: safe.detail || null };
         throw safe;
       }
     },

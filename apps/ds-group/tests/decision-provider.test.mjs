@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createOpenAIDecisionProvider, createScriptDecisionProvider, validateDecision, attentionQuestion } from '../src/decision-provider.mjs';
+import { decisionState } from '../src/decision-state.mjs';
 import { ATTENTION_DEFAULTS, normalizeAttentionConfig, participationDelay } from '../src/attention.mjs';
 
 const body = (action = 'SPEAK') => ({ model: 'gpt-6-luna', answers: [{ type: 'choice', name: 'participation', choice: action,
@@ -29,7 +30,7 @@ test('OpenAI adapter sends the tested dedicated Decisions contract without a mai
   assert.equal(calls[0].options.redirect, 'error');
   const payload = JSON.parse(calls[0].options.body);
   assert.equal(payload.model, 'gpt-6-luna');
-  assert.deepEqual(JSON.parse(payload.input), input);
+  assert.deepEqual(JSON.parse(payload.input), decisionState(input));
   assert.deepEqual(payload.questions, [attentionQuestion]);
   assert.equal(payload.questions[0].choices.length, 3);
   assert.deepEqual(payload.prompt_cache_options, { mode: 'explicit' });
@@ -61,7 +62,7 @@ test('invalid Decisions endpoints and model identifiers fail before any request'
   }
 });
 
-test('HTTP errors, refusal, model mismatch and malformed distributions remain system errors without leaking service text', async t => {
+test('HTTP errors, refusal, model mismatch and malformed distributions remain system errors without leaking the key', async t => {
   const invalid = [
     { status: 429, data: { error: { message: 'synthetic-private-key' } }, code: 'ATTENTION_HTTP_429' },
     { data: { model: 'gpt-6-luna', answers: [{ name: 'participation', type: 'refusal' }] }, code: 'ATTENTION_REFUSAL' },
@@ -74,9 +75,11 @@ test('HTTP errors, refusal, model mismatch and malformed distributions remain sy
     const provider = createOpenAIDecisionProvider({ apiKey: 'synthetic-private-key', fetchImpl: async () => {
       calls++; return Response.json(item.data, { status: item.status || 200 });
     } });
-    await assert.rejects(provider.decide({}), error => error.code === item.code && !error.message.includes('synthetic-private-key'));
+    await assert.rejects(provider.decide({}), error => error.code === item.code && !error.message.includes('synthetic-private-key')
+      && !String(error.detail || '').includes('synthetic-private-key'));
     assert.equal(calls, 1);
     assert.equal(provider.health().health, 'error');
+    assert.equal(JSON.stringify(provider.health()).includes('synthetic-private-key'), false);
   });
   await assert.rejects(createOpenAIDecisionProvider().decide({}), { code: 'ATTENTION_PROVIDER_UNCONFIGURED' });
 });
@@ -103,4 +106,22 @@ test('coordination slots depend on stable IDs and recent participation, not arra
   assert.equal(participationDelay({ botId: participants[0].id, eventId: '$shared', participants: [...participants].reverse(), recentMessages: [], coordinationMs: 100 }), delay(participants[0].id));
   assert.equal(participationDelay({ botId: participants[0].id, eventId: '$shared', participants,
     recentMessages: [{ senderId: participants[0].id }], coordinationMs: 100 }), 200);
+});
+
+test('a refused request keeps the service\'s own reason, without the key or a bearer token', async t => {
+  const cases = [
+    { status: 400, data: { detail: { type: 'max_tokens_exceeded', message: 'Request is 41210 tokens; jev-1.14.0 reads 32768.' } },
+      detail: 'max_tokens_exceeded: Request is 41210 tokens; jev-1.14.0 reads 32768.' },
+    { status: 400, data: { detail: 'state is too deeply nested' }, detail: 'state is too deeply nested' },
+    { status: 422, data: { detail: [{ loc: ['body', 'questions'], msg: 'Field required', type: 'missing' }] }, detail: 'body.questions: Field required' },
+    { status: 401, data: { error: { code: 'invalid_api_key', message: 'Incorrect key synthetic-private-key; header Bearer synthetic-private-key' } },
+      detail: 'invalid_api_key: Incorrect key ***; header Bearer ***' },
+    { status: 502, text: 'upstream\n  unavailable', detail: 'upstream unavailable' },
+  ];
+  for (const [index, item] of cases.entries()) await t.test(String(index), async () => {
+    const provider = createOpenAIDecisionProvider({ apiKey: 'synthetic-private-key', fetchImpl: async () => item.text
+      ? new Response(item.text, { status: item.status }) : Response.json(item.data, { status: item.status }) });
+    await assert.rejects(provider.decide({}), { code: `ATTENTION_HTTP_${item.status}`, detail: item.detail });
+    assert.equal(provider.health().lastErrorDetail, item.detail);
+  });
 });

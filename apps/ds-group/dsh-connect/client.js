@@ -1020,7 +1020,8 @@ function DecisionPanel({ connection, status, t }) {
 		if (endpoint === cloudflareEndpoint(accountId, model)) setEndpoint(cloudflareEndpoint(value, model));
 		setAccountId(value);
 	}
-	const reason = status?.error ? t(ERRORS.find(([pattern]) => pattern.test(status.error))?.[1] ?? "decisionErrorOther", { code: status.error }) : null;
+	const tooLong = /max_tokens|context.length|too long/i.test(status?.errorDetail ?? "");
+	const reason = status?.error ? t(tooLong ? "decisionErrorTooLong" : ERRORS.find(([pattern]) => pattern.test(status.error))?.[1] ?? "decisionErrorOther", { code: status.error }) : null;
 	async function submit(event) {
 		event.preventDefault();
 		const fields = event.currentTarget.elements;
@@ -1223,15 +1224,15 @@ function DecisionPanel({ connection, status, t }) {
 				className: "dc-error dc-small",
 				children: error
 			}),
-			saved && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+			saved && SAVED_TEXT[saved] === SAVED_TEXT[state] && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
 				role: "status",
 				className: saved === "ready" || saved === "unchecked" ? "dc-meta" : "dc-error dc-small",
 				children: t(SAVED_TEXT[saved])
 			}),
-			state === "failed" && reason && /* @__PURE__ */ (0, react_jsx_runtime.jsx)("p", {
+			state === "failed" && reason && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("p", {
 				role: "alert",
 				className: "dc-error dc-small",
-				children: reason
+				children: [reason, status?.errorDetail && /* @__PURE__ */ (0, react_jsx_runtime.jsxs)(react_jsx_runtime.Fragment, { children: [/* @__PURE__ */ (0, react_jsx_runtime.jsx)("br", {}), t("decisionErrorDetail", { detail: status.errorDetail })] })]
 			}),
 			working ? /* @__PURE__ */ (0, react_jsx_runtime.jsxs)("details", {
 				className: "dc-disclosure",
@@ -1739,7 +1740,7 @@ var zh = {
 	decisionWithout: "没有它，Bot 只在被 @ 或私聊时回答，「自然参与」不起作用；连发的消息只能按固定时间等一下再答，分不清你有没有说完。",
 	decisionMissing: "未配置",
 	decisionDisabled: "已停用",
-	decisionFailed: "验证失败",
+	decisionFailed: "请求失败",
 	decisionUnchecked: "已配置，尚未验证",
 	decisionReady: "运行正常",
 	decisionSetup1: "选择服务，准备它的 API key；Cloudflare 使用 Workers AI API token。",
@@ -1766,6 +1767,8 @@ var zh = {
 	decisionErrorProtocol: "服务有回应，但格式或模型与所选服务不符（{code}）。检查服务预设、地址和模型名。",
 	decisionErrorUnreachable: "连不上服务或等待超时（{code}）。检查网络和服务地址。",
 	decisionErrorOther: "服务没有正常回答（{code}）。",
+	decisionErrorTooLong: "这次要判断的群聊内容超出了模型一次能读的长度（{code}）。",
+	decisionErrorDetail: "服务返回：{detail}",
 	decisionEndpointInvalid: "服务地址要以 http:// 或 https:// 开头，不能带账号密码或 # 片段。",
 	decisionModelInvalid: "模型名不能为空，也不能有空格。",
 	decisionPresetInvalid: "请选择支持的决策服务。",
@@ -1858,7 +1861,7 @@ var en = {
 	decisionWithout: "Without it, Bots answer only when mentioned or messaged directly and “Join naturally” does nothing; messages sent in a row are answered after a fixed pause, with no sense of whether you have finished.",
 	decisionMissing: "Not set up",
 	decisionDisabled: "Turned off",
-	decisionFailed: "Check failed",
+	decisionFailed: "Request failed",
 	decisionUnchecked: "Set up, not checked yet",
 	decisionReady: "Working",
 	decisionSetup1: "Choose a service and get its API key. Cloudflare uses a Workers AI API token.",
@@ -1885,6 +1888,8 @@ var en = {
 	decisionErrorProtocol: "The service answered, but its format or model does not match the selected service ({code}). Check the preset, address, and model.",
 	decisionErrorUnreachable: "The service could not be reached or took too long ({code}). Check the network and the address.",
 	decisionErrorOther: "The service did not answer properly ({code}).",
+	decisionErrorTooLong: "The conversation to judge was longer than the model can read at once ({code}).",
+	decisionErrorDetail: "The service said: {detail}",
 	decisionEndpointInvalid: "The address must start with http:// or https:// and carry no credentials or # fragment.",
 	decisionModelInvalid: "The model name cannot be empty or contain spaces.",
 	decisionPresetInvalid: "Choose a supported decision service.",

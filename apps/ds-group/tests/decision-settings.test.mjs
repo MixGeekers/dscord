@@ -70,7 +70,8 @@ test('saving checks participation and turn-taking and reports failed connectivit
   assert.equal(asked.length, 1);
   assert.deepEqual([asked[0].url, asked[0].key, asked[0].body.model], [DECISION_DEFAULTS.endpoint, 'Bearer synthetic-private-decision-key', DECISION_DEFAULTS.model]);
   assert.equal(asked[0].body.questions[0].name, 'participation');
-  assert.equal(JSON.parse(asked[0].body.input).self.id, 'dscord-check', 'the question carries nothing of the owner\'s');
+  assert.deepEqual([...new Set(Object.values(JSON.parse(asked[0].body.input).people).map(person => person.name))], ['DSCord'],
+    'the question carries nothing of the owner\'s');
 
   // The model and address are filled in from the panel; an answer from that model makes the status real.
   reply = () => {

@@ -123,7 +123,7 @@ export class ConnectController {
     }));
     return { centralUrl: this.state.centralUrl, webUrl: this.state.webUrl || '', user: this.state.user, hostId: this.state.hostId,
       label: this.label, bots, runtime: this.runtime, lastError: this.lastError, syncedAt: this.syncedAt,
-      nativeBundled: this.native.bundled === true, dataDirectory: this.directory, decision: this.decision(),
+      nativeBundled: this.native.bundled === true, dataDirectory: this.directory, decision: this.decision({ detail: true }),
       ...(this.updates ? { kernelUpdates: this.updates.view() } : {}) };
   }
 
@@ -140,10 +140,11 @@ export class ConnectController {
   }
 
   /** Whether the service that decides when Bots speak is set up here. Without it Bots answer only when named. */
-  decision() {
-    const { configured, enabled, available, model, error } = this.processes.decisionStatus();
+  /** The service's own explanation of a failure stays on this device's panel; the central server gets the code. */
+  decision({ detail = false } = {}) {
+    const { configured, enabled, available, model, error, errorDetail } = this.processes.decisionStatus();
     return { configured: configured === true, enabled: enabled !== false, available: available ?? null, model: model || null,
-      ...(error ? { error } : {}) };
+      ...(error ? { error } : {}), ...(detail && error && errorDetail ? { errorDetail } : {}) };
   }
 
   async report() {

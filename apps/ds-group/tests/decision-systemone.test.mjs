@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 import { createDecisionProvider, createSystemOneDecisionProvider, attentionQuestion, turnQuestion } from '../src/decision-provider.mjs';
+import { decisionState } from '../src/decision-state.mjs';
 import { decisionPresetConfiguration, decisionEnvironment } from '../src/decision-presets.mjs';
 
 const answer = (model, question = attentionQuestion, choice = question.choices.at(-1).value) => ({
@@ -34,7 +35,7 @@ test('Jev and Clef reuse both choice questions without OpenAI fields or protocol
       assert.equal(seen[index].options.headers.Authorization, 'Bearer synthetic-secret');
       assert.equal(seen[index].options.redirect, 'error');
     }
-    assert.deepEqual(seen[0].body.state, input);
+    assert.deepEqual(seen[0].body.state, decisionState(input));
     assert.equal(provider.health().health, 'ok');
     assert.equal(JSON.stringify(provider.health()).includes('synthetic-secret'), false);
   }
