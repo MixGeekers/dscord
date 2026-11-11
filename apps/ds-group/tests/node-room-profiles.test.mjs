@@ -180,3 +180,31 @@ test('attention and quoted native sources use their own name observations while 
   assert.equal(input.context.members.find(person => person.id === alice.id).name, '阿林');
   assert.equal(f.participants[0].name, 'Account Alice');
 });
+
+test('a room is read as a request\'s history carries it, and only by an account that is in it', t => {
+  const f = fixture(t);
+  f.store.noteRoomMembership(one, 'join');
+  f.store.noteRoomMembership(two, 'leave');
+  f.store.ingest([member('$bot-in', 'Bot', { person: bot.id, timestamp: 5 }), member('$before', '小林', { timestamp: 10 }), message('$old-message', { timestamp: 20 }),
+    member('$rename', '阿林', { timestamp: 30 }), message('$new-message', { timestamp: 40 }), message('$current', { timestamp: 50 }),
+    message('$elsewhere', { roomId: two, timestamp: 60 })]);
+  // A page of the room is the history the node gives a request: each line under the name its sender had then.
+  const page = f.node.rooms.page(one, { before: '$current' });
+  assert.deepEqual(page.messages, f.node.requestFor(f.store.item('$current')).history);
+  assert.deepEqual(page.messages.map(line => line.senderName), ['小林', '阿林']);
+  assert.deepEqual([page.earlier, page.later, page.kind], [0, 1, 'group']);
+  assert.equal(f.node.rooms.page(one, { before: '$elsewhere' }), undefined);
+  // A room without a name is known by who else is in it now; what a person sent says whether it was a direct conversation.
+  assert.deepEqual(f.node.rooms.rooms(), [{ id: one, name: '阿林', topic: '', members: 2, latestAt: 50 }]);
+  const direct = message('$direct', { timestamp: 70 });
+  direct.content['org.ds_group'].conversationKind = 'direct';
+  f.store.ingest([direct, message('$own', { sender: bot.id, timestamp: 80 })]);
+  assert.equal(f.node.rooms.page(one).kind, 'direct');
+  const room = f.node.rooms.room(one);
+  assert.deepEqual([room.name, room.creatorId, room.members.map(person => [person.id, person.name, person.kind])],
+    ['阿林', null, [[bot.id, 'Bot', 'bot'], [alice.id, '阿林', 'human']]]);
+  // The account left the other room: it neither lists nor reads it, and finds no message there.
+  assert.equal(f.node.rooms.room(two), undefined);
+  assert.equal(f.node.rooms.find(id => id === '$elsewhere'), undefined);
+  assert.deepEqual(f.node.rooms.find(id => id === '$old-message'), { eventId: '$old-message', roomId: one });
+});

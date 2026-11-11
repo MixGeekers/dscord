@@ -83,3 +83,32 @@ test('synthetic cursor failure rolls back the complete sync batch', () => {
   assert.equal(store.next(), undefined);
   store.close();
 });
+
+test('synthetic rooms are read a page at a time in the order they were received, and only the ones the account is in', () => {
+  const store = new NodeStore(':memory:', botId);
+  const group = '!group:ds-group.local', direct = '!dm:ds-group.local', left = '!left:ds-group.local', quiet = '!quiet:ds-group.local';
+  const at = (id, roomId, timestamp, sender) => ({ ...event(id, { roomId, to: [], ...(sender ? { sender } : {}) }), origin_server_ts: timestamp });
+  for (const roomId of [group, direct, quiet]) store.noteRoomMembership(roomId, 'join');
+  store.noteRoomMembership(left, 'leave');
+  store.noteRoomState(group, [{ type: 'm.room.name', content: { name: '项目群' } }]);
+  store.ingest([at('$g1', group, 10), at('$d1', direct, 20), at('$g2', group, 30), at('$l1', left, 40), at('$g3', group, 50),
+    // The core's local hand-over of a worker result is kept among the messages, and is not one of the room's.
+    at('$dscord-T-1-result', group, 60, botId), at('$d2', direct, 25)], 'cursor');
+  assert.deepEqual(store.joinedRooms().map(room => [room.id, room.name, room.latestAt]),
+    [[direct, undefined, 25], [group, '项目群', 50], [quiet, undefined, null]]);
+  const page = options => { const found = store.roomPage(group, options); return found && [found.events.map(row => row.event_id), found.earlier, found.later, found.next]; };
+  assert.deepEqual(page(), [['$g1', '$g2', '$g3'], 0, 0, undefined]);
+  assert.deepEqual(page({ limit: 2 }), [['$g2', '$g3'], 1, 0, undefined]);
+  assert.deepEqual(page({ before: '$g3', limit: 1 }), [['$g2'], 1, 1, undefined]);
+  assert.deepEqual(page({ before: '$g1' }), [[], 0, 0, undefined]);
+  assert.deepEqual(page({ from: '$g1', limit: 2 }), [['$g1', '$g2'], 0, 1, '$g3']);
+  assert.deepEqual(page({ from: '$g2' }), [['$g2', '$g3'], 1, 0, undefined]);
+  assert.equal(page({ before: '$d1' }), undefined, 'a message of another room starts no page here');
+  // A withdrawn message is a line that says so, as in a request's history.
+  store.ingest([{ type: 'm.room.redaction', event_id: '$gone', room_id: group, sender: '@alice:ds-group.local', redacts: '$g2' }]);
+  assert.deepEqual(store.roomPage(group).events.map(row => row.content.body), ['$g1', '[message withdrawn]', '$g3']);
+  assert.deepEqual(store.findMessage(id => id.endsWith('2')), { eventId: '$d2', roomId: direct });
+  assert.deepEqual(store.findMessage(id => id.endsWith('2'), group), { eventId: '$g2', roomId: group });
+  assert.equal(store.findMessage(id => id === '$d1', group), undefined);
+  store.close();
+});

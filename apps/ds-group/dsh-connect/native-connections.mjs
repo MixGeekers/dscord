@@ -138,7 +138,7 @@ export class NativeConnections {
         },
       });
       Object.assign(entry, { bridge, botNode });
-      Object.assign(bridge.core.seat(node.id), { contacts: botNode.contacts,
+      Object.assign(bridge.core.seat(node.id), { contacts: botNode.contacts, rooms: botNode.rooms,
         editProfile: this.editProfile && node.centralId ? changes => this.editProfile(node.centralId, changes) : null });
       await botNode.start();
       await bridge.serveFront();

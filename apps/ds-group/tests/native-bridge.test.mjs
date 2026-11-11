@@ -358,8 +358,44 @@ test('a turn the Session never took showed it nothing', async t => {
   f.native.call = async (endpoint, payload) => { if (endpoint === 'send' && lost) throw new Error('synthetic admission failure'); return call(endpoint, payload); };
   const history = [['$m1', ann, 'first']];
   assert.equal((await f.bridge.turn(f.request('lost', '!a:home.test', history))).status, 'failed');
-  assert.equal(f.bridge.core.state.reading, undefined);
+  // The codes it gave people stand, so that nothing else gives them out again; the room is not read.
+  assert.deepEqual(f.bridge.core.state.reading, { sessionId: 'native-one', people: { [f.node.id]: 1, [ann]: 2, '@same:home.test': 3 }, rooms: {} });
   lost = false;
   await f.bridge.turn(f.request('taken', '!a:home.test', history));
   assert.deepEqual(texts(f.calls[0]), ['first']); assert.equal(f.calls[0].seenBefore, undefined);
+  assert.equal(codeOf(f.calls[0], ann), 'P2');
+});
+
+test('what the Bot reads on its own during a turn stays read when the turn is reminded to reply', async t => {
+  const zed = '@zed:home.test', ops = '!ops:home.test';
+  let event, looked;
+  const f = await fixture(t, { send: async ({ event: emit, turn }) => {
+    event = emit;
+    // The model looks at another room and ends the turn on the tool, without a reply.
+    looked = JSON.parse(await f.bridge.core.readRoom({ room: '运营群' }, { agent: { session: { id: 'native-one' } } }));
+    await emit('tool/call', { turn, callId: 'c1', name: 'read_room' });
+    await emit('turn/end', { turn, reason: { kind: 'completed' } });
+  } });
+  const members = [{ id: f.node.id, name: 'Original', kind: 'bot' }, { id: zed, name: 'Zed', kind: 'human' }];
+  f.bridge.core.seat(f.node.id).rooms = { rooms: () => [{ id: ops, name: '运营群', topic: '', members: 2, latestAt: 1 }],
+    room: id => id === ops ? { id: ops, name: '运营群', topic: '', creatorId: null, members } : undefined, find: () => undefined,
+    page: () => ({ kind: 'group', earlier: 0, later: 0, messages: [{ eventId: '$o1', roomId: ops, senderId: zed, senderName: 'Zed', senderKind: 'human', body: '今天发版' }] }) };
+  f.bridge.core.ctx.sessionController = { prompt: async request => {
+    await event('turn/start', { turn: 2 });
+    await event('user/message', { content: request.content, source: { kind: 'user' } });
+    await event('assistant/message', { turn: 2, message: { content: [{ type: 'text', text: '运营群说今天发版。' }] } });
+    await event('turn/end', { turn: 2, reason: { kind: 'completed' } });
+  } };
+  const result = await f.bridge.turn(f.request('look', '!a:home.test', [['$m1', ann, 'first']]));
+  assert.equal(result.text, '运营群说今天发版。');
+  assert.deepEqual(looked.history.map(line => line.text), ['今天发版']);
+  // A tool that only reads leaves the answer free to be given again with a follow-up.
+  assert.deepEqual(result.toolReceipts.map(receipt => receipt.name), ['read_room']);
+  const reading = f.bridge.core.state.reading;
+  assert.equal(looked.people[`P${reading.people[zed]}`].id, zed);
+  assert.deepEqual(Object.keys(reading.rooms), ['!a:home.test', ops]);
+  // The next turn gives a newcomer a code of their own.
+  await f.bridge.turn(f.request('after', '!a:home.test', [['$m1', ann, 'first'], ['$m2', '@new:home.test', 'hello']]));
+  assert.notEqual(codeOf(f.calls.at(-1), '@new:home.test'), `P${reading.people[zed]}`);
+  assert.equal(f.bridge.core.state.reading.people[zed], reading.people[zed]);
 });

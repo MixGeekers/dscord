@@ -7,6 +7,7 @@ import { MatrixClient } from './matrix-client.mjs';
 import { ContactBook, MAX_ASK_DEPTH } from './contact-book.mjs';
 import { localPath, packageRoot } from './paths.mjs';
 import { NodeStore } from './node-store.mjs';
+import { RoomReader } from './room-reader.mjs';
 import { NodeFiles, eventAttachments } from './node-files.mjs';
 import { boundTaskRequest } from './node-request.mjs';
 import { NodeDelivery, createDeliveryClient } from './node-delivery.mjs';
@@ -218,6 +219,8 @@ export class BotNode {
     this.roomRosterTimes = new Map();
     // This Bot's own contact book, shared by its accounts on every chat server; every route to another Bot is looked up here.
     this.contacts = (contactBook || new ContactBook({ db: store.db })).on({ self: participant, people: () => this.participants, local: localBots });
+    // What this account can read on its server: the front and the workers look at rooms through it.
+    this.rooms = new RoomReader(this);
     this.transferAttempts = transferAttempts;
     this.transferRetryDelayMs = transferRetryDelayMs;
     this.controlIntervalMs = controlIntervalMs;
@@ -779,13 +782,17 @@ export class BotNode {
         ...(meta.originRoomId ? { originRoomId: meta.originRoomId } : {}), ...(meta.originEventId ? { originEventId: meta.originEventId } : {}),
         ...(originThreadRootId ? { originThreadRootId } : {}),
       },
-      history: item.attention?.kind === 'natural' ? item.attention.history : history.map(previous => ({ eventId: previous.event_id, roomId: previous.room_id,
-        source: messageSource(previous, this.participants, this.store.roomContextForEvent(previous)),
-        senderId: previous.sender, senderName: this.senderName(previous.sender, this.store.roomContextForEvent(previous)), senderKind: this.participants.find(person => person.id === previous.sender)?.kind,
-        body: previous.content['m.new_content']?.body ?? previous.content.body, attachments: eventAttachments(previous), taskId: metadataOf(previous).taskId,
-        to: Array.isArray(metadataOf(previous).to) ? metadataOf(previous).to : [],
-        kind: metadataOf(previous).kind, originSenderId: metadataOf(previous).originSenderId, fileBatch: metadataOf(previous).fileBatch })),
+      history: item.attention?.kind === 'natural' ? item.attention.history : history.map(previous => this.historyItem(previous)),
     };
+  }
+
+  /** A room message as a request's history and a room reading carry it: who sent it under which name then, to whom, and what came with it. */
+  historyItem(event) {
+    const meta = metadataOf(event), room = this.store.roomContextForEvent(event);
+    return { eventId: event.event_id, roomId: event.room_id, source: messageSource(event, this.participants, room),
+      senderId: event.sender, senderName: this.senderName(event.sender, room), senderKind: this.participants.find(person => person.id === event.sender)?.kind,
+      body: event.content['m.new_content']?.body ?? event.content.body, attachments: eventAttachments(event), taskId: meta.taskId,
+      to: Array.isArray(meta.to) ? meta.to : [], kind: meta.kind, originSenderId: meta.originSenderId, fileBatch: meta.fileBatch };
   }
 
   taskUpdate(item, changes) {

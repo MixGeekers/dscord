@@ -1,6 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { createHash } from 'node:crypto';
 
+// The core's local hand-over of a worker result or question is kept among the messages; it is not a room message.
+const ROOM_MESSAGE = "event_id NOT LIKE '$dscord-%'";
+
 /** Durable Matrix inbox and send outbox for one Bot identity. */
 export class NodeStore {
   constructor(filename, botId) {
@@ -19,6 +22,7 @@ export class NodeStore {
         sender_id TEXT NOT NULL,
         event_json TEXT NOT NULL
       );
+      CREATE INDEX IF NOT EXISTS room_messages ON messages(room_id,sequence);
       CREATE TABLE IF NOT EXISTS room_member_observations (
         sequence INTEGER PRIMARY KEY AUTOINCREMENT,
         room_id TEXT NOT NULL,
@@ -680,6 +684,49 @@ export class NodeStore {
   messagesAfter(roomId, sequence) {
     return this.db.prepare('SELECT event_json FROM messages WHERE room_id=? AND sequence>? ORDER BY sequence LIMIT 500')
       .all(roomId, sequence).map(row => JSON.parse(row.event_json));
+  }
+
+  /** The rooms this account is in, most recently active first, each with when the newest message the node holds of it was sent. */
+  joinedRooms() {
+    // One look at the end of each room: the store may hold a great many messages.
+    const newest = this.db.prepare(`SELECT sequence,json_extract(event_json,'$.origin_server_ts') AS at FROM messages
+      WHERE room_id=? AND ${ROOM_MESSAGE} ORDER BY sequence DESC LIMIT 1`);
+    return this.db.prepare("SELECT key,value FROM node_meta WHERE key LIKE 'room:%'").all()
+      .map(row => ({ id: row.key.slice('room:'.length), ...JSON.parse(row.value) }))
+      .filter(room => room.membership === 'join')
+      .map(room => { const latest = newest.get(room.id); return { ...room, latestSequence: latest?.sequence || 0, latestAt: latest?.at ?? null }; })
+      .sort((a, b) => b.latestSequence - a.latestSequence || a.id.localeCompare(b.id));
+  }
+
+  /**
+   * A page of a room in the order the node received it, oldest first: its newest messages, those before one
+   * message, or those from one message on. `earlier` and `later` count what the node holds of the room on either
+   * side of the page, and `next` is the message after a page that reads forward. Nothing when the message a page
+   * starts from is not in the room.
+   */
+  roomPage(roomId, { before, from, limit = 100 } = {}) {
+    const anchor = before || from;
+    const mark = anchor ? this.db.prepare('SELECT sequence FROM messages WHERE room_id=? AND event_id=?').get(roomId, anchor)?.sequence : undefined;
+    if (anchor && mark === undefined) return undefined;
+    const select = `SELECT sequence,event_json FROM messages WHERE room_id=? AND ${ROOM_MESSAGE}`;
+    const rows = from ? this.db.prepare(`${select} AND sequence>=? ORDER BY sequence LIMIT ?`).all(roomId, mark, limit)
+      : before ? this.db.prepare(`${select} AND sequence<? ORDER BY sequence DESC LIMIT ?`).all(roomId, mark, limit).reverse()
+        : this.db.prepare(`${select} ORDER BY sequence DESC LIMIT ?`).all(roomId, limit).reverse();
+    const count = (side, sequence) => this.db.prepare(`SELECT COUNT(*) AS count FROM messages WHERE room_id=? AND ${ROOM_MESSAGE} AND sequence${side}?`)
+      .get(roomId, sequence).count;
+    const first = rows[0]?.sequence, last = rows.at(-1)?.sequence;
+    const next = from && rows.length ? this.db.prepare(`SELECT event_id FROM messages WHERE room_id=? AND ${ROOM_MESSAGE} AND sequence>? ORDER BY sequence LIMIT 1`)
+      .get(roomId, last)?.event_id : undefined;
+    return { events: rows.map(row => this.visibleMessage(JSON.parse(row.event_json))),
+      earlier: rows.length ? count('<', first) : 0, later: rows.length ? count('>', last) : 0, ...(next ? { next } : {}) };
+  }
+
+  /** The newest message the node holds whose ID passes a test, in one room or in any: a reader names a message by a short reference. */
+  findMessage(test, roomId) {
+    const rows = roomId ? this.db.prepare('SELECT event_id,room_id FROM messages WHERE room_id=? ORDER BY sequence DESC').iterate(roomId)
+      : this.db.prepare('SELECT event_id,room_id FROM messages ORDER BY sequence DESC').iterate();
+    for (const row of rows) if (test(row.event_id)) return { eventId: row.event_id, roomId: row.room_id };
+    return undefined;
   }
 
   observationBatch(limit = 100) {
