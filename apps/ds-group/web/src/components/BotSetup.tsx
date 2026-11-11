@@ -1,4 +1,5 @@
-import { Input, NativeSelect, Textarea } from "../../../ui/controls";
+import { Input, Textarea } from "../../../ui/controls";
+import { Select } from "../../../ui/select";
 import type { Device } from "../central";
 import { useTranslation } from "../locale";
 import { botMessages } from "../locales/bots";
@@ -101,51 +102,51 @@ export function BotSetupFields({
         onChange={(event) => onChange({ ...value, role: event.target.value })}
       />
       <label htmlFor={id("device")}>{t("device")}</label>
-      <NativeSelect
+      <Select
         id={id("device")}
         value={value.deviceId}
         disabled={disabled || !devices.length}
-        onChange={(event) =>
+        onValueChange={(deviceId) =>
           // Models belong to a device, so a choice made for another device does not carry over.
-          onChange({ ...value, deviceId: event.target.value, model: "" })
+          onChange({ ...value, deviceId, model: "" })
         }
-      >
-        {!value.deviceId && <option value="">{t("deviceAuto")}</option>}
-        {devices.map((item) => (
-          <option key={item.id} value={item.id}>
-            {item.label} · {t(item.online ? "deviceOnline" : "deviceOffline")}
-          </option>
-        ))}
-      </NativeSelect>
+        options={[
+          ...(value.deviceId ? [] : [{ value: "", label: t("deviceAuto") }]),
+          ...devices.map((item) => ({
+            value: item.id,
+            label: `${item.label} · ${t(item.online ? "deviceOnline" : "deviceOffline")}`,
+          })),
+        ]}
+      />
       {!devices.length && <p className="small muted">{t("deviceNone")}</p>}
       <DecisionWarning device={device} />
       <label htmlFor={id("model")}>{t("model")}</label>
-      <NativeSelect
+      <Select
         id={id("model")}
         value={value.model}
         disabled={disabled}
-        onChange={(event) => onChange({ ...value, model: event.target.value })}
-      >
-        <option value="">
-          {catalog?.defaultModel
-            ? t("deviceDefaultNamed", { model: catalog.defaultModel })
-            : t("deviceDefault")}
-        </option>
-        {value.model && !offered.has(value.model) && (
-          <option value={value.model}>{value.model}</option>
-        )}
-        {catalog?.providers.map((provider) => (
-          <optgroup key={provider.id} label={provider.name}>
-            {provider.models.map((item) => (
-              <option key={item.model} value={item.model}>
-                {item.needsKey
-                  ? t("needsKey", { name: item.name ?? item.model })
-                  : (item.name ?? item.model)}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-      </NativeSelect>
+        onValueChange={(model) => onChange({ ...value, model })}
+        options={[
+          {
+            value: "",
+            label: catalog?.defaultModel
+              ? t("deviceDefaultNamed", { model: catalog.defaultModel })
+              : t("deviceDefault"),
+          },
+          ...(value.model && !offered.has(value.model)
+            ? [{ value: value.model, label: value.model }]
+            : []),
+          ...(catalog?.providers.flatMap((provider) =>
+            provider.models.map((item) => ({
+              value: item.model,
+              group: provider.name,
+              label: item.needsKey
+                ? t("needsKey", { name: item.name ?? item.model })
+                : (item.name ?? item.model),
+            })),
+          ) ?? []),
+        ]}
+      />
       {!device && <p className="small muted">{t("modelNoDevice")}</p>}
       {catalog?.error && (
         <p className="small muted">

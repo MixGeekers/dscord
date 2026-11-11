@@ -6,6 +6,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { chromium } from "playwright";
 import { packageRoot } from "../src/paths.mjs";
+import { chooseOption, selectedValue } from "./helpers/select.mjs";
 
 const checks = [];
 const pageErrors = [];
@@ -810,9 +811,9 @@ try {
 
   await page.locator("#message-input").fill("Draft while changing appearance");
   await page.locator("#identity-button").click();
-  await page.locator("#account-language-select").selectOption("zh-CN");
+  await chooseOption(page.locator("#account-language-select"), "zh-CN");
   assert.equal(await page.locator("#settings-button").textContent(), "个人设置");
-  await page.locator("#account-theme-select").selectOption("light");
+  await chooseOption(page.locator("#account-theme-select"), "light");
   await page.locator('#account-menu [data-color="teal"]').click();
   const menuSelectStyle = await page.locator("#account-language-select").evaluate((element) => {
     const style = getComputedStyle(element);
@@ -831,8 +832,8 @@ try {
   await page.screenshot({ path: path.join(output, "desktop-settings-account-light-zh.png"), animations: "disabled" });
   await page.locator('[data-settings-tab="appearance"]').click();
   await page.screenshot({ path: path.join(output, "desktop-settings-appearance-light-zh.png"), animations: "disabled" });
-  assert.equal(await page.locator("#theme-select").inputValue(), "light");
-  assert.equal(await page.locator("#language-select").inputValue(), "zh-CN");
+  assert.equal(await selectedValue(page.locator("#theme-select")), "light");
+  assert.equal(await selectedValue(page.locator("#language-select")), "zh-CN");
   assert.deepEqual(await page.locator("#language-select").evaluate((element) => {
     const style = getComputedStyle(element);
     return [style.backgroundColor, style.borderColor, style.borderRadius, style.paddingTop];
@@ -871,8 +872,8 @@ try {
   await page.reload();
   await page.locator("#room-title").filter({ hasText: "General" }).waitFor();
   await page.locator("#identity-button").click();
-  assert.equal(await page.locator("#account-theme-select").inputValue(), "light");
-  assert.equal(await page.locator("#account-language-select").inputValue(), "zh-CN");
+  assert.equal(await selectedValue(page.locator("#account-theme-select")), "light");
+  assert.equal(await selectedValue(page.locator("#account-language-select")), "zh-CN");
   assert.equal(await page.locator('#account-menu [data-color="teal"]').getAttribute("aria-pressed"), "true");
   assert.equal(await page.locator("#message-input").textContent(), "Draft while changing appearance");
   assert.equal(await page.locator("#current-id").textContent(), homeUser);
@@ -893,8 +894,8 @@ try {
     getComputedStyle(mark).backgroundColor,
   ), "rgb(181, 186, 193)");
   assert.equal(await page.locator('#account-menu [data-color="rose"]').getAttribute("aria-pressed"), "true");
-  assert.equal(await page.locator("#account-theme-select").inputValue(), "dark");
-  assert.equal(await page.locator("#account-language-select").inputValue(), "en");
+  assert.equal(await selectedValue(page.locator("#account-theme-select")), "dark");
+  assert.equal(await selectedValue(page.locator("#account-language-select")), "en");
   await appearanceTab.close();
   await page.screenshot({ path: path.join(output, "desktop-account-menu-dark-en.png"), animations: "disabled" });
   await page.locator('#account-menu [data-color="indigo"]').click();
@@ -1051,7 +1052,7 @@ try {
     await page.locator("#identity-button").click();
     await page.locator("#settings-button").click();
     await page.locator('[data-settings-tab="appearance"]').click();
-    await page.locator("#language-select").selectOption(value);
+    await chooseOption(page.locator("#language-select"), value);
     await page.locator("#close-settings").click();
   };
   await setLanguage("zh-CN");
@@ -1101,7 +1102,7 @@ try {
   );
   assert.equal(state.grantWrites.length, 0);
   await page.locator("#add-work-grant").click();
-  await page.locator("#work-grant-room-0").selectOption(aRoom);
+  await chooseOption(page.locator("#work-grant-room-0"), aRoom);
   await page.locator("[data-grant-enabled]").click();
   await page.locator("#save-work-grants").click();
   await page
@@ -1553,8 +1554,8 @@ try {
   await page.locator("#identity-button").click();
   await page.locator("#settings-button").click();
   await page.locator('[data-settings-tab="appearance"]').click();
-  await page.locator("#theme-select").selectOption("light");
-  await page.locator("#language-select").selectOption("zh-CN");
+  await chooseOption(page.locator("#theme-select"), "light");
+  await chooseOption(page.locator("#language-select"), "zh-CN");
   await page.locator("#close-settings").click();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.screenshot({ path: path.join(output, "mobile-light-zh.png") });
@@ -1597,8 +1598,8 @@ try {
   await page.locator("#identity-button").click();
   await page.locator("#settings-button").click();
   await page.locator('[data-settings-tab="appearance"]').click();
-  await page.locator("#language-select").selectOption("en");
-  await page.locator("#theme-select").selectOption("dark");
+  await chooseOption(page.locator("#language-select"), "en");
+  await chooseOption(page.locator("#theme-select"), "dark");
   await page.locator("#close-settings").click();
   await page.screenshot({ path: path.join(output, "desktop-dark-en.png") });
   await page.setViewportSize({ width: 390, height: 844 });
@@ -1617,7 +1618,7 @@ try {
   await page.locator("#identity-button").click();
   await page.locator("#settings-button").click();
   await page.locator('[data-settings-tab="appearance"]').click();
-  await page.locator("#language-select").selectOption("zh-CN");
+  await chooseOption(page.locator("#language-select"), "zh-CN");
   await page.locator('[data-settings-tab="account"]').click();
   await page.locator("#logout-button").click();
   await page.locator("#login-dialog[open]").waitFor();

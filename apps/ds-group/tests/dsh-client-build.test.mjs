@@ -49,7 +49,8 @@ test('the DSH page is drawn by the design system of the web pages: their tokens,
   assert.doesNotMatch(styles, /#[0-9a-f]{3,8}\b|rgba?\(|--dsw-|--dc-/i, 'colours come from tokens');
   for (const [, name] of styles.matchAll(/var\((--[\w-]+)/g)) assert.ok(defined.has(name), `${name} is not a design token`);
   for (const [declaration] of styles.matchAll(/(?:font-size|gap|padding|margin|border-radius)[a-z-]*:[^;}]*\d(?:px|rem)/g)) assert.fail(`${declaration} bypasses the scale`);
-  for (const [, name] of design.matchAll(/var\((--[\w-]+)/g)) assert.ok(defined.has(name), `${name} is used by a control and is not a design token`);
+  // Base UI sets the --anchor-* and --available-* sizes on a popup's positioner while it is open.
+  for (const [, name] of design.matchAll(/var\((--[\w-]+)/g)) assert.ok(defined.has(name) || /^--(anchor|available)-/.test(name), `${name} is used by a control and is not a design token`);
 });
 
 test('the loading animation in ui/styles.css is the current output of scripts/loading-motion.mjs', async () => {

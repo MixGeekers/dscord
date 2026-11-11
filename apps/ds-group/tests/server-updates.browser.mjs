@@ -5,6 +5,7 @@ import path from 'node:path';
 import { chromium } from 'playwright';
 import { createAdmin } from '../src/admin.mjs';
 import { packageRoot } from '../src/paths.mjs';
+import { chooseOption } from './helpers/select.mjs';
 
 const root = await mkdtemp(path.join(os.tmpdir(), 'dscord-update-browser-'));
 const output = path.join(packageRoot, '.local/server-updates-browser'); await mkdir(output, { recursive: true });
@@ -36,7 +37,7 @@ try {
   await page.getByRole('button', { name: 'Check for updates', exact: true }).click();
   await page.getByText('Available version: 0.4.0-alpha.4', { exact: true }).waitFor();
   checks.push('Owner checks a release through the real administration API and sees its version');
-  await page.getByLabel('Update policy', { exact: true }).selectOption('auto');
+  await chooseOption(page.getByLabel('Update policy', { exact: true }), 'auto');
   await page.getByLabel('Time zone', { exact: true }).fill('America/Caracas');
   await page.getByRole('button', { name: 'Save update settings', exact: true }).click();
   await page.getByText('Settings saved', { exact: true }).waitFor();
@@ -50,7 +51,7 @@ try {
   state.job = { ...state.job, phase: 'succeeded', backup: 'complete' }; state.history = [state.job];
   await page.getByText('Installed version: 0.4.0-alpha.4', { exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, 'desktop.png'), fullPage: true });
-  await page.getByLabel('Language', { exact: true }).selectOption('zh-CN');
+  await chooseOption(page.getByLabel('Language', { exact: true }), 'zh-CN');
   await page.getByRole('heading', { name: '服务器更新', exact: true }).waitFor();
   await page.getByText('已完成备份', { exact: true }).waitFor();
   await page.setViewportSize({ width: 390, height: 844 });

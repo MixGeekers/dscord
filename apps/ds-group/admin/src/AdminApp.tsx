@@ -17,7 +17,8 @@ import {
   Download,
 } from "lucide-react";
 import { useLocale } from "./locale";
-import { Button, Input, NativeSelect } from "../../ui/controls";
+import { Button, Input } from "../../ui/controls";
+import { Select } from "../../ui/select";
 import { Field } from "./fields";
 import PolicyCollection from "./PolicyCollection";
 import type { Collection } from "./PolicyCollection";
@@ -87,30 +88,29 @@ function Preferences({ admin }: { admin: AdminState }) {
   return (
     <div className="admin-preferences">
       <Field label={t("theme")}>
-        <NativeSelect
+        <Select<"dark" | "light" | "system">
           value={theme}
-          onChange={(event) => {
-            const value = event.target.value as "dark" | "light" | "system";
+          onValueChange={(value) => {
             setTheme(value);
             window.DSGroupTheme?.setPreference(value);
           }}
-        >
-          <option value="system">{t("system")}</option>
-          <option value="light">{t("light")}</option>
-          <option value="dark">{t("dark")}</option>
-        </NativeSelect>
+          options={[
+            { value: "system", label: t("system") },
+            { value: "light", label: t("light") },
+            { value: "dark", label: t("dark") },
+          ]}
+        />
       </Field>
       <Field label={t("language")}>
-        <NativeSelect
+        <Select<"en" | "zh-CN" | "system">
           value={preference}
-          onChange={(event) =>
-            setPreference(event.target.value as "en" | "zh-CN" | "system")
-          }
-        >
-          <option value="system">{t("system")}</option>
-          <option value="zh-CN">简体中文</option>
-          <option value="en">English</option>
-        </NativeSelect>
+          onValueChange={setPreference}
+          options={[
+            { value: "system", label: t("system") },
+            { value: "zh-CN", label: "简体中文" },
+            { value: "en", label: "English" },
+          ]}
+        />
       </Field>
     </div>
   );

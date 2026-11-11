@@ -1,13 +1,8 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { Trash2, Plus } from "lucide-react";
-import {
-  Button,
-  Checkbox,
-  Input,
-  NativeSelect,
-  Textarea,
-} from "../../ui/controls";
+import { Button, Checkbox, Input, Textarea } from "../../ui/controls";
+import { Select } from "../../ui/select";
 import { Field, ToolFields, lines } from "./fields";
 import { useLocale, useTranslation } from "./locale";
 import { adminMessages } from "./messages";
@@ -277,13 +272,17 @@ export default function PolicyCollection({
                       }}
                     >
                       <Field label={t("inviteMember")}>
-                        <NativeSelect name="memberId" required>
-                          {(row.memberIds as string[]).map((memberId) => (
-                            <option key={memberId} value={memberId}>
-                              {memberId}
-                            </option>
-                          ))}
-                        </NativeSelect>
+                        <Select
+                          name="memberId"
+                          required
+                          defaultValue={(row.memberIds as string[])[0]}
+                          options={(row.memberIds as string[]).map(
+                            (memberId) => ({
+                              value: memberId,
+                              label: memberId,
+                            }),
+                          )}
+                        />
                       </Field>
                       <Button
                         variant="secondary"
@@ -354,13 +353,14 @@ export default function PolicyCollection({
                   />
                 </Field>
                 <Field label={t("kind")}>
-                  <NativeSelect
+                  <Select
                     name="kind"
                     defaultValue={value("kind", "human")}
-                  >
-                    <option value="human">{t("human")}</option>
-                    <option value="bot">{t("bot")}</option>
-                  </NativeSelect>
+                    options={[
+                      { value: "human", label: t("human") },
+                      { value: "bot", label: t("bot") },
+                    ]}
+                  />
                 </Field>
                 <Field label={t("owner")}>
                   <Input name="ownerId" defaultValue={value("ownerId")} />

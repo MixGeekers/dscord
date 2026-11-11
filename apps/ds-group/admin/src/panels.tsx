@@ -1,12 +1,7 @@
 import { useEffect, useState } from "react";
 import { AlertCircle } from "lucide-react";
-import {
-  Button,
-  Checkbox,
-  Input,
-  NativeSelect,
-  Textarea,
-} from "../../ui/controls";
+import { Button, Checkbox, Input, Textarea } from "../../ui/controls";
+import { Select } from "../../ui/select";
 import { Field, lines } from "./fields";
 import type { AdminState } from "./useAdmin";
 import type { Administrator, Policy } from "./types";
@@ -255,34 +250,27 @@ export function DirectoryPanel({ admin }: Props) {
           <div className="admin-settings-group">
             <h3>{t("directoryPublic")}</h3>
             <Field label={t("directoryDiscovery")}>
-              <NativeSelect
+              <Select<Policy["directory"]["discovery"]>
                 disabled={readOnly}
                 value={directory.discovery}
-                onChange={(event) =>
-                  change({
-                    discovery: event.target
-                      .value as Policy["directory"]["discovery"],
-                  })
-                }
-              >
-                <option value="public">{t("discoveryPublic")}</option>
-                <option value="number">{t("discoveryNumber")}</option>
-                <option value="hidden">{t("discoveryHidden")}</option>
-              </NativeSelect>
+                onValueChange={(discovery) => change({ discovery })}
+                options={[
+                  { value: "public", label: t("discoveryPublic") },
+                  { value: "number", label: t("discoveryNumber") },
+                  { value: "hidden", label: t("discoveryHidden") },
+                ]}
+              />
             </Field>
             <Field label={t("directoryJoin")}>
-              <NativeSelect
+              <Select<Policy["directory"]["join"]>
                 disabled={readOnly}
                 value={directory.join}
-                onChange={(event) =>
-                  change({
-                    join: event.target.value as Policy["directory"]["join"],
-                  })
-                }
-              >
-                <option value="open">{t("joinOpen")}</option>
-                <option value="invite">{t("joinInvite")}</option>
-              </NativeSelect>
+                onValueChange={(join) => change({ join })}
+                options={[
+                  { value: "open", label: t("joinOpen") },
+                  { value: "invite", label: t("joinInvite") },
+                ]}
+              />
             </Field>
             <Field label={t("directoryName")}>
               <Input
@@ -573,14 +561,15 @@ export function AdministratorsPanel({ admin }: Props) {
               />
             </Field>
             <Field label={t("role")}>
-              <NativeSelect
+              <Select
                 name="role"
                 defaultValue={adminEdit?.role || "operator"}
-              >
-                <option value="owner">{t("ownerRole")}</option>
-                <option value="operator">{t("operatorRole")}</option>
-                <option value="auditor">{t("auditorRole")}</option>
-              </NativeSelect>
+                options={[
+                  { value: "owner", label: t("ownerRole") },
+                  { value: "operator", label: t("operatorRole") },
+                  { value: "auditor", label: t("auditorRole") },
+                ]}
+              />
             </Field>
             <Field label={t("newPassword")}>
               <Input

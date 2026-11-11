@@ -1,4 +1,5 @@
-import { Button, Input, NativeSelect } from "../../../ui/controls";
+import { Button, Input } from "../../../ui/controls";
+import { Select } from "../../../ui/select";
 import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 import { messageOf } from "../api";
@@ -204,35 +205,36 @@ export function BotMemory({
       <form className="bot-memory-filter" onSubmit={submit}>
         <div>
           <label htmlFor="bot-memory-kind">{t("kind")}</label>
-          <NativeSelect
+          <Select<MemoryProfileKind>
             id="bot-memory-kind"
             value={kind}
-            onChange={(event) => {
-              setKind(event.target.value as MemoryProfileKind);
+            onValueChange={(next) => {
+              setKind(next);
               setProfileId("");
             }}
-          >
-            <option value="person">{t("people")}</option>
-            <option value="project">{t("projects")}</option>
-          </NativeSelect>
+            options={[
+              { value: "person", label: t("people") },
+              { value: "project", label: t("projects") },
+            ]}
+          />
         </div>
         <div>
           <label htmlFor="bot-memory-room">{t("scope")}</label>
-          <NativeSelect
+          <Select
             id="bot-memory-room"
             value={roomId}
-            onChange={(event) => {
-              setRoomId(event.target.value);
+            onValueChange={(next) => {
+              setRoomId(next);
               setProfileId("");
             }}
-          >
-            <option value="">{t("allScopes")}</option>
-            {availableRooms.map((room) => (
-              <option key={room.roomId} value={room.roomId}>
-                {room.name}
-              </option>
-            ))}
-          </NativeSelect>
+            options={[
+              { value: "", label: t("allScopes") },
+              ...availableRooms.map((room) => ({
+                value: room.roomId,
+                label: room.name,
+              })),
+            ]}
+          />
         </div>
         <div className="bot-memory-search">
           <label htmlFor="bot-memory-query">{t("search")}</label>

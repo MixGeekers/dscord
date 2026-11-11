@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Download, RefreshCw } from "lucide-react";
-import { Button, Input, NativeSelect } from "../../ui/controls";
+import { Button, Input } from "../../ui/controls";
+import { Select } from "../../ui/select";
 import { Field } from "./fields";
 import { useTranslation } from "./locale";
 import type { AdminState } from "./useAdmin";
@@ -285,37 +286,32 @@ export default function UpdatesPanel({ admin }: { admin: AdminState }) {
           >
             <div className="admin-settings-grid">
               <Field label={t("policy")}>
-                <NativeSelect
+                <Select<Settings["policy"]>
                   disabled={!owner || busy || running}
                   value={settings.policy}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      policy: e.target.value as Settings["policy"],
-                    })
+                  onValueChange={(policy) =>
+                    setSettings({ ...settings, policy })
                   }
-                >
-                  {(["manual", "notify", "auto"] as const).map((value) => (
-                    <option key={value} value={value}>
-                      {t(value)}
-                    </option>
-                  ))}
-                </NativeSelect>
+                  options={(["manual", "notify", "auto"] as const).map(
+                    (value) => ({
+                      value,
+                      label: t(value),
+                    }),
+                  )}
+                />
               </Field>
               <Field label={t("channel")}>
-                <NativeSelect
+                <Select<Settings["channel"]>
                   disabled={!owner || busy || running}
                   value={settings.channel}
-                  onChange={(e) =>
-                    setSettings({
-                      ...settings,
-                      channel: e.target.value as Settings["channel"],
-                    })
+                  onValueChange={(channel) =>
+                    setSettings({ ...settings, channel })
                   }
-                >
-                  <option value="stable">{t("stable")}</option>
-                  <option value="prerelease">{t("prerelease")}</option>
-                </NativeSelect>
+                  options={[
+                    { value: "stable", label: t("stable") },
+                    { value: "prerelease", label: t("prerelease") },
+                  ]}
+                />
               </Field>
               {settings.policy === "auto" && (
                 <>

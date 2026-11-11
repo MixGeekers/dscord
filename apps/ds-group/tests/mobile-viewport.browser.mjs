@@ -239,7 +239,7 @@ try {
       assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-keyboard')), true);
       assert.equal((await box(page, '.app-shell')).bottom, screen.height - KEYBOARD);
       assert.equal((await box(page, '.conversation-header')).top, 0);
-      assert.equal(await style(page, '.composer-area', 'paddingBottom'), '6px');
+      assert.equal(await style(page, '.composer-area', 'paddingBottom'), '8px');
       // A browser that pans the page instead still keeps the header in view.
       await page.evaluate(height => window.setKeyboard(height, 120), KEYBOARD);
       assert.equal((await box(page, '.app-shell')).top, 120);
