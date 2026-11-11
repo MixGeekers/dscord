@@ -291,7 +291,7 @@ body[data-ds-dark-theme] .dscord-ui {
 .dscord-ui .ds-color-input:disabled { opacity: var(--opacity-disabled); cursor: default; }
 .dscord-ui .ds-field { display: grid; gap: var(--space-sm); min-width: 0; margin: 0; padding: 0; border: 0; }
 .dscord-ui .ds-field > legend { margin-bottom: var(--space-sm); padding: 0; }
-.dscord-ui .ds-field-label { display: flex; align-items: baseline; gap: var(--space-xs); font: var(--text-label); color: var(--color-text-secondary); }
+.dscord-ui .ds-field-label { display: flex; align-items: baseline; gap: var(--space-xs); margin: 0; font: var(--text-label); color: var(--color-text-secondary); }
 .dscord-ui .ds-field-optional { font: var(--text-caption); color: var(--color-text-muted); }
 .dscord-ui .ds-field-description { margin: 0; font: var(--text-caption); color: var(--color-text-muted); }
 .dscord-ui .ds-field-error { margin: 0; font: var(--text-caption); color: var(--color-text-danger); }

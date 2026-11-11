@@ -8,6 +8,7 @@ import { useTranslation } from "../locale";
 import { spaceMessages } from "../locales/spaces";
 import { Icon } from "./Icons";
 import type { Api, Session } from "../types";
+import { ScrollArea } from "../../../ui/layout";
 
 export function SpacesDialog(props: {
   open: boolean;
@@ -150,7 +151,7 @@ export function SpacesDialog(props: {
           <Icon name="close" />
         </Button>
       </header>
-      <div className="dialog-scroll-region">
+      <ScrollArea className="dialog-scroll-region">
         <div className="space-list">
           {!props.spaces.length && <p className="muted">{t("noSpaces")}</p>}
           {props.spaces.map((space) => (
@@ -417,7 +418,7 @@ export function SpacesDialog(props: {
             </p>
           </section>
         )}
-      </div>
+      </ScrollArea>
       <footer className="dialog-footer">
         <Button
           variant="secondary"

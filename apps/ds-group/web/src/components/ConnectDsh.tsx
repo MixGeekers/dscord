@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Textarea } from "../../../ui/controls";
+import { Field } from "../../../ui/form";
+import { Section } from "../../../ui/layout";
 import { messageOf } from "../api";
 import { connectionKey } from "../central";
 import { useTranslation } from "../locale";
@@ -78,70 +80,82 @@ export function ConnectDsh({
     }
   }
   const id = (name: string) => `${idPrefix}${name}`;
-  return (
+  const body =
+    !token || !issuer ? (
+      <p className="settings-feedback">{t("connectionKeyNeedsSignIn")}</p>
+    ) : (
+      <>
+        {key && (
+          <Field
+            label={t("connectionKey")}
+            htmlFor={id("connection-key")}
+            description={t("connectionKeyExpiry", { minutes: key.minutes })}
+          >
+            <Textarea
+              id={id("connection-key")}
+              className="connection-key"
+              readOnly
+              rows={4}
+              value={key.value}
+              aria-describedby={`${id("connection-key")}-description`}
+              onFocus={(event) => event.currentTarget.select()}
+            />
+          </Field>
+        )}
+        {key && (
+          <p className="settings-feedback" role="status">
+            {t(copied ? "connectionKeyCopied" : "connectionKeyNotCopied")}
+          </p>
+        )}
+        {error && (
+          <p className="settings-feedback error-text" role="alert">
+            {error}
+          </p>
+        )}
+        <div className="connect-dsh-actions">
+          {key && (
+            <Button
+              id={id("copy-connection-key")}
+              type="button"
+              onClick={() => void write(key.value)}
+            >
+              {t(copied ? "copiedConnectionKey" : "copyConnectionKey")}
+            </Button>
+          )}
+          <Button
+            id={id("make-connection-key")}
+            type="button"
+            variant={key ? "secondary" : "default"}
+            disabled={busy}
+            onClick={() => void make()}
+          >
+            {t(
+              busy
+                ? "makingConnectionKey"
+                : key
+                  ? "remakeConnectionKey"
+                  : "makeConnectionKey",
+            )}
+          </Button>
+        </div>
+      </>
+    );
+  return bare ? (
     <section
       ref={section}
-      className={bare ? "connect-dsh connect-dsh-bare" : "connect-dsh"}
+      className="connect-dsh connect-dsh-bare"
       aria-label={t("connectDsh")}
     >
-      {!bare && <h3>{t("connectDsh")}</h3>}
-      {!bare && <p className="settings-feedback">{t("connectDshHelp")}</p>}
-      {!token || !issuer ? (
-        <p className="settings-feedback">{t("connectionKeyNeedsSignIn")}</p>
-      ) : (
-        <>
-          {key && (
-            <>
-              <label htmlFor={id("connection-key")}>{t("connectionKey")}</label>
-              <Textarea
-                id={id("connection-key")}
-                className="connection-key"
-                readOnly
-                rows={4}
-                value={key.value}
-                onFocus={(event) => event.currentTarget.select()}
-              />
-              <p className="settings-feedback" role="status">
-                {t(copied ? "connectionKeyCopied" : "connectionKeyNotCopied")}
-              </p>
-              <p className="small muted">
-                {t("connectionKeyExpiry", { minutes: key.minutes })}
-              </p>
-            </>
-          )}
-          {error && (
-            <p className="settings-feedback error-text" role="alert">
-              {error}
-            </p>
-          )}
-          <div className="connect-dsh-actions">
-            {key && (
-              <Button
-                id={id("copy-connection-key")}
-                type="button"
-                onClick={() => void write(key.value)}
-              >
-                {t(copied ? "copiedConnectionKey" : "copyConnectionKey")}
-              </Button>
-            )}
-            <Button
-              id={id("make-connection-key")}
-              type="button"
-              variant={key ? "secondary" : "default"}
-              disabled={busy}
-              onClick={() => void make()}
-            >
-              {t(
-                busy
-                  ? "makingConnectionKey"
-                  : key
-                    ? "remakeConnectionKey"
-                    : "makeConnectionKey",
-              )}
-            </Button>
-          </div>
-        </>
-      )}
+      {body}
     </section>
+  ) : (
+    <Section
+      ref={section}
+      className="connect-dsh"
+      title={t("connectDsh")}
+      description={t("connectDshHelp")}
+    >
+      {body}
+    </Section>
   );
 }

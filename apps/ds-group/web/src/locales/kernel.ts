@@ -103,6 +103,8 @@ const en = {
   memoryBoundary:
     "A shared room scope records where a claim came from; it does not mean everyone knows or agrees with it.",
   currentRecords: "{count} current records",
+  memoryTitle: "What {name} remembers",
+  emptyEntities: "{count} more without current records",
   details: "Runtime details",
 } as const;
 
@@ -201,6 +203,8 @@ export const kernelMessages: Catalog<keyof typeof en> = {
     memoryBoundary:
       "共享房间范围记录陈述来自哪里，不表示所有成员都知道或认同它。",
     currentRecords: "{count} 条当前记录",
+    memoryTitle: "{name} 记得的",
+    emptyEntities: "另有 {count} 个没有当前记录",
     details: "运行详情",
   },
 };

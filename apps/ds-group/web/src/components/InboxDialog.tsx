@@ -9,6 +9,7 @@ import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
 import type { Api, ChatEvent, Participant, Room } from "../types";
 import { Loading } from "../../../ui/loading";
+import { ScrollArea } from "../../../ui/layout";
 
 type InboxEvent = ChatEvent & { read: boolean; mentionKinds: string[] };
 interface InboxResponse {
@@ -215,7 +216,7 @@ export function InboxDialog({
           {t("markAllRead")}
         </Button>
       </div>
-      <div
+      <ScrollArea
         id="inbox-list"
         className="inbox-list dialog-scroll-region"
         aria-live="polite"
@@ -259,7 +260,7 @@ export function InboxDialog({
             {t(filter === "mentions" ? "noMentions" : "noUnread")}
           </p>
         )}
-      </div>
+      </ScrollArea>
     </dialog>
   );
 }

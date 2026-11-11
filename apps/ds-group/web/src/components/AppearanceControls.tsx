@@ -1,5 +1,6 @@
 import { useSyncExternalStore } from "react";
 import { Button } from "../../../ui/controls";
+import { Field } from "../../../ui/form";
 import { Select } from "../../../ui/select";
 import { useLocale, useTranslation } from "../locale";
 import { settingsMessages } from "../locales/settings";
@@ -22,8 +23,7 @@ export function AppearanceControls({ idPrefix = "" }: { idPrefix?: string }) {
 
   return (
     <div className="appearance-controls">
-      <div className="appearance-field">
-        <label htmlFor={`${idPrefix}language-select`}>{t("language")}</label>
+      <Field label={t("language")} htmlFor={`${idPrefix}language-select`}>
         <Select<LocalePreference>
           id={`${idPrefix}language-select`}
           value={locale.preference}
@@ -34,9 +34,8 @@ export function AppearanceControls({ idPrefix = "" }: { idPrefix?: string }) {
             { value: "en", label: "English" },
           ]}
         />
-      </div>
-      <div className="appearance-field">
-        <label htmlFor={`${idPrefix}theme-select`}>{t("theme")}</label>
+      </Field>
+      <Field label={t("theme")} htmlFor={`${idPrefix}theme-select`}>
         <Select<ThemePreference>
           id={`${idPrefix}theme-select`}
           value={theme.getPreference()}
@@ -47,9 +46,9 @@ export function AppearanceControls({ idPrefix = "" }: { idPrefix?: string }) {
             { value: "dark", label: t("dark") },
           ]}
         />
-      </div>
-      <fieldset className="theme-colors">
-        <legend>{t("themeColor")}</legend>
+      </Field>
+      <fieldset className="ds-field theme-colors">
+        <legend className="ds-field-label">{t("themeColor")}</legend>
         <div className="theme-swatches">
           {colors.map((color) => (
             <Button

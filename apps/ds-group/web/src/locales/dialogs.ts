@@ -25,6 +25,9 @@ const en = {
   closeProfile: "Close member profile",
   sendMessage: "Message",
   mention: "Mention",
+  editProfile: "Edit profile",
+  memberStatus: "Status",
+  memberRoles: "Roles",
 };
 
 export const dialogMessages = {
@@ -53,5 +56,8 @@ export const dialogMessages = {
     closeProfile: "关闭成员资料",
     sendMessage: "发消息",
     mention: "提及",
+    editProfile: "编辑资料",
+    memberStatus: "状态",
+    memberRoles: "身份组",
   } satisfies Record<keyof typeof en, string>,
 };

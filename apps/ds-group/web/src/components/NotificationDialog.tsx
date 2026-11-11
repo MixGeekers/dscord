@@ -7,6 +7,7 @@ import { Icon } from "./Icons";
 import { settingsMessages } from "../locales/settings";
 import type { Api, NotificationPreferences, Room } from "../types";
 import { Loading } from "../../../ui/loading";
+import { ScrollArea } from "../../../ui/layout";
 
 interface NotificationDialogProps {
   room: Room | null;
@@ -117,7 +118,7 @@ export function NotificationDialog({
             <Icon name="close" />
           </Button>
         </header>
-        <div className="dialog-scroll-region">
+        <ScrollArea className="dialog-scroll-region">
           <label className="check-label">
             <Checkbox
               id="notification-muted"
@@ -190,7 +191,7 @@ export function NotificationDialog({
               {feedback}
             </p>
           )}
-        </div>
+        </ScrollArea>
         <footer className="dialog-footer">
           <Button
             className="primary-button login-submit"

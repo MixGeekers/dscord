@@ -12,6 +12,7 @@ import { BotSetupFields, DecisionWarning, StageLabel } from "./BotSetup";
 import type { BotSetup } from "./BotSetup";
 import { ConnectDsh } from "./ConnectDsh";
 import { Icon } from "./Icons";
+import { ScrollArea } from "../../../ui/layout";
 
 export interface CreateBotDialogProps {
   open: boolean;
@@ -127,7 +128,7 @@ export function CreateBotDialog({
       </header>
       {bot && stage ? (
         <>
-          <div
+          <ScrollArea
             id="create-bot-progress"
             className="dialog-scroll-region"
             data-stage={stage.stage}
@@ -168,7 +169,7 @@ export function CreateBotDialog({
                 {stage.detail}
               </p>
             )}
-          </div>
+          </ScrollArea>
           <footer className="dialog-footer">
             <div className="settings-actions">
               {online && (
@@ -194,7 +195,7 @@ export function CreateBotDialog({
         </>
       ) : (
         <form id="create-bot-form" onSubmit={(event) => void submit(event)}>
-          <div className="dialog-scroll-region">
+          <ScrollArea className="dialog-scroll-region">
             <p>{t(managed.available ? "createHelp" : "needsCentral")}</p>
             {managed.available && (
               <BotSetupFields
@@ -210,7 +211,7 @@ export function CreateBotDialog({
                 {error || managed.error}
               </p>
             )}
-          </div>
+          </ScrollArea>
           <footer className="dialog-footer">
             <Button
               id="create-bot-submit"

@@ -1346,6 +1346,10 @@ export default function App({
           setMember(null);
           openBotHome(id);
         }}
+        onEditProfile={() => {
+          setMember(null);
+          setSettingsTab("account");
+        }}
         onClose={() => setMember(null)}
         onDirect={(id) => {
           setMember(null);

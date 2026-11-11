@@ -16,6 +16,8 @@ import type {
 import type { Api, Participant, Room } from "../types";
 import { Icon } from "./Icons";
 import { Loading } from "../../../ui/loading";
+import { Field, FieldRow } from "../../../ui/form";
+import { EmptyState, FilterChips, Section } from "../../../ui/layout";
 
 export function BotMemory({
   bot,
@@ -80,6 +82,17 @@ export function BotMemory({
       });
     return () => controller.abort();
   }, [api, route, kind, roomId, search, profileId, revision]);
+
+  // Results follow the search box as the person types.
+  useEffect(() => {
+    const next = query.trim();
+    if (next === search) return;
+    const timer = window.setTimeout(() => {
+      setProfileId("");
+      setSearch(next);
+    }, 300);
+    return () => window.clearTimeout(timer);
+  }, [query, search]);
 
   function submit(event: FormEvent) {
     event.preventDefault();
@@ -199,57 +212,78 @@ export function BotMemory({
         ["changes", profile.view.changes],
       ] as const)
     : [];
+  const entity = (item: MemoryProfileItem) => (
+    <Button
+      key={item.id}
+      variant="ghost"
+      className="bot-memory-entity"
+      type="button"
+      data-memory-profile={item.id}
+      onClick={() => setProfileId(item.id)}
+    >
+      <Icon name={kind === "person" ? "user" : "folder"} />
+      <span>
+        <strong>{item.name || item.id}</strong>
+        <small>{item.id}</small>
+      </span>
+      {!!item.currentCount && (
+        <small className="bot-memory-count">
+          {t("currentRecords", { count: item.currentCount })}
+        </small>
+      )}
+    </Button>
+  );
+  // People and projects with nothing current are kept apart, so the list shows where there is something to read.
+  const filled = items.filter((item) => item.currentCount !== 0);
+  const empty = items.filter((item) => item.currentCount === 0);
   return (
-    <section className="bot-memory" data-bot-memory={bot.id}>
-      <p>{t("memoryHelp", { name: bot.name })}</p>
+    <Section
+      className="bot-memory"
+      data-bot-memory={bot.id}
+      title={t("memoryTitle", { name: bot.name })}
+      description={`${t("memoryHelp", { name: bot.name })} ${t("memoryBoundary")}`}
+    >
       <form className="bot-memory-filter" onSubmit={submit}>
-        <div>
-          <label htmlFor="bot-memory-kind">{t("kind")}</label>
-          <Select<MemoryProfileKind>
-            id="bot-memory-kind"
-            value={kind}
-            onValueChange={(next) => {
-              setKind(next);
-              setProfileId("");
-            }}
-            options={[
-              { value: "person", label: t("people") },
-              { value: "project", label: t("projects") },
-            ]}
-          />
-        </div>
-        <div>
-          <label htmlFor="bot-memory-room">{t("scope")}</label>
-          <Select
-            id="bot-memory-room"
-            value={roomId}
-            onValueChange={(next) => {
-              setRoomId(next);
-              setProfileId("");
-            }}
-            options={[
-              { value: "", label: t("allScopes") },
-              ...availableRooms.map((room) => ({
-                value: room.roomId,
-                label: room.name,
-              })),
-            ]}
-          />
-        </div>
-        <div className="bot-memory-search">
-          <label htmlFor="bot-memory-query">{t("search")}</label>
-          <div>
+        <FilterChips<MemoryProfileKind>
+          aria-label={t("kind")}
+          value={kind}
+          onValueChange={(next) => {
+            setKind(next);
+            setProfileId("");
+          }}
+          chips={[
+            { value: "person", label: t("people") },
+            { value: "project", label: t("projects") },
+          ]}
+        />
+        <FieldRow>
+          <Field label={t("scope")} htmlFor="bot-memory-room">
+            <Select
+              id="bot-memory-room"
+              value={roomId}
+              onValueChange={(next) => {
+                setRoomId(next);
+                setProfileId("");
+              }}
+              options={[
+                { value: "", label: t("allScopes") },
+                ...availableRooms.map((room) => ({
+                  value: room.roomId,
+                  label: room.name,
+                })),
+              ]}
+            />
+          </Field>
+          <Field label={t("search")} htmlFor="bot-memory-query">
             <Input
               id="bot-memory-query"
+              type="search"
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={t("searchPlaceholder")}
             />
-            <Button variant="secondary" type="submit" aria-label={t("search")}>
-              <Icon name="search" />
-            </Button>
-          </div>
-        </div>
+          </Field>
+        </FieldRow>
       </form>
       {loading && <Loading label={t("loadingMemory")} />}
       {error && <p role="alert">{t("memoryFailed", { error })}</p>}
@@ -264,28 +298,19 @@ export function BotMemory({
       )}
       {!loading && !error && !profileId && (
         <div className="bot-memory-entities">
-          {!items.length && <p>{t("noEntities")}</p>}
-          {items.map((item) => (
-            <Button
-              key={item.id}
-              variant="ghost"
-              className="bot-memory-entity"
-              type="button"
-              data-memory-profile={item.id}
-              onClick={() => setProfileId(item.id)}
+          {!items.length && <EmptyState compact title={t("noEntities")} />}
+          {filled.length > 0 && (
+            <div className="bot-memory-entity-list">{filled.map(entity)}</div>
+          )}
+          {empty.length > 0 && (
+            <details
+              className="bot-memory-empty-entities"
+              open={!filled.length}
             >
-              <Icon name={kind === "person" ? "user" : "folder"} />
-              <span>
-                <strong>{item.name || item.id}</strong>
-                <small>{item.id}</small>
-              </span>
-              {typeof item.currentCount === "number" && (
-                <small>
-                  {t("currentRecords", { count: item.currentCount })}
-                </small>
-              )}
-            </Button>
-          ))}
+              <summary>{t("emptyEntities", { count: empty.length })}</summary>
+              <div className="bot-memory-entity-list">{empty.map(entity)}</div>
+            </details>
+          )}
           {more && <p className="muted">{t("more")}</p>}
         </div>
       )}
@@ -293,7 +318,7 @@ export function BotMemory({
         <Button
           variant="ghost"
           type="button"
-          className="text-button"
+          className="bot-memory-back"
           onClick={() => setProfileId("")}
         >
           <Icon name="back" />
@@ -311,7 +336,7 @@ export function BotMemory({
             ([key, entries]) =>
               !!entries?.length && (
                 <section key={key}>
-                  <h3>{t(key)}</h3>
+                  <h4>{t(key)}</h4>
                   {key === "changes" && (
                     <p className="muted">{t("historicalHelp")}</p>
                   )}
@@ -333,10 +358,6 @@ export function BotMemory({
           ) && <p className="muted">{t("shortened")}</p>}
         </div>
       )}
-      <p className="bot-memory-boundary">
-        <Icon name="info" />
-        {t("memoryBoundary")}
-      </p>
-    </section>
+    </Section>
   );
 }

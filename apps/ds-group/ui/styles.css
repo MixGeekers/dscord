@@ -147,7 +147,7 @@
 .ds-field { display: grid; gap: var(--space-sm); min-width: 0; margin: 0; padding: 0; border: 0; }
 /* A legend is not a grid item of its fieldset, so it takes the gap itself. */
 .ds-field > legend { margin-bottom: var(--space-sm); padding: 0; }
-.ds-field-label { display: flex; align-items: baseline; gap: var(--space-xs); font: var(--text-label); color: var(--color-text-secondary); }
+.ds-field-label { display: flex; align-items: baseline; gap: var(--space-xs); margin: 0; font: var(--text-label); color: var(--color-text-secondary); }
 .ds-field-optional { font: var(--text-caption); color: var(--color-text-muted); }
 .ds-field-description { margin: 0; font: var(--text-caption); color: var(--color-text-muted); }
 .ds-field-error { margin: 0; font: var(--text-caption); color: var(--color-text-danger); }

@@ -7,6 +7,7 @@ import {
 } from "../locales/artifacts";
 import type { Participant, WorkTask } from "../types";
 import { Icon } from "./Icons";
+import { ScrollArea } from "../../../ui/layout";
 
 export interface TaskHistoryDialogProps {
   tasks: WorkTask[];
@@ -144,7 +145,7 @@ export function TaskHistoryDialog({
           <Icon name="close" />
         </button>
       </header>
-      <div className="task-history-list dialog-scroll-region">
+      <ScrollArea className="task-history-list dialog-scroll-region">
         {open && !visible.length && (
           <p className="empty-tasks">{t("emptyWork")}</p>
         )}
@@ -209,7 +210,7 @@ export function TaskHistoryDialog({
               </article>
             );
           })}
-      </div>
+      </ScrollArea>
     </dialog>
   );
 }

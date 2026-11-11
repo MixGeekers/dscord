@@ -5,6 +5,7 @@ import { artifactMessages } from "../locales/artifacts";
 import { Icon } from "./Icons";
 import type { Attachment, RawRequest, Session } from "../types";
 import { Loading } from "../../../ui/loading";
+import { ScrollArea } from "../../../ui/layout";
 
 export interface AttachmentViewProps {
   attachment: Attachment;
@@ -149,7 +150,7 @@ export function AttachmentView({
               <Icon name="close" />
             </button>
           </header>
-          <div id="preview-content" className="dialog-scroll-region">
+          <ScrollArea id="preview-content" className="dialog-scroll-region">
             {preview.kind === "image" && (
               <img
                 className="preview-image"
@@ -172,7 +173,7 @@ export function AttachmentView({
               ) : (
                 <Loading label={t("loading")} />
               ))}
-          </div>
+          </ScrollArea>
         </dialog>
       )}
     </>

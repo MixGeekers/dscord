@@ -26,6 +26,7 @@ import { BotMemory } from "./BotMemory";
 import { BotWorkGrants } from "./BotWorkGrants";
 import { Icon } from "./Icons";
 import { Loading } from "../../../ui/loading";
+import { EmptyState, FilterChips, Section } from "../../../ui/layout";
 
 export type BotHomeTab =
   "now" | "timeline" | "conversations" | "memory" | "settings";
@@ -245,7 +246,7 @@ export function BotHome({
           />
         )}
         {tab === "memory" && (
-          <div data-bot-panel="memory">
+          <div data-bot-panel="memory" className="bot-panel">
             <BotMemory
               bot={bot}
               api={api}
@@ -641,113 +642,144 @@ function ConversationsPanel({
   const exchanges = pages.flatMap((page) => page.exchanges ?? []);
   const next = pages.at(-1)?.next;
   const join = contact ? "&" : "?";
+  const nameOf = (person: (typeof everyone)[number]) =>
+    person.name || names.person(person.id);
+  const avatarOf = (person: (typeof everyone)[number]) => (
+    <Avatar
+      member={{
+        ...names.member(person.id),
+        ...person,
+        kind: person.kind === "bot" ? "bot" : "human",
+      }}
+    />
+  );
+  const metaOf = (person: (typeof everyone)[number]) =>
+    [
+      person.lastExchangeAt &&
+        t("lastExchange", { time: formatDateTime(person.lastExchangeAt) }),
+      person.rooms?.length
+        ? t("sharedRooms", { count: person.rooms.length })
+        : "",
+      person.reach ? t("reachable") : "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  const chosen = contact
+    ? everyone.find((person) => person.id === contact)
+    : null;
   return (
-    <div data-bot-panel="conversations">
+    <div data-bot-panel="conversations" className="bot-panel">
       {error && (
         <p role="alert" className="bot-settings-error">
           {error}
         </p>
       )}
-      <div
-        className="bot-contact-list"
-        role="group"
-        aria-label={t("conversations")}
-      >
-        <Button
-          variant="ghost"
-          size="sm"
-          type="button"
-          aria-pressed={!contact}
-          onClick={() => setContact(null)}
-        >
-          {t("allContacts")}
-        </Button>
-        {everyone.map((person) => (
-          <Button
-            key={person.id}
-            variant="ghost"
-            size="sm"
-            type="button"
-            data-contact-id={person.id}
-            aria-pressed={contact === person.id}
-            title={person.id}
-            onClick={() => setContact(person.id)}
-          >
-            <Avatar
-              member={{
-                ...names.member(person.id),
-                ...person,
-                kind: person.kind === "bot" ? "bot" : "human",
-              }}
-            />
-            <span className="bot-contact-name">
-              <strong>{person.name || names.person(person.id)}</strong>
-              <small className="muted">
-                {[
-                  person.lastExchangeAt &&
-                    t("lastExchange", {
-                      time: formatDateTime(person.lastExchangeAt),
-                    }),
-                  person.rooms?.length
-                    ? t("sharedRooms", { count: person.rooms.length })
-                    : "",
-                  person.reach ? t("reachable") : "",
-                ]
-                  .filter(Boolean)
-                  .join(" · ")}
-              </small>
-            </span>
-          </Button>
-        ))}
-      </div>
-      {!error && !loading && !everyone.length && !contact && (
-        <p className="muted">{t("noContacts")}</p>
+      {everyone.length > 0 && (
+        <FilterChips
+          aria-label={t("conversations")}
+          value={contact ?? "all"}
+          onValueChange={(value) => setContact(value === "all" ? null : value)}
+          chips={[
+            { value: "all", label: t("allContacts") },
+            ...everyone.map((person) => ({
+              value: person.id,
+              label: nameOf(person),
+              leading: avatarOf(person),
+            })),
+          ]}
+        />
       )}
-      <h3>{t("exchanges")}</h3>
-      {!error && !loading && !exchanges.length && (
-        <p className="muted">{t("noExchanges")}</p>
-      )}
-      <ol className="bot-timeline">
-        {exchanges.map((exchange) => (
-          <li
-            key={exchange.id}
-            className="bot-timeline-item"
-            data-kind="exchange"
-          >
-            <Icon name="bot" />
-            <div>
-              <p>
-                <strong>
-                  {exchange.direction === "out"
-                    ? t("exchangeOut", { name: names.person(exchange.peerId) })
-                    : t("exchangeIn", { name: names.person(exchange.peerId) })}
-                </strong>
-                {exchange.roomId && (
-                  <span className="muted">
-                    {" "}
-                    · {t("inRoom", { room: names.room(exchange.roomId) })}
+      {!contact && (
+        <Section title={t("contacts")} description={t("contactsHelp")}>
+          {everyone.length ? (
+            <ul className="bot-contact-rows">
+              {everyone.map((person) => (
+                <li key={person.id} data-contact-id={person.id}>
+                  {avatarOf(person)}
+                  <span className="bot-contact-name">
+                    <strong>{nameOf(person)}</strong>
+                    <small>{metaOf(person) || person.id}</small>
                   </span>
-                )}
-              </p>
-              {exchange.detail && <p className="muted">{exchange.detail}</p>}
-              <small className="muted">
-                {formatDateTime(exchange.at)}
-                {exchange.status ? ` · ${statusText(t, exchange.status)}` : ""}
-              </small>
-            </div>
-          </li>
-        ))}
-      </ol>
-      {loading && <Loading label={t("loading")} />}
-      {!loading && next && (
-        <Button
-          variant="ghost"
-          type="button"
-          onClick={() => load(`${join}before=${next}`, true)}
-        >
-          {t("loadMore")}
-        </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="button"
+                    onClick={() => setContact(person.id)}
+                  >
+                    {t("showExchanges")}
+                  </Button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            !error && !loading && <EmptyState compact title={t("noContacts")} />
+          )}
+        </Section>
       )}
+      <Section
+        title={
+          chosen ? t("exchangesWith", { name: nameOf(chosen) }) : t("exchanges")
+        }
+        description={chosen ? metaOf(chosen) : undefined}
+      >
+        {!error && !loading && !exchanges.length ? (
+          <EmptyState
+            compact
+            title={t("noExchanges")}
+            description={t("exchangesHelp")}
+          />
+        ) : (
+          <ol className="bot-timeline">
+            {exchanges.map((exchange) => (
+              <li
+                key={exchange.id}
+                className="bot-timeline-item"
+                data-kind="exchange"
+              >
+                <Icon name="bot" />
+                <div>
+                  <p>
+                    <strong>
+                      {exchange.direction === "out"
+                        ? t("exchangeOut", {
+                            name: names.person(exchange.peerId),
+                          })
+                        : t("exchangeIn", {
+                            name: names.person(exchange.peerId),
+                          })}
+                    </strong>
+                    {exchange.roomId && (
+                      <span className="muted">
+                        {" "}
+                        · {t("inRoom", { room: names.room(exchange.roomId) })}
+                      </span>
+                    )}
+                  </p>
+                  {exchange.detail && (
+                    <p className="muted">{exchange.detail}</p>
+                  )}
+                  <small className="muted">
+                    {formatDateTime(exchange.at)}
+                    {exchange.status
+                      ? ` · ${statusText(t, exchange.status)}`
+                      : ""}
+                  </small>
+                </div>
+              </li>
+            ))}
+          </ol>
+        )}
+        {loading && <Loading label={t("loading")} />}
+        {!loading && next && (
+          <Button
+            variant="ghost"
+            type="button"
+            onClick={() => load(`${join}before=${next}`, true)}
+          >
+            {t("loadMore")}
+          </Button>
+        )}
+      </Section>
     </div>
   );
 }
@@ -770,15 +802,14 @@ function MemoryChangesPanel({
   const rows = pages.flatMap((page) => page.rows ?? []);
   const more = pages.at(-1)?.more;
   return (
-    <section className="bot-home-section" data-bot-memory-changes>
-      <h3>{t("memoryChanges")}</h3>
+    <Section data-bot-memory-changes title={t("memoryChanges")}>
       {error && (
         <p role="alert" className="bot-settings-error">
           {error}
         </p>
       )}
       {!error && !loading && !rows.length && (
-        <p className="muted">{t("noChanges")}</p>
+        <EmptyState compact title={t("noChanges")} />
       )}
       <ol className="bot-timeline">
         {rows.map((row) => (
@@ -820,7 +851,7 @@ function MemoryChangesPanel({
           {t("loadMore")}
         </Button>
       )}
-    </section>
+    </Section>
   );
 }
 
