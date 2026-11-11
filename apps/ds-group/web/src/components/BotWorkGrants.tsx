@@ -11,6 +11,7 @@ import { sessionIdentity } from "../session";
 import { useTranslation } from "../locale";
 import { workGrantMessages } from "../locales/work-grants";
 import type { Api, Participant, Room, Session } from "../types";
+import { Loading } from "../../../ui/loading";
 
 export function BotWorkGrants({
   bot,
@@ -194,7 +195,7 @@ export function BotWorkGrants({
         {document && t("revision", { revision: document.revision })}
         {dirty ? ` · ${t("dirty")}` : ""}
       </p>
-      {loading && <p role="status">{t("loading")}</p>}
+      {loading && <Loading label={t("loading")} />}
       <form
         onSubmit={(event) => {
           event.preventDefault();

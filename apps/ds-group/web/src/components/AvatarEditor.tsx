@@ -6,6 +6,7 @@ import { avatarMessages } from "../locales/avatars";
 import { publishAvatar } from "../avatar-profiles";
 import { Avatar } from "./Avatar";
 import type { AvatarProfile, Participant, Session } from "../types";
+import { Loading } from "../../../ui/loading";
 
 type ImageDraft = { file: File; url: string; width: number; height: number };
 export function AvatarEditor({
@@ -241,7 +242,7 @@ export function AvatarEditor({
       </div>
       <p className="small muted">{t("scope")}</p>
       {loading ? (
-        <p role="status">{t("loading")}</p>
+        <Loading label={t("loading")} />
       ) : (
         <>
           <Input

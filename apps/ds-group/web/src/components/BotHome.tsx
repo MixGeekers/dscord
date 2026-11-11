@@ -24,6 +24,7 @@ import type { Api, Participant, Room, ServerStatus, Session } from "../types";
 import { BotMemory } from "./BotMemory";
 import { BotWorkGrants } from "./BotWorkGrants";
 import { Icon } from "./Icons";
+import { Loading } from "../../../ui/loading";
 
 export type BotHomeTab =
   "now" | "timeline" | "conversations" | "memory" | "settings";
@@ -316,7 +317,7 @@ function NowPanel({
   const decision = view?.attention?.lastDecision;
   return (
     <div data-bot-panel="now">
-      {loading && !view && <p role="status">{k("loading")}</p>}
+      {loading && !view && <Loading label={k("loading")} />}
       {!loading && view?.runtime?.available === false && (
         <p role="status">{k("unavailableHelp")}</p>
       )}
@@ -592,7 +593,7 @@ function TimelinePanel({
           </li>
         ))}
       </ol>
-      {loading && <p role="status">{t("loading")}</p>}
+      {loading && <Loading label={t("loading")} />}
       {!loading && next && (
         <Button
           variant="ghost"
@@ -730,7 +731,7 @@ function ConversationsPanel({
           </li>
         ))}
       </ol>
-      {loading && <p role="status">{t("loading")}</p>}
+      {loading && <Loading label={t("loading")} />}
       {!loading && next && (
         <Button
           variant="ghost"
@@ -802,7 +803,7 @@ function MemoryChangesPanel({
           </li>
         ))}
       </ol>
-      {loading && <p role="status">{t("loading")}</p>}
+      {loading && <Loading label={t("loading")} />}
       {!loading && more && (
         <Button
           variant="ghost"

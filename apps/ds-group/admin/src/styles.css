@@ -281,8 +281,7 @@ dl {
   font-size: var(--font-size-compact);
 }
 .admin-error,
-.admin-notice,
-.admin-loading {
+.admin-notice {
   display: flex;
   align-items: flex-start;
   gap: var(--space-6);
@@ -304,9 +303,6 @@ dl {
 }
 .admin-notice {
   color: var(--color-status-success);
-}
-.admin-loading {
-  color: var(--color-text-secondary);
 }
 .admin-error svg,
 .admin-notice svg {

@@ -1303,7 +1303,7 @@ try {
   const releaseLegacyProfile = await reloadWithHeldProfile(page, homeUser);
   assert.equal(await page.locator("#owned-bot-count").textContent(), "…");
   assert.match(await page.locator("#global-bots-button").getAttribute("aria-label"), /Loading Bots/);
-  assert.match(await page.locator("#owned-bots .sidebar-empty").textContent(), /Loading your Bots/);
+  assert.match(await page.locator("#owned-bots .ds-loading").textContent(), /Loading your Bots/);
   assert.equal(await page.locator("#member-count").textContent(), "…");
   assert.equal(await page.locator("#ownership-loading").isVisible(), true);
   assert.equal(await page.locator("#room-title").textContent(), "Loading conversation");

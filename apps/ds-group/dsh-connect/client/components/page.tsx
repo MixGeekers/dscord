@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from "react";
 import type { Connection, Snapshot } from "../connection";
 import type { MessageKey, Translate } from "../locale";
+import { Loading } from "../../../ui/loading";
 import { styles } from "../styles";
 import type { ConnectionState } from "../types";
 import { BotsPanel } from "./bots";
@@ -170,11 +171,7 @@ export function ConnectionPage({
           </div>
         </header>
         <Notices state={state} value={value} t={t} />
-        {state.loading && (
-          <p role="status" className="dc-muted">
-            {t("readStatus")}
-          </p>
-        )}
+        {state.loading && <Loading size="lg" label={t("readStatus")} />}
         {value && <SetupGuide value={value} t={t} />}
         {!state.loading && !user && (
           <LoginForm connection={connection} state={state} t={t} />

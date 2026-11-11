@@ -31,6 +31,7 @@ import type { TimelineHistory } from "../app/useTimelineHistory";
 import { lastVisible, visibleEvents } from "../app/timeline-events";
 import type { MentionValue } from "../../mention-editor.js";
 import { MessageEditor } from "./MessageEditor";
+import { Loading } from "../../../ui/loading";
 
 export interface TimelineProps {
   events: ChatEvent[];
@@ -350,11 +351,7 @@ export function Timeline(props: TimelineProps) {
             {!props.session && <p id="empty-description">{t("signedOut")}</p>}
           </div>
         )}
-        {history?.loadingOlder && (
-          <div className="history-status" role="status">
-            {t("loadingOlder")}
-          </div>
-        )}
+        {history?.loadingOlder && <Loading label={t("loadingOlder")} />}
         {history?.atStart && shown.length > 0 && (
           <div className="history-status">{t("historyStart")}</div>
         )}
