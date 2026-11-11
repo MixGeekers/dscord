@@ -1,25 +1,25 @@
-# DSCord 0.4.0-alpha.2 安装与连接
+# DSCord 0.4.0-alpha.3 安装与连接
 
 > [!WARNING]
 > **实验性项目。** DSCord 目前是实验性质的项目，接口、数据格式和行为随时可能变化，不保证兼容旧版本。项目不考虑安全问题，因此将别人加入到你的服务器当中的时候，请确认你有线下找他喝茶的能力。
 
 DSCord 的 npm 包包含 Core、预构建网页/PWA、Matrix 适配器和 DSCord Bot 内核。完整服务器源码发行包另含 Compose 部署文件；同一部署的 Core、客户端和节点使用同一发行版本。
 
-本指南对应预发布版本 0.4.0-alpha.2，npm registry 和该版本的 GitHub Release 均提供安装包。Node 支持范围由 [package.json](../package.json) 声明为 `>=24.19.0 <25`。Bot 宿主固定使用 DSH `0.2.2-rc.1` 的 SDK 契约，见[内核说明](../dsh-connect/KERNEL.md)。Docker 服务器无需在宿主另装 Node。
+本指南对应预发布版本 0.4.0-alpha.3，npm registry 和该版本的 GitHub Release 均提供安装包。Node 支持范围由 [package.json](../package.json) 声明为 `>=24.19.0 <25`。Bot 宿主固定使用 DSH `0.2.2-rc.1` 的 SDK 契约，见[内核说明](../dsh-connect/KERNEL.md)。Docker 服务器无需在宿主另装 Node。
 
 ## 安装
 
-从发行页下载 `dscord-0.4.0-alpha.2.tgz` 后，可在 DSH 的 `Plugins → Add plugin` 中安装并启用 `dscord`，再登录服务器连接 Bot。发行页同时提供 `SHA256SUMS` 校验文件。[下载发行包](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.2)
+从发行页下载 `dscord-0.4.0-alpha.3.tgz` 后，可在 DSH 的 `Plugins → Add plugin` 中安装并启用 `dscord`，再登录服务器连接 Bot。发行页同时提供 `SHA256SUMS` 校验文件。[下载发行包](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.3)
 
 全局安装 CLI 用于服务器与独立节点管理。从 npm registry 安装当前版本，安装后核对 `dscord --version`。
 
 ```sh
-npm install --global dscord@0.4.0-alpha.2
+npm install --global dscord@0.4.0-alpha.3
 dscord --help
 dscord --version
 ```
 
-Core、CLI 和 DSH 插件使用同一发行版本。已有全局安装可用上述命令升级。当前预发布版本使用 `alpha` 标签，也可执行 `npm install --global dscord@alpha` 升级到最新 Alpha。[npm 包页面](https://www.npmjs.com/package/dscord/v/0.4.0-alpha.2)
+Core、CLI 和 DSH 插件使用同一发行版本。已有全局安装可用上述命令升级。当前预发布版本使用 `alpha` 标签，也可执行 `npm install --global dscord@alpha` 升级到最新 Alpha。[npm 包页面](https://www.npmjs.com/package/dscord/v/0.4.0-alpha.3)
 
 从源码构建 npm 包，在 `apps/ds-group/` 中执行：
 
@@ -28,7 +28,7 @@ npm ci --ignore-scripts
 npm run npm:pack
 ```
 
-该版本默认生成 `.local/npm-release/dscord-0.4.0-alpha.2.tgz`，仍应核对命令实际输出的版本、路径与校验值。构建需要开发依赖，运行已提供的预构建包不需要重新构建界面。
+该版本默认生成 `.local/npm-release/dscord-0.4.0-alpha.3.tgz`，仍应核对命令实际输出的版本、路径与校验值。构建需要开发依赖，运行已提供的预构建包不需要重新构建界面。
 
 ## 部署服务器
 
@@ -53,6 +53,12 @@ dscord --version
 地址、账号、模型和路径都来自部署者自己的配置。业务模型没有指定服务商；自然参与的单独判断服务是可选功能，见[模型与参与设置](../模型配置与迁移.md)。
 
 Core 提供的 Matrix 公开地址必须能从节点访问。一个连接页使用一个归属账号，可管理多个本机 Bot。连接数据默认位于实际 DSH home 的 `dscord/<profile>/`，Bot 数据保留在该 home 的 `bot/`。断开服务器、退出连接页或关闭网页不删除本机 Bot；DSH 停止后，Bot 也无法继续工作。
+
+决策服务在 DSH 的 DSCord 页面配置，提供 OpenAI Decisions、TypeSafe Jev、Cloudflare Clef / Clef Flash 预设。不同服务分别保存凭据；Cloudflare 默认地址还需要 Account ID。保存时使用合成输入检查参与判断和接话协议，连接检查不代表真实聊天判断质量。[决策服务配置](../模型配置与迁移.md#决策模型)
+
+## 自定义头像
+
+在个人设置中更换自己的头像，或在所属 Bot 的设置中更换 Bot 头像；支持裁剪、预览和恢复默认，Bot 离线时也可修改。头像保存在中央数据目录的 `avatars/` 中，Core 自动同步到各聊天服务器。备份中央时同时保留数据库、签名密钥和头像目录。[头像配置与备份](../central/avatars.md)
 
 ## 升级和已有 Bot
 
