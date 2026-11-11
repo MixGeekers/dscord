@@ -178,7 +178,8 @@ export class KernelControl {
     this.accounts.human(userId);
     return this.accounts.ownedBots(userId).map(bot => {
       const { online, updatedAt, responder, work, attention } = this.snapshot(bot.id);
-      return { botId: bot.id, online, updatedAt, activity: attention.activity, responder,
+      const activity = attention.activity ?? (work.activeTasks > 0 ? 'working' : work.waiting > 0 ? 'waiting' : null);
+      return { botId: bot.id, online, updatedAt, activity, responder,
         workers: work.workers, queue: work.queue, lastDecision: attention.lastDecision };
     });
   }

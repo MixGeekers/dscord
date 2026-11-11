@@ -8,10 +8,11 @@ import { useTranslation } from "../locale";
 import { kernelMessages } from "../locales/kernel";
 import { botHomeMessages } from "../locales/bot-home";
 import { sessionIdentity } from "../session";
-import { connectionLabel, kernelActivity } from "../bot-kernel";
+import { connectionLabel } from "../bot-kernel";
 import type {
   AttentionReceipt,
   BotKernelView,
+  BotStatus,
   ContactsPage,
   MemoryChangesPage,
   ParticipationMode,
@@ -51,6 +52,8 @@ export function BotHome({
   session,
   api,
   status,
+  live,
+  onRefreshLive,
   rooms,
   participants,
   opening,
@@ -62,6 +65,9 @@ export function BotHome({
   session: Session | null;
   api: Api;
   status: ServerStatus | null;
+  /** What the Bot is doing now: the same poll the Bot list shows, so both always agree. */
+  live: BotStatus | undefined;
+  onRefreshLive(): void;
   rooms: Room[];
   participants: Participant[];
   opening: boolean;
@@ -79,7 +85,6 @@ export function BotHome({
     key: "unsupported" | "failed";
     message: string;
   } | null>(null);
-  const [updatedAt, setUpdatedAt] = useState<number | null>(null);
   const [revision, setRevision] = useState(0);
   const context = `${sessionIdentity(session)}/${bot.id}`;
   const current = useRef(context);
@@ -102,7 +107,6 @@ export function BotHome({
         if (!result || typeof result !== "object" || !("runtime" in result))
           throw new Error("Invalid Bot kernel receipt");
         setView(result);
-        setUpdatedAt(Date.now());
       })
       .catch((cause) => {
         if (abort.signal.aborted || current.current !== context) return;
@@ -142,9 +146,9 @@ export function BotHome({
   if (!owned) return <p>{k("denied")}</p>;
   const node = status?.nodes.find((value) => value.botId === bot.id);
   const connection =
-    view?.online === true
+    live?.online === true
       ? "online"
-      : view?.online === false
+      : live?.online === false
         ? "offline"
         : connectionLabel(node?.status);
   return (
@@ -164,7 +168,10 @@ export function BotHome({
             size="sm"
             type="button"
             disabled={loading}
-            onClick={() => setRevision((value) => value + 1)}
+            onClick={() => {
+              setRevision((value) => value + 1);
+              onRefreshLive();
+            }}
           >
             <Icon name="refresh" />
             {k("refresh")}
@@ -214,8 +221,8 @@ export function BotHome({
           <NowPanel
             bot={bot}
             view={view}
+            live={live}
             loading={loading}
-            updatedAt={updatedAt}
             names={names}
             participants={participants}
           />
@@ -295,25 +302,25 @@ function responderLine(
 function NowPanel({
   bot,
   view,
+  live,
   loading,
-  updatedAt,
   names,
   participants,
 }: {
   bot: Participant;
   view: BotKernelView | null;
+  live: BotStatus | undefined;
   loading: boolean;
-  updatedAt: number | null;
   names: Names;
   participants: Participant[];
 }) {
   const t = useTranslation(botHomeMessages);
   const k = useTranslation(kernelMessages);
-  const activity = kernelActivity(view);
+  const activity = live?.activity ?? "unknown";
   const owner = participants.find((person) => person.id === bot.ownerId);
   const responder =
-    view?.online === false ? { state: "offline" } : view?.responder;
-  const decision = view?.attention?.lastDecision;
+    live?.online === false ? { state: "offline" } : live?.responder;
+  const decision = live?.lastDecision;
   return (
     <div data-bot-panel="now">
       {loading && !view && <p role="status">{k("loading")}</p>}
@@ -354,20 +361,20 @@ function NowPanel({
       </section>
       <section className="bot-home-section">
         <h3>{t("workers")}</h3>
-        {view?.work?.workers?.length ? (
+        {live?.workers.length ? (
           <ul className="bot-work-list">
-            {view.work.workers.map((task) => (
+            {live.workers.map((task) => (
               <WorkerRow key={task.taskId} task={task} names={names} />
             ))}
           </ul>
         ) : (
           <p className="muted">{t("noWorkers")}</p>
         )}
-        {!!view?.work?.queue?.length && (
+        {!!live?.queue.length && (
           <>
             <h4>{t("queued")}</h4>
             <ul className="bot-work-list">
-              {view.work.queue.map((task) => (
+              {live.queue.map((task) => (
                 <WorkerRow key={task.taskId} task={task} names={names} />
               ))}
             </ul>
@@ -413,9 +420,9 @@ function NowPanel({
           </small>
         </details>
       )}
-      {updatedAt && (
+      {live?.updatedAt && (
         <p className="muted small">
-          {k("updated", { time: formatDateTime(updatedAt) })}
+          {k("updated", { time: formatDateTime(live.updatedAt) })}
         </p>
       )}
     </div>
