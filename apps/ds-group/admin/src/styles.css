@@ -899,3 +899,12 @@ dl {
     gap: var(--space-4);
   }
 }
+/* Updates use the existing panel, field and token system. */
+.admin-update-panels { display: grid; gap: var(--space-4, 1rem); min-width: 0; }
+.admin-update-panels .admin-panel { min-width: 0; overflow-wrap: anywhere; padding: 20px; }
+.admin-update-panels form { display: grid; gap: 1rem; }
+.admin-update-panels .admin-settings-grid { gap: 1rem; }
+.admin-update-panels form > button { justify-self: start; }
+.admin-update-release, .admin-update-progress { margin-block: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 12px; }
+.admin-update-progress { display: grid; gap: .5rem; }
+.admin-update-history { display: grid; gap: 1rem; padding-inline-start: 1.5rem; }

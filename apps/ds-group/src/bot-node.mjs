@@ -338,6 +338,7 @@ export class BotNode {
   }
 
   async processAttentionOnce() {
+    if (this.maintenance) return false;
     if (this.decidingAttention) return false;
     this.decidingAttention = true;
     try {
@@ -1102,6 +1103,13 @@ export class BotNode {
   }
 
   async processOne() {
+    if (this.maintenance) return false;
+    this.processingTurn = true;
+    try { return await this.processOneUnpaused(); }
+    finally { this.processingTurn = false; }
+  }
+
+  async processOneUnpaused() {
     let delivery = this.store.pendingDelivery();
     if (delivery) {
       const source = this.store.item(delivery.source_event_id);
@@ -1353,13 +1361,17 @@ export class BotNode {
       ? await this.bridge.kernelState({ botId: this.participant.id }, {
         signal: AbortSignal.any([this.controller.signal, AbortSignal.timeout(2000)]),
       }).catch(() => null) : null;
-    await this.sendHeartbeat({ id: this.participant.localpart, botId: this.participant.id, name: this.participant.name,
+    const answer = await this.sendHeartbeat({ id: this.participant.localpart, botId: this.participant.id, name: this.participant.name,
+      maintenanceId: this.maintenance?.id || null,
+      maintenanceBusy: this.state === 'thinking' || Boolean(this.processingTurn || this.decidingAttention || this.sendingAttention || this.observing),
+      pendingUpdates: this.store.pendingTaskUpdates().length,
       runtimeId: this.runtimeId, status: this.lastError && this.state === 'idle' ? 'error' : this.state,
       processed: snapshot.processed, pending: snapshot.pending, sessionId: snapshot.sessionId,
       lastError: this.lastError || snapshot.lastError, model: this.model,
       engine: this.engine || ((this.bridgeMode || this.executionMode) === 'native' ? 'Native Bot runtime' : 'Bot bridge (legacy)'),
       ...(this.executionMode ? { executionMode: this.executionMode } : {}),
       attention, kernel: { ...(kernel || {}), attention, responder: this.responderStatus() }, kernelControl: { version: 1 } });
+    this.maintenance = answer?.maintenance || null;
   }
 
   async heartbeatLoop() {
@@ -1511,6 +1523,7 @@ export async function runNode(argv = process.argv.slice(2)) {
         body: JSON.stringify({ ...body, protocol: session.protocol, kernelVersion: KERNEL_VERSION,
           ...(session.capabilities.includes('kernel-control') ? {} : { kernelControl: undefined }) }), signal: AbortSignal.timeout(10000) });
       if (!response.ok) throw new Error(`Core heartbeat HTTP ${response.status}`);
+      return response.json();
     },
   });
   const { KernelNodeClient } = await import('./kernel-node-client.mjs');

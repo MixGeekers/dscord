@@ -9,6 +9,8 @@ import { localPath, packageRoot } from "./paths.mjs";
 import { readJsonBody } from "./http-json.mjs";
 import { listInCentral } from "./admin-directory.mjs";
 import { InviteStore } from "./invites.mjs";
+import { updaterRequest, maintenance, updateControlRoot } from "./server-update-control.mjs";
+import { KERNEL_VERSION } from "./node-protocol.mjs";
 
 const headers = {
   "Content-Type": "application/json; charset=utf-8",
@@ -46,6 +48,8 @@ export async function createAdmin({
   controlFactory,
   governanceRoot,
   fetch = globalThis.fetch,
+  updateControlDir = updateControlRoot(),
+  updater = (route, body) => updaterRequest(route, body, updateControlDir),
 } = {}) {
   setup ||= await optional(path.join(dataRoot, "matrix-setup.json"));
   if (!setup?.serverName)
@@ -72,7 +76,7 @@ export async function createAdmin({
     (async () => {
       const url = new URL(request.url, "http://localhost");
       if (url.pathname === "/healthz")
-        return send(200, { status: "ok", service: "dscord-administration" });
+        return send(200, { status: "ok", service: "dscord-administration", version: KERNEL_VERSION });
       if (url.pathname.startsWith("/admin-api/")) {
         // No cookies, no wildcard CORS, no cross-origin password or session use.
         if (request.headers.origin) {
@@ -96,6 +100,21 @@ export async function createAdmin({
         }
         const actor = auth.authorize(request);
         const write = () => auth.authorize(request, ["owner", "operator"]);
+        if (request.method === "GET" && url.pathname === "/admin-api/server-update")
+          return send(200, await updater("/status"));
+        const updating = /^\/admin-api\/server-update\/(check|apply|settings|recover)$/.exec(url.pathname);
+        if (request.method === "POST" && updating) {
+          auth.authorize(request, ["owner"]);
+          const input = await readJsonBody(request);
+          const result = await updater(`/${updating[1]}`, input);
+          auth.audit(actor.username, `server-update.${updating[1]}`, {
+            version: result.job?.version || result.available?.version || null,
+            jobId: result.job?.id || null,
+          });
+          return send(updating[1] === "apply" || updating[1] === "recover" ? 202 : 200, result);
+        }
+        if (!["GET", "HEAD", "OPTIONS"].includes(request.method) && url.pathname !== "/admin-api/logout" && await maintenance(updateControlDir))
+          return send(503, { error: "Server update in progress" });
         if (request.method === "GET" && url.pathname === "/admin-api/me")
           return send(200, {
             username: actor.username,

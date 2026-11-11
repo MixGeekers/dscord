@@ -32,6 +32,8 @@ import { roomRoutes } from './core/room-routes.mjs';
 import { nodeRoutes, pushRoutes, NODE_OFFLINE_MS } from './core/node-routes.mjs';
 import { serverPage } from './core/server-page.mjs';
 import { InviteStore } from './invites.mjs';
+import { maintenance, authorizeUpdater, updateControlRoot } from './server-update-control.mjs';
+import { KERNEL_VERSION, NODE_PROTOCOL } from './node-protocol.mjs';
 export { readJsonBody } from './http-json.mjs';
 
 const jsonHeaders = { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' };
@@ -49,7 +51,7 @@ async function loadCoreConfig(dataRoot, filename = process.env.DS_GROUP_CORE_CON
   }
 }
 
-export async function createCore({ setup, config, dataRoot = localPath(), webRoot = process.env.DS_GROUP_WEB_DIR || path.join(packageRoot, 'dist', 'web'), enablePush = true } = {}) {
+export async function createCore({ setup, config, dataRoot = localPath(), webRoot = process.env.DS_GROUP_WEB_DIR || path.join(packageRoot, 'dist', 'web'), enablePush = true, updateControlDir = updateControlRoot() } = {}) {
   setup ||= JSON.parse(await readFile(process.env.DS_GROUP_MATRIX_SETUP_PATH || path.join(dataRoot, 'matrix-setup.json'), 'utf8'));
   setup = { ...setup, homeserverUrl: process.env.DS_GROUP_MATRIX_URL || setup.homeserverUrl };
   config ||= await loadCoreConfig(dataRoot);
@@ -113,6 +115,7 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
     nativeBot: id => nativeBots.isNative(id), maxBytes: () => media.maxBytes });
   const app = { setup, config, accounts, nativeBots, identity, discovery, invites, governance, nodeCredentials, budget, media, attachmentAccess, chat, chatFeatures, tasks,
     push, nodes, kernelControl, trustProxy, webMode, startedAt, publicParticipants,
+    updateMaintenance: () => maintenance(updateControlDir),
     nodeSnapshot: () => accounts.publicParticipants().filter(p => p.kind === 'bot').map(participant => {
       const active = nodes.get(participant.id);
       if (!active) return { id: participant.localpart, botId: participant.id, name: participant.name, status: 'offline', engine: 'DSCord node' };
@@ -125,11 +128,28 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
   // Feature services that route their own paths.
   const delegates = [collaboration, kernelControl, botWork, tasks, chatFeatures];
   const unauthenticated = new Set(['/api/session', '/api/logout', '/api/bootstrap', '/api/status', '/api/push/config']);
+  const activeWrites = new Set();
 
   async function dispatch(request, response) {
     const url = new URL(request.url, 'http://localhost');
     const { pathname } = url;
     const send = (status, value) => { response.writeHead(status, jsonHeaders); response.end(JSON.stringify(value)); };
+    const gate = await maintenance(updateControlDir);
+    if (pathname === '/internal/server-update/status' && request.method === 'GET') {
+      if (!await authorizeUpdater(request, updateControlDir)) return send(403, { error: 'Updater authorization required' });
+      const live = [...nodes.values()].filter(node => node.status !== 'offline' && Date.now() - node.heartbeatAt < NODE_OFFLINE_MS);
+      const activeTasks = tasks.db.prepare("SELECT COUNT(*) AS count FROM file_tasks WHERE status IN ('running','unknown')").get().count;
+      const blocked = live.filter(node => node.maintenanceId !== gate?.id || node.status !== 'idle'
+        || node.pendingUpdates || (node.kernel?.work?.activeTasks ?? 0) > 0 || node.maintenanceBusy);
+      return send(200, { version: KERNEL_VERSION, protocol: NODE_PROTOCOL, maintenanceId: gate?.id || null,
+        drained: Boolean(gate) && !activeWrites.size && !activeTasks && !blocked.length,
+        activeTasks, activeRequests: activeWrites.size, blockedNodes: blocked.map(node => node.botId) });
+    }
+    if (gate && ((pathname.startsWith('/api/') && (gate.phase === 'verifying' || !['GET', 'HEAD', 'OPTIONS'].includes(request.method)))
+      || (gate.phase === 'verifying' && pathname.startsWith('/internal/') && !['/internal/nodes/heartbeat', '/internal/node/hello'].includes(pathname)))) {
+      response.setHeader('Retry-After', '10');
+      return send(503, { error: 'Server update in progress', code: 'SERVER_MAINTENANCE' });
+    }
     identity.cors(request, response, pathname);
     const isApi = pathname.startsWith('/api/');
     const isInternal = pathname.startsWith('/internal/');
@@ -193,6 +213,10 @@ export async function createCore({ setup, config, dataRoot = localPath(), webRoo
     send(404, { error: 'Not found' });
   }
   const server = http.createServer((request, response) => {
+    if (request.url.startsWith('/api/') && !['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
+      activeWrites.add(request);
+      response.once('close', () => activeWrites.delete(request));
+    }
     dispatch(request, response).catch(error => {
       if (response.headersSent || response.destroyed) { response.destroy(); return; }
       const retryAfterMs = Number.isSafeInteger(error.retryAfterMs) && error.retryAfterMs >= 0 ? error.retryAfterMs : undefined;

@@ -165,6 +165,12 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24.19.0'
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: image-digest-*
@@ -194,8 +200,13 @@ jobs:
           test "${#references[@]}" -eq 2
           docker buildx imagetools create --tag "$IMAGE:$VERSION" "${references[@]}"
           docker buildx imagetools inspect "$IMAGE:$VERSION" --raw > release/image-index.json
+          digest=$(docker buildx imagetools inspect "$IMAGE:$VERSION" --format '{{.Manifest.Digest}}')
+          DS_GROUP_RELEASE_IMAGE_REF="$IMAGE@$digest" node apps/ds-group/scripts/server-update-manifest.mjs release/server-update.json
           node -e 'const fs = require("fs"); const index = JSON.parse(fs.readFileSync("release/image-index.json")); for (const arch of ["amd64", "arm64"]) if (!index.manifests.some(m => m.platform?.os === "linux" && m.platform?.architecture === arch)) throw Error("Missing " + arch);'
           (cd release && sha256sum image-index.json >> SHA256SUMS)
+          if [ -f release/server-update.json ]; then
+            (cd release && sha256sum server-update.json >> SHA256SUMS)
+          fi
           (cd release && cat NPM-SHA256SUMS >> SHA256SUMS && sha256sum --check SHA256SUMS)
       - name: Publish source, npm tarball, checksums and image index
         shell: bash
