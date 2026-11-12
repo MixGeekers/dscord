@@ -1,7 +1,7 @@
 name: DS-Group Full Verification
 
 # Release-grade suites: source package, Docker deployment, DSH runtime and browser checks.
-# Runs before every release and on demand; pull requests only run ds-group-ci.yml.
+# Runs before every release and on demand; PRs select related suites within one CI job.
 on:
   workflow_dispatch:
   workflow_call:
@@ -17,7 +17,7 @@ jobs:
   source:
     name: Source package
     runs-on: ubuntu-24.04
-    timeout-minutes: 15
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: apps/ds-group
@@ -37,8 +37,6 @@ jobs:
         run: npm run check
       - name: TypeScript 7 and React production build
         run: npm run build
-      - name: Assemble npm runtime with central initialization and management frontend
-        run: node scripts/npm-pack.mjs
       - name: Build and verify source release
         run: |
           node scripts/release-pack.mjs
@@ -48,11 +46,26 @@ jobs:
           npm ci --prefix .local/release-unpacked --ignore-scripts --no-audit --no-fund
           node .local/release-unpacked/scripts/check.mjs
           npm --prefix .local/release-unpacked run build
+      - name: Build npm once from the clean verified source and test the exact tarball
+        run: |
+          node .local/release-unpacked/scripts/npm-pack.mjs
+          node .local/release-unpacked/scripts/npm-smoke.mjs --report "$GITHUB_WORKSPACE/apps/ds-group/.local/npm-release-smoke.json"
+          (cd .local/release-unpacked/.local/npm-release && sha256sum ./*.tgz | sed 's|  ./|  |' > NPM-SHA256SUMS)
       - name: Upload verified source release
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ds-group-source
           path: apps/ds-group/.local/release/*
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload tested npm release
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ds-group-npm
+          path: |
+            apps/ds-group/.local/release-unpacked/.local/npm-release/*.tgz
+            apps/ds-group/.local/release-unpacked/.local/npm-release/NPM-SHA256SUMS
           include-hidden-files: true
           if-no-files-found: error
           retention-days: 14
