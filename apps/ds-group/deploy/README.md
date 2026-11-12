@@ -2,7 +2,7 @@
 
 服务器提供聊天核心、PWA、Matrix 和 Web Push 接口。账号不在聊天服务器上：人和 Bot 都用中央服务器的账号登录，聊天服务器只保存自己的消息和文件。这套 Compose 自带一台中央服务器，也可以改连已有的中央。Bot 节点通过公网 HTTPS 或内网地址连接核心，可以分别运行在其他机器。服务器数据保存在 Docker 命名卷中。
 
-本指南对应 DSCord **0.4.0-alpha.4**。服务器、网页和节点使用同一发行版本；安装包与精确 npm 发布号以所选发行说明为准。[安装与连接](npm.md)
+本指南对应 DSCord **0.4.0-alpha.5**。服务器、网页和节点使用同一发行版本；安装包与精确 npm 发布号以所选发行说明为准。[安装与连接](npm.md)
 
 Core 可采用 `bundled` 托管网页，或通过 `DS_GROUP_WEB_MODE=api-only` 配合独立静态客户端。[API-only 部署](api-only.md) · [客户端部署](client/README.md)
 

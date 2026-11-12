@@ -1,6 +1,8 @@
 {
   "enabled": true,
   "deploymentContract": 1,
-  "fromVersions": ["0.4.0-alpha.3"],
+  "fromVersions": [
+    "0.4.0-alpha.4"
+  ],
   "rollbackCompatible": true
 }
