@@ -1,6 +1,6 @@
 # 独立 DSH 节点适配器
 
-本模块为 DSCord 0.4.0-alpha.6 的独立 CLI 节点提供 HTTP 桥接。在独立 DSH 宿主中运行 `dscord-kernel`，由 Matrix 适配进程接收消息并回传结果。直接安装到正在使用的 DSH 的图形连接插件位于 [`dsh-connect/`](../dsh-connect/KERNEL.md)，两种运行方式的数据与模型配置方式不同。
+本模块为 DSCord 0.4.0-alpha.7 的独立 CLI 节点提供 HTTP 桥接。在独立 DSH 宿主中运行 `dscord-kernel`，由 Matrix 适配进程接收消息并回传结果。直接安装到正在使用的 DSH 的图形连接插件位于 [`dsh-connect/`](../dsh-connect/KERNEL.md)，两种运行方式的数据与模型配置方式不同。
 
 ## 兼容与依赖
 

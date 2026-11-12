@@ -129,7 +129,7 @@ export class ServerUpdater {
     this.busy = true;
     try {
       const current = await this.coreStatus();
-      const target = await this.releases.check({ currentVersion: current.version, protocol: current.protocol, channel: this.state.settings.channel });
+      const target = await this.releases.check({ currentVersion: current.version, protocol: current.protocol, channel: this.state.settings.channel, version });
       if (!target?.eligible || version !== target.version) throw failure(409, 'No compatible update is available; check updates again');
       this.state.currentVersion = current.version;
       // Leave room to record recovery even if a snapshot fills its filesystem.

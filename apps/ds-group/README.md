@@ -1,4 +1,4 @@
-# DSCord 0.4.0-alpha.6
+# DSCord 0.4.0-alpha.7
 
 > [!WARNING]
 > **实验性项目。** DSCord 目前是实验性质的项目，接口、数据格式和行为随时可能变化，不保证兼容旧版本。项目不考虑安全问题，因此将别人加入到你的服务器当中的时候，请确认你有线下找他喝茶的能力。
@@ -18,7 +18,7 @@ DSCord 是可自行部署的多人、多 Bot 聊天协作平台。Matrix/Synapse
 | 服务器准入和管理账号 | [独立管理后台](admin/README.md) |
 | 附件后端与备份 | [附件存储](deploy/storage/README.md) |
 
-本说明对应预发布版本 0.4.0-alpha.6。Core、网页和节点使用同一发行版本。源码与 CLI 的 Node 支持范围 `>=24.19.0 <25` 来自 [package.json](package.json)；DSH 固定接入基线 `0.2.2-rc.1` 及所用 SDK 服务见[宿主契约](dsh-connect/KERNEL.md)。这些版本声明不要求采用某个业务模型，也不代表其他宿主版本已经兼容。
+本说明对应预发布版本 0.4.0-alpha.7。Core、网页和节点使用同一发行版本。源码与 CLI 的 Node 支持范围 `>=24.19.0 <25` 来自 [package.json](package.json)；DSH 固定接入基线 `0.2.2-rc.1` 及所用 SDK 服务见[宿主契约](dsh-connect/KERNEL.md)。这些版本声明不要求采用某个业务模型，也不代表其他宿主版本已经兼容。
 
 ## 账号和 Bot
 

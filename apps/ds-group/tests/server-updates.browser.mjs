@@ -15,7 +15,9 @@ const operations = [], errors = [], checks = [];
 const admin = await createAdmin({ dataRoot: root, setup: { serverName: 'updates.test', homeserverUrl: 'http://127.0.0.1:1', participants: [] },
   updater: async (route, input) => {
     operations.push(route);
-    if (route === '/check') state.available = { version: '0.4.0-alpha.4', eligible: true, url: 'https://github.com/MixGeekers/dscord/releases' };
+    if (route === '/check') state.available = { version: '0.4.0-alpha.4', eligible: true, url: 'https://github.com/MixGeekers/dscord/releases',
+      latestVersion: '0.4.0-alpha.6', path: ['0.4.0-alpha.4', '0.4.0-alpha.6'],
+      options: ['0.4.0-alpha.5', '0.4.0-alpha.4'].map(version => ({ version, eligible: true, url: 'https://github.com/MixGeekers/dscord/releases' })) };
     if (route === '/settings') state.settings = input;
     if (route === '/apply') state.job = { id: 'synthetic-job', version: input.version, previousVersion: state.currentVersion,
       phase: 'draining', startedAt: Date.now(), backup: 'pending', error: null };
@@ -36,20 +38,26 @@ try {
   await page.getByRole('button', { name: 'Server updates', exact: true }).click();
   await page.getByRole('button', { name: 'Check for updates', exact: true }).click();
   await page.getByText('Available version: 0.4.0-alpha.4', { exact: true }).waitFor();
-  checks.push('Owner checks a release through the real administration API and sees its version');
+  await page.getByText('Latest release: 0.4.0-alpha.6', { exact: true }).waitFor();
+  await page.getByText('Recommended upgrade path: 0.4.0-alpha.3 → 0.4.0-alpha.4 → 0.4.0-alpha.6', { exact: true }).waitFor();
+  await chooseOption(page.getByLabel('Version to install', { exact: true }), '0.4.0-alpha.5');
+  checks.push('Owner sees the next compatible step, complete route and directly installable alternatives');
   await chooseOption(page.getByLabel('Update policy', { exact: true }), 'auto');
   await page.getByLabel('Time zone', { exact: true }).fill('America/Caracas');
   await page.getByRole('button', { name: 'Save update settings', exact: true }).click();
   await page.getByText('Settings saved', { exact: true }).waitFor();
   assert.equal(state.settings.timeZone, 'America/Caracas');
+  await page.waitForTimeout(3200);
+  assert.ok((await page.getByLabel('Version to install', { exact: true }).textContent()).includes('0.4.0-alpha.5'));
   await page.getByRole('button', { name: 'Install and restart', exact: true }).click();
   await page.getByText('Waiting for tasks and Bot nodes', { exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Install and restart', exact: true }).isDisabled(), true);
   assert.equal(operations.filter(operation => operation === '/apply').length, 1);
+  assert.equal(state.job.version, '0.4.0-alpha.5');
   checks.push('Maintenance settings save, and an active update prevents a second installation');
-  state.currentVersion = '0.4.0-alpha.4'; state.available = null;
+  state.currentVersion = '0.4.0-alpha.5'; state.available = null;
   state.job = { ...state.job, phase: 'succeeded', backup: 'complete' }; state.history = [state.job];
-  await page.getByText('Installed version: 0.4.0-alpha.4', { exact: true }).waitFor();
+  await page.getByText('Installed version: 0.4.0-alpha.5', { exact: true }).waitFor();
   await page.screenshot({ path: path.join(output, 'desktop.png'), fullPage: true });
   await chooseOption(page.getByLabel('Language', { exact: true }), 'zh-CN');
   await page.getByRole('heading', { name: '服务器更新', exact: true }).waitFor();
@@ -59,6 +67,8 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth + 1), false);
   await page.screenshot({ path: path.join(output, 'mobile.png'), fullPage: true });
   checks.push('Completion and backup status persist through polling, language changes and mobile layout');
+  await chooseOption(page.getByLabel('语言', { exact: true }), 'en');
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await admin.auth.change('owner', { username: 'reader', password: 'synthetic-browser-password', role: 'auditor', enabled: true });
   const reader = await admin.auth.login({ username: 'reader', password: 'synthetic-browser-password' }, 'test');
   await page.evaluate(session => sessionStorage.setItem(`dscord.management.${location.origin}`, JSON.stringify(session)), reader);

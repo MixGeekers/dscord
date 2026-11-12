@@ -10,6 +10,9 @@ const messages = {
   en: {
     current: "Installed version",
     available: "Available version",
+    select: "Version to install",
+    latest: "Latest release",
+    path: "Recommended upgrade path",
     check: "Check for updates",
     install: "Install and restart",
     unavailable:
@@ -55,6 +58,9 @@ const messages = {
   "zh-CN": {
     current: "当前版本",
     available: "可用版本",
+    select: "选择安装版本",
+    latest: "最新发行",
+    path: "建议升级路径",
     check: "检查更新",
     install: "安装并重启",
     unavailable: "服务器更新器尚未连接，请参照服务器更新部署说明配置。",
@@ -124,13 +130,24 @@ interface Settings {
   windowEnd: number;
   timeZone: string;
 }
+interface Release {
+  version: string;
+  eligible: boolean;
+  url: string;
+}
 interface Status {
   enabled: boolean;
   currentVersion: string | null;
   checkedAt: number | null;
   checkError: string | null;
   settings: Settings;
-  available: { version: string; eligible: boolean; url: string } | null;
+  available:
+    | (Release & {
+        latestVersion?: string;
+        path?: string[];
+        options?: Release[];
+      })
+    | null;
   job: Job | null;
   history: Job[];
 }
@@ -149,6 +166,14 @@ export default function UpdatesPanel({ admin }: { admin: AdminState }) {
   const [error, setError] = useState("");
   const [offline, setOffline] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [selection, setSelection] = useState("");
+  const available = status?.available;
+  const options =
+    available?.options ?? (available?.eligible ? [available] : []);
+  const selected =
+    options.find((option) => option.version === selection) ??
+    options.find((option) => option.version === available?.version) ??
+    options[0];
   const owner = session?.administrator.role === "owner";
   const load = useCallback(async () => {
     try {
@@ -219,10 +244,38 @@ export default function UpdatesPanel({ admin }: { admin: AdminState }) {
             <strong>
               {t("available")}: {status.available.version}
             </strong>{" "}
-            <a href={status.available.url} target="_blank" rel="noreferrer">
+            <a
+              href={selected?.url ?? status.available.url}
+              target="_blank"
+              rel="noreferrer"
+            >
               {t("release")}
             </a>
             {!status.available.eligible && <p>{t("incompatible")}</p>}
+            {available?.latestVersion && (
+              <p>
+                {t("latest")}: {available.latestVersion}
+              </p>
+            )}
+            {!!available?.path?.length && (
+              <p>
+                {t("path")}:{" "}
+                {[status.currentVersion, ...available.path].join(" → ")}
+              </p>
+            )}
+            {!!options.length && (
+              <Field label={t("select")}>
+                <Select
+                  disabled={!owner || busy || running || offline}
+                  value={selected?.version ?? ""}
+                  onValueChange={setSelection}
+                  options={options.map((option) => ({
+                    value: option.version,
+                    label: option.version,
+                  }))}
+                />
+              </Field>
+            )}
           </div>
         )}
         {status?.job && (
@@ -254,11 +307,11 @@ export default function UpdatesPanel({ admin }: { admin: AdminState }) {
                 busy ||
                 running ||
                 offline ||
-                !status?.available?.eligible ||
-                status.job?.phase === "needs-attention"
+                !selected?.eligible ||
+                status?.job?.phase === "needs-attention"
               }
               onClick={() =>
-                void perform("apply", { version: status?.available?.version })
+                void perform("apply", { version: selected?.version })
               }
             >
               <Download size={16} />

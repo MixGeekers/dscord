@@ -14,8 +14,8 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.6"><img src="https://img.shields.io/badge/release-0.4.0--alpha.6-344BFF?style=flat-square" alt="Versión DSCord 0.4.0-alpha.6"></a>
-  <a href="https://www.npmjs.com/package/dscord/v/0.4.0-alpha.6"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="Instalar DSCord con npm"></a>
+  <a href="https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.7"><img src="https://img.shields.io/badge/release-0.4.0--alpha.7-344BFF?style=flat-square" alt="Versión DSCord 0.4.0-alpha.7"></a>
+  <a href="https://www.npmjs.com/package/dscord/v/0.4.0-alpha.7"><img src="https://img.shields.io/badge/npm-install-CB3837?style=flat-square&amp;logo=npm" alt="Instalar DSCord con npm"></a>
   <a href="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml"><img src="https://github.com/MixGeekers/dscord/actions/workflows/ds-group-ci.yml/badge.svg?branch=main" alt="Estado de CI en main"></a>
   <a href="apps/ds-group/deploy/README.md"><img src="https://img.shields.io/badge/Linux-amd64%20%7C%20arm64-0B1B52?style=flat-square" alt="Despliegue de servidores Linux amd64 y arm64"></a>
 </p>
@@ -78,7 +78,7 @@ Selecciona tu Bot en un grupo, adjunta un archivo y empieza con una petición co
 
 ## Primeros pasos
 
-Esta guía corresponde a **DSCord 0.4.0-alpha.6**. Usa la misma versión para Core, el cliente web y los nodos Bot. El archivo fuente, el paquete npm y las sumas de verificación están disponibles en la página de esta versión. [Descargas](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.6) · [Instalación y actualización](apps/ds-group/deploy/npm.md)
+Esta guía corresponde a **DSCord 0.4.0-alpha.7**. Usa la misma versión para Core, el cliente web y los nodos Bot. El archivo fuente, el paquete npm y las sumas de verificación están disponibles en la página de esta versión. [Descargas](https://github.com/MixGeekers/dscord/releases/tag/ds-group-v0.4.0-alpha.7) · [Instalación y actualización](apps/ds-group/deploy/npm.md)
 
 Si ya tienes un servidor, pasa a [Conectar tu Bot](#connect-bot). Las direcciones, puertos y rutas siguientes son ejemplos sustituibles. `localhost` siempre se refiere al equipo que realiza la petición.
 
@@ -87,7 +87,7 @@ Si ya tienes un servidor, pasa a [Conectar tu Bot](#connect-bot). Las direccione
 Con Node `>=24.19.0 <25`, instala `dscord` desde el registro npm. La CLI permite gestionar servidores y nodos independientes. Comprueba la versión después de instalarla.
 
 ```sh
-npm install --global dscord@0.4.0-alpha.6
+npm install --global dscord@0.4.0-alpha.7
 dscord --version
 ```
 
@@ -118,7 +118,7 @@ Abre [localhost:18100](http://localhost:18100) en el servidor o tu dirección p�
 ### Conectar tu Bot
 
 1. Prepara un DSH compatible. La base SDK fijada es `@deepseek-ai/dsh@0.2.2-rc.1`; el código y la CLI declaran Node `>=24.19.0 <25`. Son las versiones admitidas por [package.json](apps/ds-group/package.json) y el [contrato del host](apps/ds-group/dsh-connect/KERNEL.md), no una garantía para otros hosts.
-2. Obtén o compila el `.tgz` correspondiente a 0.4.0-alpha.6 según la [guía de instalación](apps/ds-group/deploy/npm.md#安装). Instala y activa `dscord` desde `Plugins → Add plugin` en DSH. Configura tu propio modelo de trabajo y sus credenciales.
+2. Obtén o compila el `.tgz` correspondiente a 0.4.0-alpha.7 según la [guía de instalación](apps/ds-group/deploy/npm.md#安装). Instala y activa `dscord` desde `Plugins → Add plugin` en DSH. Configura tu propio modelo de trabajo y sus credenciales.
 3. En la web pulsa “Add a Bot”, ponle un nombre (la función y el modelo son opcionales) y pulsa “Create Bot”. Si todavía no hay ningún DSH conectado, el diálogo ofrece a continuación una clave de conexión: pulsa “Copy connection key”, abre **DSCord** en DSH y pégala. DSH se conecta en cuanto la pegas y el Bot se pone en línea.
 4. Para añadir más Bots no hace falta volver a DSH. El nombre, la función, el modelo, el dispositivo y los servidores de cada Bot se configuran en “My Bots” en la web, y DSH los aplica en unos segundos. Desde ahí también puedes escribirle, abrir su página de estado o invitarlo a un grupo.
 
