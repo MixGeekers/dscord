@@ -4,7 +4,7 @@
 
 ## 版本与许可证
 
-`package.json` 与 `package-lock.json` 使用同一版本；源码包、容器标签和 npm tarball 直接使用这个版本，打包脚本不会追加 `-alpha.1`。当前阶段为 `0.4.0-alpha.6`：GitHub Release 标记预发布，npm 使用 `alpha` 标签。通用稳定版本使用 `latest`，其他预发布使用其 `alpha` / `beta` / `rc` 渠道或 `next`。发布版本必须是规范 SemVer；统一容器标签不支持 `+build` 后缀。[npm 版本及标签说明](https://docs.npmjs.com/adding-dist-tags-to-packages/)
+`package.json` 与 `package-lock.json` 使用同一版本；源码包、容器标签和 npm tarball 直接使用这个版本，打包脚本不会追加 `-alpha.1`。当前阶段为 `0.4.0-alpha.7`：GitHub Release 标记预发布，npm 使用 `alpha` 标签。通用稳定版本使用 `latest`，其他预发布使用其 `alpha` / `beta` / `rc` 渠道或 `next`。发布版本必须是规范 SemVer；统一容器标签不支持 `+build` 后缀。[npm 版本及标签说明](https://docs.npmjs.com/adding-dist-tags-to-packages/)
 
 发布前先确定本体许可，在包根保存 `LICENSE`，并在 `package.json` 的 `license` 写入对应标识。缺少声明或许可文件时，公共发行构建会失败。第三方 DS-Bot 的 Apache-2.0 LICENSE/NOTICE、Ombre 的 MIT LICENSE 及前端依赖声明保持各自归属，不能用本体许可证替换。[npm 许可字段说明](https://docs.npmjs.com/cli/v11/configuring-npm/package-json/#license)
 

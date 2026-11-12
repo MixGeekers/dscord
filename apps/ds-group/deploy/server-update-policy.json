@@ -2,7 +2,7 @@
   "enabled": true,
   "deploymentContract": 1,
   "fromVersions": [
-    "0.4.0-alpha.5"
+    "0.4.0-alpha.6"
   ],
   "rollbackCompatible": true
 }

@@ -84,7 +84,7 @@ test('release resolution selects a complete compatible release and checks its ex
       : url.endsWith('SHA256SUMS') ? `${createHash('sha256').update(raw).digest('hex')}  server-update.json\n` : raw);
   } });
   assert.equal(await source.check({ currentVersion: oldVersion, protocol: '1.0', channel: 'stable' }), null);
-  assert.deepEqual(await source.check({ currentVersion: oldVersion, protocol: '1.0', channel: 'prerelease' }), target);
+  assert.deepEqual(await source.check({ currentVersion: oldVersion, protocol: '1.0', channel: 'prerelease', version }), target);
   assert.equal((await source.check({ currentVersion: oldVersion, protocol: '2.0', channel: 'prerelease' })).eligible, false);
   assert.ok(requested.every(url => url.startsWith('https://api.github.com/repos/MixGeekers/dscord/') || url.startsWith('https://github.com/MixGeekers/dscord/releases/download/')));
   source.fetchImpl = async url => new Response(url.includes('api.github.com') ? JSON.stringify(list) : url.endsWith('SHA256SUMS') ? `${'0'.repeat(64)}  server-update.json` : raw);
@@ -117,6 +117,25 @@ test('successful update backs up stopped writers, preserves Synapse and publishe
   await assert.rejects(readFile(path.join(f.params.control, 'maintenance.json')), { code: 'ENOENT' });
   assert.equal(JSON.stringify(f.updater.view()).includes('transaction'), false);
   assert.equal(JSON.stringify(f.updater.view()).includes('Labels'), false);
+});
+
+test('install revalidates the explicitly selected intermediate version and refuses a changed compatibility edge', async t => {
+  const f = await fixture(t);
+  const seen = [];
+  f.updater.releases.check = async input => {
+    seen.push(input);
+    return { ...target, eligible: false };
+  };
+  await assert.rejects(f.updater.apply(version), { status: 409 });
+  assert.equal(seen[0].version, version);
+  assert.equal(f.operations.length, 0);
+  assert.equal(f.updater.state.job, null);
+  f.updater.releases.check = async input => {
+    assert.equal(input.version, version);
+    return target;
+  };
+  await f.updater.apply(version); await f.updater.work;
+  assert.equal(f.updater.view().job.phase, 'succeeded');
 });
 
 for (const [scenario, options, phase] of [
@@ -174,6 +193,18 @@ test('time-zone windows support midnight and auto never loops on a failed versio
   f.updater.state.settings = { ...settings, windowStart: 0, windowEnd: 23, timeZone: 'UTC' };
   f.updater.state.checkedAt = Date.now(); f.updater.state.available = target; f.updater.state.blockedVersions = [version];
   await f.updater.tick(); assert.equal(f.updater.state.job, null);
+});
+
+test('automatic installation uses the recommended next step rather than the latest distant release', async t => {
+  const f = await fixture(t);
+  const hour = new Date().getUTCHours();
+  f.updater.state.settings = { ...f.updater.state.settings, policy: 'auto', windowStart: hour, windowEnd: (hour + 2) % 24 };
+  f.updater.state.checkedAt = Date.now();
+  f.updater.state.available = { ...target, latestVersion: '0.4.0-alpha.6', path: [version, '0.4.0-alpha.6'], options: [target] };
+  await f.updater.tick();
+  await f.updater.work;
+  assert.equal(f.updater.state.job.version, version);
+  assert.equal(f.updater.state.job.phase, 'succeeded');
 });
 
 const setup = { serverName: 'updates.test', homeserverUrl: 'http://127.0.0.1:1', participants: [], roomId: '!room:updates.test' };
