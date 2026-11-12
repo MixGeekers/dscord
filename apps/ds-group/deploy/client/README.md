@@ -29,9 +29,11 @@ npm run build
 
 ## 归属服务允许的客户端
 
-Core 的 `identity.clientOrigins` 和中央的 `clientOrigins` 都必须包含实际客户端 origin，例如 `https://client.example.com`。CORS 需要允许 `Authorization`、`Content-Type`、`X-Upload-Id` 和对应业务方法。浏览器所有业务请求均设置 `credentials: omit`、`redirect: error`，不依赖 cookie。登录密码只交给中央，中央的会话换出身份令牌后立即退出；聊天会话 token 只交给固定归属 Core。远端协作使用归属 Core 的 `/api/spaces` 和完整 Matrix 房间 ID，不把会话 token 发送给外服 Core。
+Core 的 `identity.clientOrigins` 和中央的 `clientOrigins` 都必须包含实际客户端 origin，例如 `https://client.example.com`。CORS 需要允许 `Authorization`、`Content-Type`、`X-Upload-Id` 和对应业务方法。浏览器所有业务请求均设置 `credentials: omit`、`redirect: error`，不依赖 cookie。登录密码只交给中央，中央会话保留供 Bot 管理和 DSH 连接使用，并只发给该中央；聊天会话 token 只交给固定归属 Core。远端协作使用归属 Core 的 `/api/spaces` 和完整 Matrix 房间 ID，不把会话 token 发送给外服 Core。
 
 会话绑定归属 Core、Matrix 和中央地址（`centralIssuer`），草稿和待确认消息按会话里的全局身份 ID（`用户名@中央域名`）分开保存。归属 Core 改接另一台中央后，旧会话作废，需要重新登录。
+
+登录默认勾选“记住此设备”，会话记录保存在当前客户端 origin 的 `localStorage` 中，本地自动恢复有效期最多 30 天，同时保存原会话位置、草稿及待确认发送的事务号；取消勾选则使用标签页临时存储。恢复后仍须通过服务端身份及房间权限检查。此改动保留纯静态部署和现有 Bearer 协议，无需新增 Cookie 服务。迁移、退出和浏览器存储限制见[登录与恢复](../../登录与恢复.md)。
 
 ## PWA、附件和通知
 

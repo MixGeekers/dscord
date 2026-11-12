@@ -1,4 +1,4 @@
-import { Button, Input } from "../../../ui/controls";
+import { Button, Checkbox, Input } from "../../../ui/controls";
 import { useEffect, useRef, useState } from "react";
 import type { FormEvent, MouseEvent } from "react";
 import { messageOf } from "../api";
@@ -15,6 +15,7 @@ export interface AuthSubmission {
   password: string;
   displayName: string;
   inviteCode: string;
+  remember: boolean;
 }
 
 export interface AuthDialogProps {
@@ -62,6 +63,7 @@ export function AuthDialog({
   const [displayName, setDisplayName] = useState("");
   const [inviteCode, setInviteCode] = useState(initialInvite);
   const [showPassword, setShowPassword] = useState(false);
+  const [remember, setRemember] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [submittedMode, setSubmittedMode] = useState<Mode | null>(null);
   const [fieldErrors, setFieldErrors] = useState<
@@ -173,6 +175,7 @@ export function AuthDialog({
         password,
         displayName: displayName.trim(),
         inviteCode: inviteRequired ? inviteCode.trim() : "",
+        remember,
       });
     } catch (cause) {
       setLocalError(messageOf(cause));
@@ -349,6 +352,16 @@ export function AuthDialog({
               </p>
             </>
           )}
+          <label className="auth-remember" htmlFor="login-remember">
+            <Checkbox
+              id="login-remember"
+              checked={remember}
+              onCheckedChange={(checked) => setRemember(checked === true)}
+              disabled={disabled}
+            />
+            <span>{t("rememberDevice")}</span>
+          </label>
+          <p className="muted small">{t("rememberHint")}</p>
           <div
             id="login-error"
             className="login-error"

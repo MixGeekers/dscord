@@ -12,10 +12,16 @@ import type { CentralInfo } from "./central";
 import type { ClientConfig, ClientDiscovery } from "./client-config";
 import {
   bindSession,
+  forgetSession,
+  isRememberedSession,
+  observeSession,
   readScoped,
+  removeStored,
   restoreSession,
-  sessionStorageKey,
+  saveSession,
+  sessionIdentity,
   storageKey,
+  writeStored,
 } from "./session";
 import { matrixServer, roomsInSpace } from "./spaces";
 import type { SpacesResult } from "./spaces";
@@ -45,6 +51,7 @@ import {
   isOwnedBotRoom,
   ownedBotCacheKey,
   restoredOwnedBots,
+  restoredNavigation,
 } from "./app/workspace";
 import {
   lastVisible,
@@ -99,16 +106,13 @@ export default function App({
   const [spacesResult, setSpacesResult] = useState<SpacesResult | null>(() =>
     session ? readScoped(config, "spaces", session) : null,
   );
-  const [serverName, setServerName] = useState<string | null>(() =>
-    session
-      ? (readScoped<string>(config, "server", session) ??
-        matrixServer(session.user_id))
-      : null,
+  const [serverName, setServerName] = useState<string | null>(
+    () => restoredNavigation(config, session).server,
   );
   const [roomId, setRoomId] = useState<string | null>(() =>
     session
       ? new URL(location.href).searchParams.get("roomId") ||
-        readScoped<string>(config, "room", session, serverName)
+        restoredNavigation(config, session).room
       : null,
   );
   const [homeDiscovery, setHomeDiscovery] = useState<
@@ -283,37 +287,72 @@ export default function App({
     setRolesOpen(false);
   }, []);
 
+  const applySession = useCallback(
+    (next: Session | null) => {
+      const botCache = ownedBotCacheKey(config, sessionRef.current);
+      if (botCache) removeStored(botCache);
+      sessionRef.current = next;
+      const { server: savedServer, room: savedRoom } = restoredNavigation(
+        config,
+        next,
+      );
+      serverRef.current = savedServer;
+      roomRef.current = savedRoom;
+      setSession(next);
+      setServerName(savedServer);
+      setRoomId(savedRoom);
+      setCurrentUser(null);
+      setAllRooms([]);
+      setSpacesResult(null);
+      setOwnedBotsState(restoredOwnedBots(config, next));
+      setDirectory([]);
+      setMentionCount(0);
+      resetConversation();
+      setVerified(false);
+      setSettingsTab(null);
+      setCreateBotOpen(false);
+      setBotsOpen(false);
+      setHomeBot(null);
+      setBotStatuses({});
+      setSpacesOpen(false);
+      setLoginError("");
+      setLoginRateLimitUntil(null);
+      setError("");
+      lastRead.current.clear();
+      initialNavigation.current = true;
+      setView(next ? "chat" : "home");
+      setConnection("connecting");
+      setLoginOpen(!next);
+    },
+    [config, resetConversation],
+  );
+
   const clearSession = useCallback(() => {
-    const botCache = ownedBotCacheKey(config, sessionRef.current);
-    if (botCache) sessionStorage.removeItem(botCache);
-    sessionStorage.removeItem(sessionStorageKey(config));
-    sessionRef.current = null;
-    serverRef.current = null;
-    roomRef.current = null;
-    setSession(null);
-    setServerName(null);
-    setRoomId(null);
-    setCurrentUser(null);
-    setAllRooms([]);
-    setSpacesResult(null);
-    setOwnedBotsState(null);
-    setDirectory([]);
-    setMentionCount(0);
-    resetConversation();
-    setVerified(false);
-    setSettingsTab(null);
-    setCreateBotOpen(false);
-    setBotsOpen(false);
-    setHomeBot(null);
-    setBotStatuses({});
-    setSpacesOpen(false);
-    setLoginError("");
-    setLoginRateLimitUntil(null);
-    setError("");
-    lastRead.current.clear();
-    setView("home");
-    setLoginOpen(true);
-  }, [config, resetConversation]);
+    const removed = forgetSession(config, sessionRef.current);
+    applySession(removed ? null : restoreSession(config));
+  }, [config, applySession]);
+
+  useEffect(
+    () =>
+      observeSession(config, (next) => {
+        if (sessionIdentity(next) === sessionIdentity(sessionRef.current))
+          return;
+        const url = new URL(location.href);
+        for (const key of [
+          "roomId",
+          "eventId",
+          "server",
+          "userId",
+          "homeCoreUrl",
+          "centralIssuer",
+        ])
+          url.searchParams.delete(key);
+        history.replaceState(null, "", url);
+        applySession(next);
+        void pwa.current?.beforeIdentityChange("").catch(() => {});
+      }),
+    [config, session, applySession],
+  );
 
   // What each owned Bot is doing, for the Bot list; one request covers them all.
   // Bot homes read the same statuses, so the list and a Bot's page never disagree.
@@ -400,10 +439,7 @@ export default function App({
       .then((value) => {
         if (controller.signal.aborted) return;
         setBootstrap(value);
-        sessionStorage.setItem(
-          storageKey(config, "bootstrap"),
-          JSON.stringify(value),
-        );
+        writeStored(storageKey(config, "bootstrap"), value);
       })
       .catch((reason) => {
         if (!controller.signal.aborted) setError(messageOf(reason));
@@ -427,14 +463,21 @@ export default function App({
       setOpeningDirectId(null);
       const account = sessionRef.current;
       if (account) {
-        sessionStorage.setItem(
+        writeStored(
           storageKey(config, "server", account),
-          JSON.stringify(targetServer),
+          targetServer,
+          isRememberedSession(config, account),
+        );
+        writeStored(
+          storageKey(config, "location", account),
+          { server: targetServer, room: nextRoom?.roomId ?? null },
+          isRememberedSession(config, account),
         );
         if (nextRoom?.kind !== "direct")
-          sessionStorage.setItem(
+          writeStored(
             storageKey(config, "room", account, targetServer),
-            JSON.stringify(nextRoom?.roomId ?? null),
+            nextRoom?.roomId ?? null,
+            isRememberedSession(config, account),
           );
       }
       const url = new URL(location.href);
@@ -659,33 +702,15 @@ export default function App({
         ...bindSession(receipt, config, homeDiscovery),
         central: { token: centralToken },
       };
-      sessionStorage.setItem(sessionStorageKey(config), JSON.stringify(next));
-      sessionRef.current = next;
-      setSession(next);
-      setCurrentUser(null);
-      setOwnedBotsState(restoredOwnedBots(config, next));
-      setDirectory([]);
-      resetConversation();
-      setAllRooms([]);
-      setSpacesResult(null);
-      setMentionCount(0);
-      setVerified(false);
-      const home = matrixServer(next.user_id);
-      const savedServer = readScoped<string>(config, "server", next) ?? home;
-      serverRef.current = savedServer;
-      setServerName(savedServer);
-      const savedRoom = readScoped<string>(config, "room", next, savedServer);
-      roomRef.current = savedRoom;
-      setRoomId(savedRoom);
-      initialNavigation.current = true;
-      lastRead.current.clear();
-      setLoginOpen(false);
+      const remembered = saveSession(config, next, input.remember);
+      applySession(next);
       if (invitation) {
         const url = new URL(location.href);
         url.searchParams.delete("invite");
         history.replaceState(null, "", url);
       }
       setView("chat");
+      if (input.remember && !remembered) notify(tAuth("rememberUnavailable"));
       refresh();
       void pwa.current?.refresh();
     } catch (reason) {
@@ -706,27 +731,36 @@ export default function App({
 
   async function logout() {
     if (authBusyRef.current || logoutBusy || !sessionRef.current) return;
+    const signedIn = sessionRef.current;
     authBusyRef.current = true;
     setLogoutBusy(true);
+    let localOnly = false;
     try {
-      await pwa.current?.beforeIdentityChange("");
+      try {
+        await pwa.current?.beforeIdentityChange("");
+      } catch {
+        localOnly = true;
+      }
       try {
         await api("/api/logout", { method: "POST", body: {} });
       } catch (reason) {
         if (!(reason instanceof ApiError) || reason.status !== 401)
-          throw reason;
+          localOnly = true;
       }
-      const signedIn = sessionRef.current;
       if (signedIn?.central && signedIn.binding)
-        centralSignOut(signedIn.binding.centralIssuer, signedIn.central.token);
+        localOnly =
+          !(await centralSignOut(
+            signedIn.binding.centralIssuer,
+            signedIn.central.token,
+          )) || localOnly;
+      if (sessionRef.current !== signedIn) return;
       clearSession();
       const url = new URL(location.href);
       for (const key of ["roomId", "eventId", "server"])
         url.searchParams.delete(key);
       history.replaceState(null, "", url);
       void pwa.current?.refresh();
-    } catch (reason) {
-      notify(messageOf(reason));
+      if (localOnly) notify(tAuth("signedOutLocally"));
     } finally {
       authBusyRef.current = false;
       setLogoutBusy(false);
@@ -751,8 +785,14 @@ export default function App({
         return false;
       const key = keyFor("pending", account, targetServer, targetRoom);
       if (sendingRef.current.has(key)) return false;
-      const outgoing = readStored<OutgoingMessage>(key) || message;
-      sessionStorage.setItem(key, JSON.stringify(outgoing));
+      const persistent = isRememberedSession(config, account);
+      const waiting = readStored<OutgoingMessage>(key, persistent);
+      if (waiting && waiting.transactionId !== message.transactionId) {
+        notify(t("otherPending"));
+        return false;
+      }
+      const outgoing = waiting || message;
+      writeStored(key, outgoing, persistent);
       setPendingNonce((value) => value + 1);
       sendingRef.current.add(key);
       setSendingKeys(new Set(sendingRef.current));
@@ -766,10 +806,11 @@ export default function App({
           { method: "POST", body: outgoing, timeout: 30000 },
         );
         if (!receipt.event_id) throw new Error(t("receiptPending"));
-        sessionStorage.removeItem(key);
-        sessionStorage.removeItem(
-          keyFor("draft", account, targetServer, targetRoom),
-        );
+        if (
+          readStored<OutgoingMessage>(key, persistent)?.transactionId ===
+          outgoing.transactionId
+        )
+          removeStored(key);
         if (stillHere()) {
           setPendingNonce((value) => value + 1);
           setReply(null);
@@ -784,7 +825,7 @@ export default function App({
           reason.status < 500 &&
           reason.status !== 429
         ) {
-          sessionStorage.removeItem(key);
+          removeStored(key);
           if (stillHere()) setPendingNonce((value) => value + 1);
         }
         if (stillHere()) notify(messageOf(reason));
@@ -1071,9 +1112,10 @@ export default function App({
   );
   useEffect(() => {
     if (session && room && isOwnedBotRoom(room, ownedBots, session.user_id))
-      sessionStorage.setItem(
+      writeStored(
         storageKey(config, "owned-bot-room", session),
-        JSON.stringify(room.roomId),
+        room.roomId,
+        isRememberedSession(config, session),
       );
   }, [config, ownedBots, room, session]);
   const homeSelected = selectedSpace?.home === true;
@@ -1233,6 +1275,7 @@ export default function App({
           onWithdraw={session ? withdrawMessage : undefined}
         />
         <Composer
+          persistent={isRememberedSession(config, session)}
           ref={composer}
           session={session}
           room={room}

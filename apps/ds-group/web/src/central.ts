@@ -95,10 +95,16 @@ export async function centralSignIn(
 }
 
 /** Ends a central session; a session that is already gone is fine. */
-export function centralSignOut(issuer: string, token: string): void {
-  void call(issuer, "/api/logout", { method: "POST", token, body: {} }).catch(
-    () => {},
-  );
+export async function centralSignOut(
+  issuer: string,
+  token: string,
+): Promise<boolean> {
+  try {
+    await call(issuer, "/api/logout", { method: "POST", token, body: {} });
+    return true;
+  } catch (reason) {
+    return reason instanceof ApiError && reason.status === 401;
+  }
 }
 
 /**

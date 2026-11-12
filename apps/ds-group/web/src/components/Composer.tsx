@@ -11,6 +11,7 @@ import type { MentionEditor } from "../../mention-editor.js";
 import { createAttachmentManager } from "../../attachments.js";
 import type { AttachmentManager, UploadState } from "../../attachments.js";
 import { readStored } from "../api";
+import { removeStored, writeStored } from "../session";
 import { newRequestId } from "../identifiers";
 import { useTranslation } from "../locale";
 import { chatMessages } from "../locales/chat";
@@ -41,6 +42,7 @@ interface Draft {
 }
 
 export interface ComposerProps {
+  persistent?: boolean;
   session: Session | null;
   request?: RawRequest;
   requestScope?: string;
@@ -78,6 +80,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
     const editorRef = useRef<MentionEditor | null>(null);
     const managerRef = useRef<AttachmentManager | null>(null);
     const contextRef = useRef("");
+    const persistentRef = useRef(false);
     const draftReplyRef = useRef({
       reply: props.reply,
       mention: props.replyMention,
@@ -132,10 +135,12 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         replyMention: draftReplyRef.current.mention,
       };
       try {
-        sessionStorage.setItem(key, JSON.stringify(draft));
+        if (!writeStored(key, draft, persistentRef.current))
+          current.onError(translateRef.current("draftStorage"));
       } catch {
         current.onError(translateRef.current("draftStorage"));
       }
+      return draft;
     }
 
     function scheduleDraft() {
@@ -168,8 +173,17 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
           interruptedRef.current.length)
       )
         return;
-      saveDraft();
+      const submittedDraft = saveDraft();
       const submittedContext = contextRef.current;
+      const submittedPersistent = persistentRef.current;
+      const clearSubmittedDraft = () => {
+        if (
+          submittedDraft &&
+          JSON.stringify(readStored(submittedContext, submittedPersistent)) ===
+            JSON.stringify(submittedDraft)
+        )
+          removeStored(submittedContext);
+      };
       const message: OutgoingMessage = current.pending ?? {
         body: text,
         mentions: value.mentions,
@@ -188,7 +202,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
         if (sent) {
           if (contextRef.current !== submittedContext) {
             manager.clear(submittedContext);
-            sessionStorage.removeItem(submittedContext);
+            clearSubmittedDraft();
             return;
           }
           restoringRef.current = true;
@@ -198,7 +212,7 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
           setInterrupted([]);
           setBody("");
           current.onClearReply();
-          sessionStorage.removeItem(submittedContext);
+          clearSubmittedDraft();
           restoringRef.current = false;
           editor.focus();
         }
@@ -291,9 +305,16 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       managerRef.current = manager;
       const beforeUnload = () => saveDraft();
       window.addEventListener("beforeunload", beforeUnload);
+      window.addEventListener("pagehide", beforeUnload);
+      const hidden = () => {
+        if (document.hidden) saveDraft();
+      };
+      document.addEventListener("visibilitychange", hidden);
       return () => {
         saveDraft();
         window.removeEventListener("beforeunload", beforeUnload);
+        window.removeEventListener("pagehide", beforeUnload);
+        document.removeEventListener("visibilitychange", hidden);
         clearTimeout(saveTimer.current);
         editor.destroy();
         manager.destroy();
@@ -307,8 +328,11 @@ export const Composer = forwardRef<ComposerHandle, ComposerProps>(
       const editor = editorRef.current;
       if (!manager || !editor) return;
       saveDraft();
-      const draft = contextKey ? readStored<Draft>(contextKey) : null;
+      const draft = contextKey
+        ? readStored<Draft>(contextKey, props.persistent)
+        : null;
       contextRef.current = contextKey;
+      persistentRef.current = props.persistent === true;
       restoringRef.current = true;
       manager.setContext(contextKey);
       if (!restoredContexts.current.has(contextKey)) {

@@ -113,7 +113,7 @@ try {
   await page.locator('#login-submit').click();
   await page.waitForFunction(() => window.fixture.calls.length === 1);
   assert.deepEqual(await page.evaluate(() => window.fixture.calls[0]), {
-    mode: 'login', username: 'new-person', password: 'synthetic-pass', displayName: '', inviteCode: '',
+    mode: 'login', username: 'new-person', password: 'synthetic-pass', displayName: '', inviteCode: '', remember: true,
   });
   checks.push('unknownUsernameCanSignInAndCentralRefreshPreservesCredentials');
 
@@ -140,7 +140,7 @@ try {
   await page.locator('#login-submit').click();
   await page.locator('#login-error').filter({ hasText: 'Username is already registered' }).waitFor();
   assert.deepEqual(await page.evaluate(() => window.fixture.calls.at(-1)), {
-    mode: 'register', username: 'new-person', password: 'synthetic-pass', displayName: 'New Person', inviteCode: '',
+    mode: 'register', username: 'new-person', password: 'synthetic-pass', displayName: 'New Person', inviteCode: '', remember: true,
   });
   await page.locator('#auth-toggle-mode').click();
   assert.equal(await page.locator('#login-title').textContent(), 'Sign in');
