@@ -95,8 +95,8 @@ const unhandled = [];
 let browser;
 let failure;
 
-async function openApp(theme) {
-  const context = await browser.newContext({ locale: 'zh-CN', viewport: screen, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
+async function openApp(theme, { viewport = screen, insets = { top: SAFE_TOP, bottom: SAFE_BOTTOM } } = {}) {
+  const context = await browser.newContext({ locale: 'zh-CN', viewport, hasTouch: true, isMobile: true, deviceScaleFactor: 2 });
   context.setDefaultTimeout(15000);
   const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
   discovery.auth.audience = origin;
@@ -160,7 +160,7 @@ async function openApp(theme) {
   const page = await context.newPage();
   page.on('pageerror', error => pageErrors.push(error.message));
   const cdp = await context.newCDPSession(page);
-  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets: { top: SAFE_TOP, bottom: SAFE_BOTTOM } });
+  await cdp.send('Emulation.setSafeAreaInsetsOverride', { insets });
   await page.route('**/.well-known/dscord/client', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify(discovery) }));
   await page.route(`${centralOrigin}/**`, async route => {
     const request = route.request();
@@ -203,6 +203,9 @@ try {
   const indexHtml = await readFile(path.join(packageRoot, 'web/index.html'), 'utf8');
   assert.match(indexHtml, /maximum-scale=1, user-scalable=no, viewport-fit=cover/);
   checks.push('viewportForbidsZoomAndCoversTheScreen');
+  // iOS 26.1+ blurs whatever passes behind a translucent status bar; the default bar is opaque in the page colour.
+  assert.doesNotMatch(indexHtml, /apple-mobile-web-app-status-bar-style/);
+  checks.push('iosStatusBarIsOpaque');
 
   for (const theme of ['light', 'dark']) {
     const { context, page } = await openApp(theme);
@@ -223,7 +226,7 @@ try {
       const header = await box(page, '.conversation-header');
       assert.equal(header.top, 0);
       assert.equal(await style(page, '.conversation-header', 'paddingTop'), `${SAFE_TOP}px`);
-      assert.equal(await style(page, '.composer-area', 'paddingBottom'), `${SAFE_BOTTOM}px`);
+      assert.equal(await style(page, '.composer-area', 'paddingBottom'), `${SAFE_BOTTOM - 12}px`);
       assert.equal((await box(page, '.composer-area')).bottom, screen.height);
       assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor),
         await style(page, '.conversation', 'backgroundColor'));
@@ -260,6 +263,16 @@ try {
     await page.evaluate(() => window.setKeyboard(0));
     await page.locator('#message-input').blur();
     assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-keyboard')), false);
+    if (theme === 'light') {
+      // iOS 26 can keep a stale offset (or height) after the keyboard closes; with no text field focused the page stays put.
+      await page.evaluate(() => window.setKeyboard(0, 120));
+      assert.deepEqual(await box(page, '.app-shell'), { top: 0, bottom: screen.height, left: 0, right: screen.width });
+      await page.evaluate(height => window.setKeyboard(height, 0), KEYBOARD);
+      assert.equal(await page.evaluate(() => document.documentElement.hasAttribute('data-keyboard')), false);
+      assert.equal((await box(page, '.app-shell')).bottom, screen.height);
+      await page.evaluate(() => window.setKeyboard(0));
+      checks.push('staleViewportAfterKeyboardDoesNotShiftThePage');
+    }
 
     if (theme === 'light') {
       // Drawers and dialogs stay below the status bar too.
@@ -279,6 +292,19 @@ try {
       await shot(page, 'settings-light-zh');
     }
     await context.close();
+  }
+  // An installed iPhone app: the opaque status bar sits above the page, so only the home indicator is inset.
+  {
+    const iphone = { width: 390, height: 790 };
+    const { context, page } = await openApp('light', { viewport: iphone, insets: { top: 0, bottom: SAFE_BOTTOM } });
+    assert.equal(await style(page, '.conversation-header', 'paddingTop'), '0px');
+    assert.equal((await box(page, '.composer-area')).bottom, iphone.height);
+    await shot(page, 'iphone-installed-light-zh');
+    await context.close();
+    const dark = await openApp('dark', { viewport: iphone, insets: { top: 0, bottom: SAFE_BOTTOM } });
+    await shot(dark.page, 'iphone-installed-dark-zh');
+    await dark.context.close();
+    checks.push('installedIphoneLayoutUnderOpaqueStatusBar');
   }
   assert.deepEqual(pageErrors, []);
   assert.deepEqual(unhandled, []);

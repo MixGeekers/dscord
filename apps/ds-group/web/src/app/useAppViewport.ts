@@ -13,21 +13,41 @@ const KEYBOARD_THRESHOLD = 120;
  * --app-bottom, so nothing moves under the status bar and the composer sits
  * directly on the keyboard. While the keyboard is open the home-indicator
  * inset is no longer at the bottom of the app, so data-keyboard drops it.
+ * The keyboard counts as open only while a text field has focus.
  */
 export function useAppViewport() {
   useEffect(() => {
     const root = document.documentElement;
     const viewport = window.visualViewport;
     let frame = 0;
+    const typing = () => {
+      const element = document.activeElement as HTMLElement | null;
+      return Boolean(
+        element &&
+        (element.isContentEditable ||
+          (element.tagName === "INPUT" &&
+            !["button", "checkbox", "radio", "range", "color", "file"].includes(
+              (element as HTMLInputElement).type,
+            )) ||
+          element.tagName === "TEXTAREA" ||
+          element.tagName === "SELECT"),
+      );
+    };
 
     const apply = () => {
       frame = 0;
       if (!viewport || viewport.scale > 1.01) return;
-      const top = Math.max(0, viewport.offsetTop);
-      const bottom = Math.max(0, window.innerHeight - top - viewport.height);
+      const hidden = window.innerHeight - viewport.height;
+      const keyboard = typing() && hidden > KEYBOARD_THRESHOLD;
+      // iOS 26 can leave offsetTop behind after the keyboard closes, which would
+      // shift the whole app down; without a keyboard the page always starts at 0.
+      const top = keyboard ? Math.max(0, viewport.offsetTop) : 0;
+      const bottom = keyboard ? Math.max(0, hidden - top) : 0;
+      if (!keyboard && (window.scrollY || viewport.offsetTop))
+        window.scrollTo(0, 0);
       root.style.setProperty("--app-top", `${Math.round(top)}px`);
       root.style.setProperty("--app-bottom", `${Math.round(bottom)}px`);
-      root.toggleAttribute("data-keyboard", bottom > KEYBOARD_THRESHOLD);
+      root.toggleAttribute("data-keyboard", keyboard);
     };
     const schedule = () => {
       if (!frame) frame = requestAnimationFrame(apply);
@@ -39,6 +59,8 @@ export function useAppViewport() {
     viewport?.addEventListener("resize", schedule);
     viewport?.addEventListener("scroll", schedule);
     window.addEventListener("resize", schedule);
+    document.addEventListener("focusin", schedule);
+    document.addEventListener("focusout", schedule);
     for (const name of ["gesturestart", "gesturechange", "gestureend"]) {
       document.addEventListener(name, blockGesture, { passive: false });
     }
@@ -47,6 +69,8 @@ export function useAppViewport() {
       viewport?.removeEventListener("resize", schedule);
       viewport?.removeEventListener("scroll", schedule);
       window.removeEventListener("resize", schedule);
+      document.removeEventListener("focusin", schedule);
+      document.removeEventListener("focusout", schedule);
       for (const name of ["gesturestart", "gesturechange", "gestureend"]) {
         document.removeEventListener(name, blockGesture);
       }
