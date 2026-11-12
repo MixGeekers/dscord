@@ -68,6 +68,8 @@ test('pending dispositions and admission survive restart and remain specific to 
   try {
     assert.equal(reopened.sourceUse('a', ref).allowed, false);
     reopened.ingest('a', other, { sessionId: 'processing' });
+    // The first store reads rows once; another store wrote to its file, so it reads the file again.
+    memory.store.reload();
     assert.equal(memory.sourceUse('a', ref).allowed, true);
   } finally { await reopened.close(); }
 }));

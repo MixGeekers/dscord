@@ -135,6 +135,8 @@ test('restart preserves exact identity, source, receipt and withdrawal; pending 
     const row = reopened.prepare({ botId: 'a', scope: 'own', subjectId: 'matrix:@lin:a.test', text: '未完成', sourceRefs: fact.sourceRefs });
     assert.equal(reopened.derivation(row), 'pending');
     reopened.forget(fact.id, fact.revision);
+    // The first store reads rows once; another store wrote to its file, so it reads the file again.
+    service.store.reload();
     assert.equal((await service.recall('a')).entries.length, 0);
   } finally { reopened.close(); }
 }));

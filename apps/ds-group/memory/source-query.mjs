@@ -12,8 +12,6 @@ const meaningful = term => !stop.has(term) && !/^[\d:.,%+-]+$/.test(term);
 const terms = text => [...new Set((String(text || '').toLowerCase().replace(/<@[^>]+>/g, ' ').replace(/(?:matrix:)?@[\w.=-]+:[\w.:-]+/g, ' ').replace(genericHan, ' ')
   .match(/[a-z\d_.:-]{2,}|[\p{Script=Han}]{2,}/gu) || []).flatMap(term => /\p{Script=Han}/u.test(term)
     ? [...(term.length >= 3 ? [term] : []), ...Array.from({ length: term.length - 1 }, (_, index) => term.slice(index, index + 2))] : [term]))].slice(0, 160);
-const overlap = (text, queryTerms) => queryTerms.filter(term => String(text || '').toLowerCase().includes(term));
-const refKey = ref => `${ref.id}:${ref.revision}`;
 const bounded = (value, fallback, max) => Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value))) : fallback;
 
 /** Search only this Bot's observed, current original evidence without a model. */
@@ -25,16 +23,18 @@ export function queryObservedSources(memory, botId, options = {}) {
   const queryTerms = terms(query), seedTerms = terms(seeds.join('\n'));
   const searchTerms = [...new Set([...queryTerms, ...seedTerms])];
   const strong = searchTerms.filter(meaningful), bridges = queryTerms.filter(term => meaningful(term) && seedTerms.includes(term));
+  const questionTerms = queryTerms.filter(meaningful);
   const projects = new Set((options.projectIds || context.projectIds || []).map(canonicalIdentity));
   const subjects = (options.subjectIds || []).map(canonicalIdentity);
   const scope = ['group', 'related', 'all'].includes(options.scope) ? options.scope : 'related';
   const authorKind = typeof options.authorKind === 'string' ? options.authorKind.trim() || undefined : undefined;
-  const candidates = [], observed = store.observations(botId), seen = new Set();
+  const candidates = [], observed = store.observations(botId);
   let deferredByWork = 0, hiddenAudience = 0;
   for (const ref of observed) {
-    if (seen.has(refKey(ref))) continue; seen.add(refKey(ref));
     const source = store.source(ref.id, ref.revision), head = store.source(ref.id);
-    if (!source || head?.revision !== ref.revision || head.withdrawn || store.basisStatus({ sourceRefs: [ref] }).status !== 'current') continue;
+    // A source that came from no other source has no basis that could have changed.
+    if (!source || head?.revision !== ref.revision || head.withdrawn
+      || source.originRefs?.length && store.basisStatus({ sourceRefs: [ref] }).status !== 'current') continue;
     if (authorKind && (source.authorKind || 'unknown') !== authorKind) continue;
     // Automatic frames exclude another turn's instruction body. Explicit
     // readback may inspect already admitted work, labelled as historical work.
@@ -43,11 +43,14 @@ export function queryObservedSources(memory, botId, options = {}) {
     if (options.onlyOtherRooms && sameRoom || scope === 'group' && !sameRoom) continue;
     const audience = source.conversationKind || 'unknown';
     if (!sameRoom && (audience === 'direct' && options.includeDirect === false || audience === 'unknown' && options.includeUnknown === false)) { hiddenAudience++; continue; }
-    const matches = overlap(source.body, searchTerms), anchors = overlap(source.body, strong), shared = (source.projectIds || []).filter(id => projects.has(canonicalIdentity(id)));
+    // The text is searched once: the terms that count for more are among the terms searched for.
+    const text = String(source.body || '').toLowerCase(), matches = searchTerms.filter(term => text.includes(term));
+    if (!matches.length) continue;
+    const found = new Set(matches), anchors = strong.filter(term => found.has(term)), shared = (source.projectIds || []).filter(id => projects.has(canonicalIdentity(id)));
     const entities = subjects.filter(id => source.body.includes(id.replace(/^matrix:/, '')));
     const repeatedTopic = bridges.some(term => anchors.includes(term));
     const distinctive = anchors.some(term => /[a-z]/i.test(term) && term.length >= 4 || /\p{Script=Han}/u.test(term) && term.length >= 3);
-    const questionAnchors = overlap(source.body, queryTerms.filter(meaningful));
+    const questionAnchors = questionTerms.filter(term => found.has(term));
     const exactArtifact = questionAnchors.some(term => /[a-z\d_-]+\.[a-z]{2,8}$/i.test(term));
     const strongPrivateMatch = exactArtifact || questionAnchors.length >= 3 || repeatedTopic && questionAnchors.length > 0
       || (shared.length || entities.length) && anchors.length >= 2;

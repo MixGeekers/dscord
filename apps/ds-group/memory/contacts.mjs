@@ -6,14 +6,20 @@ const sourceKey = source => source?.eventId ? JSON.stringify([source.transport |
 // come from that Bot's sightings or exact evidence its legal memories cite.
 export function scopedContactRecords(contacts, { sources, knownIds, scoped }) {
   const keys = new Set(sources.map(sourceKey).filter(Boolean)), ids = new Set(knownIds.filter(Boolean).map(canonicalIdentity));
+  // The room a source was said in names that room: the newest such source, the first of them where times are equal.
+  const named = new Map();
+  for (const source of sources) {
+    if (!source.roomName) continue;
+    const room = canonicalIdentity(source.roomId), best = named.get(room);
+    if (!best || (source.timestamp || 0) > (best.timestamp || 0)) named.set(room, source);
+  }
   const rows = new Map();
   for (const record of contacts) {
     const own = scoped(record.id);
     const observations = own?.observations || (record.observations || []).filter(row => keys.has(sourceKey(row.source)));
     if (!own && !observations.length && !ids.has(record.id)) continue;
     const latest = observations.reduce((current, row) => !current || row.at >= current.at ? row : current, undefined);
-    const roomSources = sources.filter(source => canonicalIdentity(source.roomId) === record.id && source.roomName);
-    const roomName = roomSources.sort((a,b) => (b.timestamp || 0) - (a.timestamp || 0))[0]?.roomName;
+    const roomName = named.get(record.id)?.roomName;
     const name = own?.name || latest?.name || roomName || record.id;
     rows.set(record.id, { id: record.id, kind: own?.kind || record.kind,
       ...(own?.ownerId || record.ownerId ? { ownerId: own?.ownerId || record.ownerId } : {}), name,
