@@ -118,6 +118,7 @@ jobs:
           npm ci --prefix .local/pr-source --ignore-scripts --no-audit --no-fund
           npm --prefix .local/pr-source run build
           node .local/pr-source/scripts/npm-pack.mjs
+          docker pull ghcr.io/element-hq/synapse@sha256:f0df87cff259872637b4b5e5174b9977e5e3046dd421505407803b5e45c5f842
           node .local/pr-source/scripts/npm-smoke.mjs --report "$GITHUB_WORKSPACE/apps/ds-group/.local/npm-release-smoke.json"
       - name: Upload selected verification results
         if: always()
