@@ -1,6 +1,6 @@
-# DSCord 0.4.0-alpha.5 内核运行
+# DSCord 0.4.0-alpha.6 内核运行
 
-本发行包的版本为 `0.4.0-alpha.5`；其 Bot 内核标识为 `dscord-kernel`，内核版本字段为 `0.4.0`，管理 API 版本为 `1`，基于 DS-Bot `0.3.1`。Node 支持范围见 [package.json](../package.json)，固定 DSH SDK 基线为 `0.2.2-rc.1`，接口依据见[宿主契约](../dsh-connect/KERNEL.md)。业务模型由部署者在 DSH 中选择。
+本发行包的版本为 `0.4.0-alpha.6`；其 Bot 内核标识为 `dscord-kernel`，内核版本字段为 `0.4.0`，管理 API 版本为 `1`，基于 DS-Bot `0.3.1`。Node 支持范围见 [package.json](../package.json)，固定 DSH SDK 基线为 `0.2.2-rc.1`，接口依据见[宿主契约](../dsh-connect/KERNEL.md)。业务模型由部署者在 DSH 中选择。
 
 ## 服务器和 Bot 节点
 
