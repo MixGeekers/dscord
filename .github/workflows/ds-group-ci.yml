@@ -1,17 +1,11 @@
 name: DS-Group CI
 
-# Fast gate for every pull request and main: lint, format, types, unit tests and a production build.
-# The deployment, DSH runtime and browser suites live in ds-group-full.yml (release tags and manual runs).
+# One stable PR check. Scope detection selects integration steps inside this job.
+# Release tags still run the complete amd64/arm64 matrix in ds-group-full.yml.
 on:
   push:
     branches: [main]
-    paths:
-      - 'apps/ds-group/**'
-      - '.github/workflows/ds-group-ci.yml'
   pull_request:
-    paths:
-      - 'apps/ds-group/**'
-      - '.github/workflows/ds-group-ci.yml'
   workflow_dispatch:
 
 permissions:
@@ -25,7 +19,7 @@ jobs:
   check:
     name: Check and build
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: apps/ds-group
@@ -34,13 +28,110 @@ jobs:
       - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
         with:
           persist-credentials: false
+          fetch-depth: 0
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: '24.19.0'
           cache: npm
           cache-dependency-path: apps/ds-group/package-lock.json
-      - run: npm ci --ignore-scripts --no-audit --no-fund
+      - id: scope
+        name: Select checks from all changed paths
+        run: node scripts/ci-scope.mjs
+      - name: Check changed documentation links
+        if: steps.scope.outputs.docs == 'true'
+        run: node scripts/ci-docs.mjs
+      - name: Install exact dependencies
+        if: steps.scope.outputs.code == 'true'
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: Syntax, lint, format, types and unit tests
+        if: steps.scope.outputs.code == 'true'
         run: npm run check
       - name: Production build
+        if: steps.scope.outputs.code == 'true'
         run: npm run build
+      - name: Prepare verified source for selected integration checks
+        if: steps.scope.outputs.runtime == 'true' || steps.scope.outputs.deploy == 'true' || steps.scope.outputs.packaging == 'true'
+        run: |
+          node scripts/release-pack.mjs
+          node scripts/release-verify.mjs --require-public-content --extract .local/pr-source
+      - name: Browser / Chromium
+        if: steps.scope.outputs.browser == 'true'
+        run: |
+          npx --no-install playwright install --with-deps chromium
+          npm run test:browser
+      - name: Install official standalone DSH
+        if: steps.scope.outputs.runtime == 'true'
+        run: |
+          DSH_VERSION="$(node --input-type=module -e 'import {DSH_VERSION} from "./scripts/runtime-config.mjs"; process.stdout.write(DSH_VERSION);')"
+          npm install --prefix .local/dsh-install --no-audit --no-fund "@deepseek-ai/dsh@$DSH_VERSION"
+      - name: Official SDK and native runtime / local provider
+        if: steps.scope.outputs.runtime == 'true'
+        env:
+          DSH_HARNESS: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DS_GROUP_DSH_CLI: ${{ github.workspace }}/apps/ds-group/.local/dsh-install/node_modules/.bin/dsh
+          DS_GROUP_DSH_RUNTIME: ${{ github.workspace }}/apps/ds-group/.local/dsh-install
+          DS_GROUP_KERNEL_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/kernel-runtime-smoke.json
+          DS_GROUP_RUNTIME_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/runtime-smoke.json
+          DSCORD_NATIVE_NODE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/runtime-native-host.json
+          DSCORD_SNAPSHOT_REPORT: ${{ github.workspace }}/apps/ds-group/.local/memory-snapshot-host.json
+          DS_GROUP_WORK_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/runtime-work-smoke.json
+          DS_GROUP_SCOPED_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/cross-server-runtime-smoke.json
+          OPENCODE_API_KEY: ci-synthetic-key-no-generation
+        run: |
+          npm --prefix .local/pr-source run test:kernel-host
+          node .local/pr-source/scripts/kernel-runtime-smoke.mjs
+          node .local/pr-source/scripts/runtime-smoke.mjs
+          node .local/pr-source/tests/runtime-native.host.mjs
+          node .local/pr-source/tests/memory-snapshot.runtime.mjs
+          node .local/pr-source/scripts/runtime-work-smoke.mjs
+          node .local/pr-source/scripts/cross-server-runtime-smoke.mjs
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        if: steps.scope.outputs.deploy == 'true'
+      - name: Build native PR image
+        if: steps.scope.outputs.deploy == 'true'
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: apps/ds-group/.local/pr-source
+          platforms: linux/amd64
+          load: true
+          tags: ds-group:ci-pr
+          cache-from: type=gha,scope=ds-group-amd64
+          cache-to: type=gha,mode=min,scope=ds-group-amd64
+      - name: Deployment, API-only topology, update and rollback
+        if: steps.scope.outputs.deploy == 'true'
+        env:
+          DS_GROUP_IMAGE: ds-group:ci-pr
+          DS_GROUP_PLATFORM: linux/amd64
+          DS_GROUP_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/deploy-smoke.json
+          DS_GROUP_PLATFORM_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/platform-deploy-smoke.json
+          DS_GROUP_UPDATE_SMOKE_REPORT: ${{ github.workspace }}/apps/ds-group/.local/server-update-smoke.json
+          DS_GROUP_PLATFORM_SMOKE_PORT_BASE: '24220'
+        run: |
+          docker compose -f .local/pr-source/deploy/compose.yaml config --quiet
+          DS_GROUP_DOMAIN=chat.example.com docker compose -f .local/pr-source/deploy/compose.yaml -f .local/pr-source/deploy/compose.https.yaml config --quiet
+          node .local/pr-source/scripts/deploy-smoke.mjs
+          node .local/pr-source/scripts/platform-deploy-smoke.mjs
+          node .local/pr-source/scripts/server-update-smoke.mjs
+      - name: Clean source installation and exact npm tarball
+        if: steps.scope.outputs.packaging == 'true'
+        run: |
+          npm ci --prefix .local/pr-source --ignore-scripts --no-audit --no-fund
+          npm --prefix .local/pr-source run build
+          node .local/pr-source/scripts/npm-pack.mjs
+          docker pull ghcr.io/element-hq/synapse@sha256:f0df87cff259872637b4b5e5174b9977e5e3046dd421505407803b5e45c5f842
+          node .local/pr-source/scripts/npm-smoke.mjs --report "$GITHUB_WORKSPACE/apps/ds-group/.local/npm-release-smoke.json"
+      - name: Upload selected verification results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-results
+          path: |
+            apps/ds-group/.local/ci-scope.json
+            apps/ds-group/.local/*smoke.json
+            apps/ds-group/.local/*host.json
+            apps/ds-group/.local/*browser*.json
+            apps/ds-group/.local/**/*browser*/*.json
+            apps/ds-group/.local/**/*browser*/*.png
+          include-hidden-files: true
+          if-no-files-found: warn
+          retention-days: 7
