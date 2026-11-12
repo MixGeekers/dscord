@@ -1,4 +1,4 @@
-# DSCord 0.4.0-alpha.5 内核与宿主契约
+# DSCord 0.4.0-alpha.6 内核与宿主契约
 
 `dscord-kernel` 是 DSCord 管理的 Bot 运行时，基于随包 DS-Bot 0.3.1 源码并包含 DSCord 修改。上游来源、完整性和许可保存在 [UPSTREAM.json](../vendor/ds-bot/UPSTREAM.json)、LICENSE 和 NOTICE；升级随 DSCord 发行进行，上游自身的更新器不替换本内核。
 
