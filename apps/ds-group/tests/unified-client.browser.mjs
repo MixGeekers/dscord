@@ -7,6 +7,7 @@ import path from "node:path";
 import { chromium } from "playwright";
 import { packageRoot } from "../src/paths.mjs";
 import { chooseOption, selectedValue } from "./helpers/select.mjs";
+import { verifyLoginPersistence } from "./helpers/login-persistence.mjs";
 
 const checks = [];
 const pageErrors = [];
@@ -546,6 +547,8 @@ async function apiHandler(request, response, origin = homeOrigin) {
         state.holdMessage = false;
         await new Promise((resolve) => {
           state.releaseSend = resolve;
+          state.onHeldSend?.();
+          state.onHeldSend = null;
         });
       }
       events.get(roomId).push({
@@ -1781,6 +1784,14 @@ try {
   );
   await unboundContext.close();
   checks.push("splitDeploymentNeverMigratesUnboundLegacyCredential");
+
+  await verifyLoginPersistence({ origin: clientOrigin, output, checks,
+    holdSend: () => new Promise(resolve => {
+      state.holdMessage = true;
+      state.onHeldSend = () => resolve(() => state.releaseSend());
+    }),
+    revokeSession: token => state.tokens.delete(token),
+  });
 
   assert.ok(
     records

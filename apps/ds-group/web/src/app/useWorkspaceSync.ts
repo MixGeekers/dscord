@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import { ApiError, messageOf } from "../api";
 import type { createApi } from "../api";
-import { storageKey } from "../session";
+import { storageKey, writeStored } from "../session";
 import { roomsInSpace } from "../spaces";
 import type { SpacesResult } from "../spaces";
 import type { ClientConfig, ClientDiscovery } from "../client-config";
@@ -123,6 +123,7 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
     const controller = new AbortController();
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
+    let failures = 0;
     const account = session;
     const targetRoom = roomId;
     const targetServer = serverName;
@@ -158,19 +159,12 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
       refs.rooms.current = listed.rooms;
       set.spaces(facts);
       refs.spaces.current = facts;
-      sessionStorage.setItem(
-        storageKey(config, "rooms", account),
-        JSON.stringify(listed.rooms),
-      );
-      sessionStorage.setItem(
-        storageKey(config, "spaces", account),
-        JSON.stringify(facts),
-      );
+      writeStored(storageKey(config, "rooms", account), listed.rooms);
+      writeStored(storageKey(config, "spaces", account), facts);
       set.currentUser(profile.user);
       set.ownedBots(profile.ownedBots);
       const botCache = ownedBotCacheKey(config, account);
-      if (botCache)
-        sessionStorage.setItem(botCache, JSON.stringify(profile.ownedBots));
+      if (botCache) writeStored(botCache, profile.ownedBots);
       set.directory(roster.participants);
       set.mentionCount(inbox.mentionCount);
       set.status(runtime);
@@ -273,6 +267,7 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
           return;
         }
         const synced = await syncAccount(account);
+        failures = 0;
         if (!synced) return;
         const target = settleNavigation(account, synced.rooms, synced.facts);
         if (!target) return;
@@ -296,11 +291,16 @@ export function useWorkspaceSync(sync: WorkspaceSync) {
         }
         set.error(messageOf(reason));
         set.connection("offline");
+        failures = Math.min(failures + 1, 5);
       } finally {
         if (active())
           timer = setTimeout(
             () => void poll(),
-            document.hidden ? HIDDEN_POLL_MS : ACTIVE_POLL_MS,
+            Math.min(
+              60000,
+              (document.hidden ? HIDDEN_POLL_MS : ACTIVE_POLL_MS) *
+                2 ** failures,
+            ),
           );
       }
     }

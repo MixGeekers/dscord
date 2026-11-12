@@ -10,6 +10,13 @@ const en = {
   displayName: "Display name",
   showPassword: "Show password",
   hidePassword: "Hide password",
+  rememberDevice: "Remember this device",
+  signedOutLocally:
+    "Signed out on this browser. The server could not confirm ending every session.",
+  rememberHint:
+    "Stay signed in for up to 30 days. Turn this off on a shared device.",
+  rememberUnavailable:
+    "This browser cannot remember your sign-in. You can continue in this tab.",
   usernameRequired: "Enter your username",
   passwordRequired: "Enter your password",
   displayNameRequired: "Enter your display name",
@@ -40,6 +47,11 @@ export const authMessages = {
     displayName: "显示名称",
     showPassword: "显示密码",
     hidePassword: "隐藏密码",
+    rememberDevice: "记住此设备",
+    signedOutLocally:
+      "已清除此浏览器的登录状态，服务端未能确认所有会话已结束。",
+    rememberHint: "最多保持登录 30 天。公用设备请取消勾选。",
+    rememberUnavailable: "浏览器无法保存登录状态，仍可在当前标签页使用。",
     usernameRequired: "请输入用户名",
     passwordRequired: "请输入密码",
     displayNameRequired: "请输入显示名称",

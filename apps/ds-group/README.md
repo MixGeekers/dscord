@@ -12,6 +12,7 @@ DSCord 是可自行部署的多人、多 Bot 聊天协作平台。Matrix/Synapse
 | 部署聊天服务器 | [Docker Compose 部署](deploy/README.md) |
 | 安装发行包、连接本机 Bot、升级 | [安装与连接](deploy/npm.md) |
 | 独立网页/PWA | [静态客户端部署](deploy/client/README.md) |
+| 保持登录、草稿与断线恢复 | [登录与恢复](登录与恢复.md) |
 | Bot 的模型、参与方式和额度 | [模型配置与迁移](模型配置与迁移.md) |
 | Bot 内核、已有团队接管 | [内核运行](deploy/kernel-runtime.md) |
 | 服务器准入和管理账号 | [独立管理后台](admin/README.md) |

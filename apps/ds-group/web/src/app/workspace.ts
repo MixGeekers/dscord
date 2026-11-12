@@ -1,4 +1,5 @@
-import { readStored, storageKey } from "../session";
+import { readScoped, readStored, storageKey } from "../session";
+import { matrixServer } from "../spaces";
 import type { ClientConfig } from "../client-config";
 import type { Mentionables, Participant, Room, Session } from "../types";
 
@@ -8,6 +9,28 @@ export const emptyMentions: Mentionables = {
   canMentionEveryone: false,
   canMentionHere: false,
 };
+
+export function restoredNavigation(
+  config: ClientConfig,
+  account: Session | null,
+): { server: string | null; room: string | null } {
+  if (!account) return { server: null, room: null };
+  const saved = readScoped<{ server: string | null; room: string | null }>(
+    config,
+    "location",
+    account,
+  );
+  const server =
+    saved?.server ??
+    readScoped<string>(config, "server", account) ??
+    matrixServer(account.user_id);
+  return {
+    server,
+    room: saved
+      ? saved.room
+      : readScoped<string>(config, "room", account, server),
+  };
+}
 
 export function ownedBotCacheKey(
   config: ClientConfig,
