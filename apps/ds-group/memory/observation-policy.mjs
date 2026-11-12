@@ -12,7 +12,8 @@ export function sourceUse(store, botId, ref, context, { raw = false, seen = new 
   if (!source) return { allowed: false, blocked: [{ ...ref, reason: 'source-missing' }] };
   const disposition = store.sourceDisposition(botId, ref);
   const blocked = [];
-  const admitted = store.sourceAdmitted(botId, ref);
+  // Only a request is admitted or not: the many sources that are plain context need no lookup.
+  const admitted = disposition.kind === 'pending-request' && store.sourceAdmitted(botId, ref);
   if (disposition.kind === 'pending-request' && (!admitted || raw && !eventMatches(store, context, source.eventId, source.roomId))) blocked.push({ ...ref,
     eventId: source.eventId, roomId: source.roomId, kind: disposition.kind, reason: admitted ? 'request-for-other-turn' : 'request-not-admitted' });
   if (disposition.kind === 'task-update' && !(raw ? eventMatches(store, context, disposition.forEventId)
@@ -55,10 +56,12 @@ export function sourceWorkContext(store, botId, ref, context) {
 export function pendingRequests(store, botId, context) {
   const pending = new Map();
   for (const ref of store.observations(botId)) {
+    // Few observations are requests: that is asked first, before anything is read of the many that are not.
+    const disposition = store.sourceDisposition(botId, ref);
+    if (disposition.kind !== 'pending-request') continue;
     const source = store.source(ref.id, ref.revision), head = store.source(ref.id);
     if (!source || source.revision !== head?.revision || head.withdrawn) continue;
-    const disposition = store.sourceDisposition(botId, ref);
-    if (disposition.kind !== 'pending-request' || store.sourceAdmitted(botId, ref)) continue;
+    if (store.sourceAdmitted(botId, ref)) continue;
     // No command body, file names, or model-written summary is exposed here.
     pending.set(source.eventId, { eventId: source.eventId, roomId: source.roomId, senderId: source.authorId,
       kind: 'pending-request', status: 'not-admitted-to-this-turn', currentWork: eventMatches(store, context, source.eventId, source.roomId) });

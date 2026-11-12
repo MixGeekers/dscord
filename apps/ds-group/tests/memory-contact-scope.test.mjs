@@ -68,6 +68,7 @@ test('historical stores scope labels by exact observed transport, room and event
   memory.observe('a', input('$same-event', '@same:test', 'Private A label', '!a:test', { timestamp: 200 }));
   // Simulate a store created before the per-Bot identity projection existed.
   memory.store.db.prepare('DELETE FROM meta WHERE key LIKE ?').run('contact:%');
+  memory.store.reload();
   const contact = memory.contacts('b', { history: true }).find(contact => contact.id === 'matrix:@same:test');
   assert.equal(contact.name, 'Old B label'); assert.deepEqual(contact.aliases, ['Old B label']);
   assert.equal(contact.observations.every(row => row.source.roomId === '!b:test'), true);

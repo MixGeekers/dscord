@@ -29,12 +29,7 @@ function knownSources(memory, botId, { rows = memory.store.list({ botId, history
   };
   for (const row of rows) for (const ref of row.sourceRefs) add(ref);
   for (const ref of [...(current?.sourceRefs || []), ...(current?.contextSources || []), ...(current?.toolSources || [])]) add(ref);
-  return [...refs.values()].map(ref => {
-    const source = store.source(ref.id, ref.revision), head = store.source(ref.id);
-    return source && { ...source, sequence: ref.sequence ?? null, currentRevision: head?.revision ?? null,
-      derivation: !head || head.withdrawn ? 'source-withdrawn' : head.revision !== ref.revision ? 'source-revised' : 'current',
-      reviewed: store.getMeta(`reviewed:${botId}:${ref.id}:${ref.revision}`) === true };
-  }).filter(Boolean);
+  return [...refs.values()].map(ref => store.knownSource(botId, ref)).filter(Boolean);
 }
 
 export function memoryContacts(memory, botId, { query = '', history = false } = {}) {
@@ -164,10 +159,12 @@ export function assembleAttentionView(memory, botId, options = {}) {
   const current = ranked.filter(item => store.derivation(item.row) === 'current').map(item => item.row);
   const claims = current.slice(0, 24).map(row => claimView(memory, row, current));
   const supporting = new Set(current.flatMap(row => row.sourceRefs.map(ref => ref.id)));
-  const raw = sources.filter(source => source.derivation === 'current' && memory.sourceUse(botId, source, context, { raw: true }).allowed
+  // Which sources belong to the view is asked before whether each may be used: most are of another room.
+  const raw = sources.filter(source => source.derivation === 'current'
     && (options.kind === 'person' ? focus.subjects.has(source.authorId) || supporting.has(source.id)
       : options.kind === 'project' ? focus.projects.has(canonicalIdentity(source.roomId)) || source.projectIds?.some(id => focus.projects.has(id)) || supporting.has(source.id)
-        : !focus.roomId || source.roomId === focus.roomId || focus.subjects.has(source.authorId) && options.allScopes)).sort((a,b) =>
+        : !focus.roomId || source.roomId === focus.roomId || focus.subjects.has(source.authorId) && options.allScopes)
+    && memory.sourceUse(botId, source, context, { raw: true }).allowed).sort((a,b) =>
     Number(focus.eventIds.has(b.eventId)) - Number(focus.eventIds.has(a.eventId))
     || Number(b.authorKind === 'human') - Number(a.authorKind === 'human')
     || b.timestamp - a.timestamp || (b.sequence || 0) - (a.sequence || 0)).slice(0, 8);

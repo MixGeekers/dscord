@@ -7,8 +7,8 @@ import { queryObservedSources } from './source-query.mjs';
 import { join } from 'node:path';
 
 export class MemoryService {
-  constructor({ directory, backend, clock }) {
-    this.store = new MemoryStore(join(directory, 'knowledge.sqlite'), { clock });
+  constructor({ directory, backend, clock, cacheChars }) {
+    this.store = new MemoryStore(join(directory, 'knowledge.sqlite'), { clock, cacheChars });
     this.backend = backend ? new OmbreBackend({ ...backend, directory: join(directory, 'ombre'), deploymentId: this.store.deploymentId }) : null;
     this.queues = new Map(); this.errors = [];
   }
@@ -366,10 +366,20 @@ export class MemoryService {
     return result;
   }
   readSource(botId, { id, revision }, context = this.current(botId)) {
-    const allowed = [...this.store.observations(botId),
-      ...this.store.list({ botId, history: true }).flatMap(row => [...row.sourceRefs, ...this.store.evidenceRoots(row.sourceRefs)])];
-    revision ??= Math.max(0, ...allowed.filter(ref => ref.id === id).map(ref => ref.revision));
-    if (!allowed.some(ref => ref.id === id && ref.revision === revision)) throw new Error('MEMORY_SOURCE_NOT_OBSERVED');
+    // A Bot may read what it observed and the evidence its memories cite. The second is gone through only for a
+    // source the Bot did not observe, or when the newest revision it may read is asked for.
+    const observed = this.store.revisionsObserved(botId, id);
+    if (revision === undefined || revision === null || !observed?.has(revision)) {
+      const cited = this.store.memo(`cited-revisions:${botId}`, () => {
+        const revisions = new Map();
+        for (const row of this.store.list({ botId, history: true })) for (const ref of [...row.sourceRefs, ...this.store.evidenceRoots(row.sourceRefs)]) {
+          if (revisions.has(ref.id)) revisions.get(ref.id).add(ref.revision); else revisions.set(ref.id, new Set([ref.revision]));
+        }
+        return revisions;
+      }).get(id);
+      revision ??= Math.max(0, ...(observed || []), ...(cited || []));
+      if (!observed?.has(revision) && !cited?.has(revision)) throw new Error('MEMORY_SOURCE_NOT_OBSERVED');
+    }
     if (!this.sourceUse(botId, { id, revision }, context).allowed) throw new Error('MEMORY_SOURCE_PENDING_REQUEST');
     const source = this.store.source(id, revision); if (!source) throw new Error('SOURCE_NOT_FOUND');
     const head = this.store.source(id);

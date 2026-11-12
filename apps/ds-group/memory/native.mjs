@@ -54,7 +54,7 @@ export function installNativeMemory(rt) {
   const configured = config.knowledgeBackend || (existsSync(file) ? JSON.parse(readFileSync(file, 'utf8')) : undefined)
     || (env.DSCORD_MEMORY_PYTHON && env.DSCORD_MEMORY_OMBRE ? { python: env.DSCORD_MEMORY_PYTHON, upstream: env.DSCORD_MEMORY_OMBRE,
       endpoint: env.DSCORD_MEMORY_ENDPOINT, serverBinary: env.DSCORD_MEMORY_LLAMA_SERVER, modelArtifact: env.DSCORD_MEMORY_GGUF } : undefined);
-  const memory = new MemoryService({ directory: root, backend: configured, clock: config.memoryClock });
+  const memory = new MemoryService({ directory: root, backend: configured, clock: config.memoryClock, cacheChars: config.memoryCacheChars });
   const snapshotContext = createSnapshotContext(ctx);
   // Parts also calls this before measuring/compacting the current surface.
   rt.memoryRetireSnapshots = (session, options) => snapshotContext.retire(session, options);
@@ -360,7 +360,7 @@ export function installNativeMemory(rt) {
         roomId: input.event?.roomId || source.roomId });
       if (key) store.setMeta(key, input);
     },
-    memoryRelay: (botId, sessionId) => { ensureOpen(); const current = memory.current(botId, sessionId || rt.chatOf(botId)); return current ? { memoryOrigin: current } : {}; },
+    memoryRelay: (botId, sessionId) => { ensureOpen(); const current = memory.current(botId, sessionId || rt.chatOf(botId)); return current ? { memoryOrigin: structuredClone(current) } : {}; },
     memoryCarry: (botId, before, after) => { ensureOpen(); return memory.carry(botId, before, after); },
     memoryFlush: flush, memoryEndpoint, renewMemory: () => {},
     archiveBotMemory: async () => {}, archiveGroupMemory: async () => {}, memoryNews: () => Object.fromEntries(news), memoryReviews: () => timers.size + reviewing.size + sideTasks.size });

@@ -24,7 +24,7 @@ export function createMemoryPanel(rt, memory, { flush, botShot }) {
     source: row.sourceRefs.map(ref => { const source = store.source(ref.id, ref.revision); return `${source?.authorId} · ${source?.roomId || '本地'} · ${source?.eventId || ref.id}`; }).join(', ') }));
   const changes = panel => {
     const ids = new Set(store.list({ ...panel.filter, history: true }).map(row => row.id));
-    return store.history().filter(row => ids.has(row.id) && ['remember', 'forget'].includes(row.action));
+    return store.history(['remember', 'forget']).filter(row => ids.has(row.id));
   };
   function view(panel) {
     const rows = entries(panel);
